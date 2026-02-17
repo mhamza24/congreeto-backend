@@ -3,8 +3,8 @@ from app.config.settings import get_settings, Settings
 
 
 def setup_logging():
-    # settings = get_settings()
-    settings = Settings()
+    settings = get_settings()
+
 
     log_format = (
         "%(asctime)s | %(levelname)s | %(name)s | "

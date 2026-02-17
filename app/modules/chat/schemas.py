@@ -1,32 +1,39 @@
 # app/modules/chat/schemas.py
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Union
 from datetime import datetime
+from enum import Enum
 from uuid import UUID
 
 
-class ChatCreateRequest(BaseModel):
-    user_id: UUID
-    message: str
-    business_id: UUID
+class RoleEnum(str, Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ChatMessage(BaseModel):
+    role: RoleEnum
+    content: str
+
+
+class ChatMessagePair(BaseModel):
+    user: str
+    assistant: str
+
+
+class TempChatCreateRequest(BaseModel):
+    chat_id: Union[UUID, None] = None
+    message: Union[
+        str,
+        ChatMessagePair,
+        ChatMessage,
+        List[Union[str, ChatMessagePair, ChatMessage]]
+    ]
 
 
 class ChatMessageResponse(BaseModel):
-    id: UUID
     chat_id: UUID
-    user_id: UUID
-    message: str
-    created_at: datetime
-
-
-class ChatConversationResponse(BaseModel):
-    chat_id: UUID
-    business_id: UUID
-    messages: List[ChatMessageResponse]
-
-
-class ChatInsightResponse(BaseModel):
-    chat_id: UUID
-    total_messages: int
-    last_message_at: Optional[datetime]
+    message_id: UUID
+    message: ChatMessage

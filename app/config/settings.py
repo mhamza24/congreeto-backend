@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    OPEN_AI_KEY: str
+    OPEN_AI_MODEL: str = "gpt-4.1"
+    OPEN_AI_MAX_TOKENS: int = 800
+    OPEN_AI_TEMPERATURE: float = 0.48
+
     LOG_LEVEL: str = "INFO"
 
     class Config:
