@@ -91,3 +91,8 @@ Thumbs.db
 # PyCharm
 # ----------------------
 *.iml
+
+# ----------------------
+# custom files
+# ----------------------
+migration.txt

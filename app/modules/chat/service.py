@@ -1,11 +1,14 @@
 # app/modules/chat/service.py
 
+import datetime
 from uuid import UUID
 from uuid6 import uuid7
 from typing import List, Union, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-from . import repository
+from . import repository as chat_repository
+from . import models as chat_models
+
 from .import schemas as chat_schemas
 from app.utils.chat_helper import normalize_conversation
 from app.modules.open_ai import service as open_ai_service
@@ -18,45 +21,84 @@ CONVERSATIONS = {}  # {chat_id: list of messages}
 system_prompt = "Act as a real estate agent."
 
 
-async def create_or_continue_chat(payload: chat_schemas.TempChatCreateRequest) -> chat_schemas.ChatMessageResponse:
-    chat_id = payload.chat_id or uuid7()
-    # normalize user messages
-    normalized_messages = normalize_conversation(payload.message)
+async def create_or_continue_chat(
+    payload,
+    db: AsyncSession,
+    tenant_id: str = "veloce"
+):
 
-    # prepend system prompt
-    normalized_messages.insert(
-        0, {"role": chat_schemas.RoleEnum.SYSTEM.value, "content": system_prompt})
+    # 1️⃣ Get or create conversation
+    conversation, is_new = await chat_repository.get_or_create_conversation(
+        db=db,
+        chat_id=payload.chat_id,
+        tenant_id=tenant_id
+    )
 
-    # call OpenAI LLM
+    # 2️⃣ Build LLM context
+    llm_messages = [{"role": "system", "content": system_prompt}]
+
+    if not is_new:
+        history = await chat_repository.get_messages(db, conversation.id)
+        for msg in history:
+            llm_messages.append({
+                "role": msg.role.value,
+                "content": msg.content
+            })
+
+    # Add current user message to context
+    llm_messages.append({
+        "role": "user",
+        "content": payload.message
+    })
+
+    # 3️⃣ Call LLM
     try:
-        assistant_content = await open_ai_service.call_openai(normalized_messages, system_prompt)
+        start_time = datetime.now()
+        assistant_content = await open_ai_service.call_openai(
+            llm_messages,
+            system_prompt
+        )
+        response_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     except Exception as e:
         logging.error(f"OpenAI error: {e}")
         assistant_content = "Sorry, I could not process your request."
+        response_ms = None
 
-    # append assistant response
-    normalized_messages.append(
-        {"role": chat_schemas.RoleEnum.ASSISTANT.value, "content": assistant_content})
+    # 4️⃣ Persist messages
 
-    # store messages in memory
-    if chat_id not in CONVERSATIONS:
-        CONVERSATIONS[chat_id] = []
+    # Store user message
+    await chat_repository.add_message(
+        db=db,
+        conversation_id=conversation.id,
+        role=chat_models.MessageRole.user,
+        content=payload.message
+    )
 
-    response_messages = []
-    for msg in normalized_messages:
-        message_id = uuid7()
-        msg_record = {"message_id": message_id,
-                      "chat_id": chat_id, "message": msg}
-        CONVERSATIONS[chat_id].append(msg_record)
+    # Store assistant message
+    assistant_message = await chat_repository.add_message(
+        db=db,
+        conversation_id=conversation.id,
+        role=chat_models.MessageRole.assistant,
+        content=assistant_content,
+        response_ms=response_ms
+    )
 
-        response_messages.append(chat_schemas.ChatMessageResponse(
-            chat_id=chat_id,
-            message_id=message_id,
-            message=chat_schemas.ChatMessage(
-                role=msg["role"], content=msg["content"])
-        ))
+    # 5️⃣ Update conversation metadata
+    await chat_repository.update_conversation_activity(
+        conversation=conversation,
+        message_increment=2
+    )
 
-    return response_messages[-1]
+    await db.commit()
+
+    return {
+        "chat_id": conversation.id,
+        "message_id": assistant_message.id,
+        "role": "assistant",
+        "content": assistant_content
+    }
+
+
 
 # ----------------------------
 # Create or Append Chat

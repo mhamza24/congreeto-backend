@@ -39,9 +39,9 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
 @router.post("/create_or_continue")
-async def chat_endpoint(payload: chat_schemas.TempChatCreateRequest):
+async def chat_endpoint(payload: chat_schemas.TempChatCreateRequest, db: AsyncSession = Depends(get_db),):
     try:
-        last_message = await chat_service.create_or_continue_chat(payload)
+        last_message = await chat_service.create_or_continue_chat(payload,db)
         return ApiResponse(
             data={
                 "chat_id": str(last_message.chat_id),

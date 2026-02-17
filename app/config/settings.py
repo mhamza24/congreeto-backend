@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     ENV: str
     DEBUG: bool = False
 
+    ALEMBIC_DATABASE_URL: str
     DATABASE_URL: str
     REDIS_URL: str
 

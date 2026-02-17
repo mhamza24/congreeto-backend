@@ -30,7 +30,7 @@ app = FastAPI(
     docs_url=None if ENVIRONMENT == "PRODUCTION" else "/docs",
     redoc_url=None if ENVIRONMENT == "PRODUCTION" else "/redoc",
     openapi_url=None if ENVIRONMENT == "PRODUCTION" else "/openapi.json",
-    title="Modular SaaS Backend"
+    title="Veloce Backend API",
 )
 
 
