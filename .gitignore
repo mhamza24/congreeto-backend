@@ -1,0 +1,93 @@
+# ----------------------
+# Python
+# ----------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ----------------------
+# Virtual Environments
+# ----------------------
+venv/
+env/
+ENV/
+.venv/
+
+# ----------------------
+# Environment Variables
+# ----------------------
+.env
+.env.*
+!.env.example
+
+# ----------------------
+# Logs
+# ----------------------
+*.log
+logs/
+
+# ----------------------
+# Database
+# ----------------------
+*.sqlite3
+*.db
+
+# ----------------------
+# Alembic (optional)
+# ----------------------
+# If you auto-generate migrations and don’t want them tracked:
+# migrations/versions/*.pyc
+# DO NOT ignore migrations entirely in production projects
+
+# ----------------------
+# Pytest / Coverage
+# ----------------------
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ----------------------
+# IDE
+# ----------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ----------------------
+# OS
+# ----------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------
+# MyPy
+# ----------------------
+.mypy_cache/
+
+# ----------------------
+# Ruff / Linting
+# ----------------------
+.ruff_cache/
+
+# ----------------------
+# PyCharm
+# ----------------------
+*.iml
