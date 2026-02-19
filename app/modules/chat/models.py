@@ -35,9 +35,9 @@ class Conversation(Base):
 
     # Identity
     id = Column(String, primary_key=True,
-                default=uuid7())
-    Conversation_uuid = Column(String, primary_key=True,
-                               default=lambda: prefixed_uuid("conv_"))
+                default=lambda: prefixed_uuid("conv_"))
+    # Conversation_uuid = Column(String,
+    #                            default=lambda: prefixed_uuid("conv_"))
     tenant_id = Column(String, nullable=False)
     session_token = Column(String, unique=True, nullable=False,
                            default=lambda: prefixed_uuid("sess_"))
@@ -77,8 +77,8 @@ class Conversation(Base):
                         nullable=False, default=utcnow)
 
     # Relationship
-    messages = relationship("Message", back_populates="conversation",
-                            order_by="Message.created_at", lazy="select")
+    messages = relationship("Messages", back_populates="conversation",
+                            order_by="Messages.created_at", lazy="select")
 
     # Indexes
     __table_args__ = (
@@ -101,9 +101,9 @@ class Messages(Base):
 
     # Identity
     id = Column(String, primary_key=True,
-                default=uuid7())
-    id = Column(String, primary_key=True,
                 default=lambda: prefixed_uuid("msg_"))
+    # messages_uuid = Column(String,
+    #             default=lambda: prefixed_uuid("msg_"))
     conversation_id = Column(String, ForeignKey(
         "conversations.id", ondelete="CASCADE"), nullable=False)
 

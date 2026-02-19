@@ -42,12 +42,14 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 async def chat_endpoint(payload: chat_schemas.TempChatCreateRequest, db: AsyncSession = Depends(get_db),):
     try:
         last_message = await chat_service.create_or_continue_chat(payload,db)
+        print("last message", last_message)
         return ApiResponse(
             data={
-                "chat_id": str(last_message.chat_id),
-                "message_id": str(last_message.message_id),
-                "message": last_message.message,
-            },
+        "conversation_id": str(last_message["conversation_id"]),
+        "message_id": str(last_message["message_id"]),
+        "message": last_message["role"],
+        "content": last_message["content"]
+    },
             message="Chat processed successfully",
             success=True,
         )

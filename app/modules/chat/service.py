@@ -1,6 +1,6 @@
 # app/modules/chat/service.py
 
-import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from uuid6 import uuid7
 from typing import List, Union, Dict
@@ -8,17 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from . import repository as chat_repository
 from . import models as chat_models
-
+import json
+from app.utils.system_prompt_aria import aria_system_prompt
 from .import schemas as chat_schemas
 from app.utils.chat_helper import normalize_conversation
 from app.modules.open_ai import service as open_ai_service
 import logging
 
 logger = logging.getLogger(__name__)
-# Placeholder for "database"
-CONVERSATIONS = {}  # {chat_id: list of messages}
 
-system_prompt = "Act as a real estate agent."
 
 
 async def create_or_continue_chat(
@@ -26,6 +24,7 @@ async def create_or_continue_chat(
     db: AsyncSession,
     tenant_id: str = "veloce"
 ):
+    print("inside service",payload)
 
     # 1️⃣ Get or create conversation
     conversation, is_new = await chat_repository.get_or_create_conversation(
@@ -33,9 +32,10 @@ async def create_or_continue_chat(
         chat_id=payload.chat_id,
         tenant_id=tenant_id
     )
-
+    print("conversation fetched", is_new)
     # 2️⃣ Build LLM context
-    llm_messages = [{"role": "system", "content": system_prompt}]
+    system_prompt_json = json.dumps(aria_system_prompt)
+    llm_messages = [{"role": "system", "content": system_prompt_json}]
 
     if not is_new:
         history = await chat_repository.get_messages(db, conversation.id)
@@ -50,14 +50,16 @@ async def create_or_continue_chat(
         "role": "user",
         "content": payload.message
     })
+    print("user message added",llm_messages)
 
     # 3️⃣ Call LLM
     try:
         start_time = datetime.now()
         assistant_content = await open_ai_service.call_openai(
             llm_messages,
-            system_prompt
+            system_prompt_json
         )
+        print("ai message", assistant_content)
         response_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     except Exception as e:
         logging.error(f"OpenAI error: {e}")
@@ -92,7 +94,7 @@ async def create_or_continue_chat(
     await db.commit()
 
     return {
-        "chat_id": conversation.id,
+        "conversation_id": conversation.id,
         "message_id": assistant_message.id,
         "role": "assistant",
         "content": assistant_content

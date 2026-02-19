@@ -15,6 +15,7 @@ async def call_openai(prompt: str, system_instructions: str = "You are a helpful
             max_tokens=OPENAI_MAX_TOKENS,
             temperature=OPENAI_TEMPERATURE,
         )
+        print("raw response", response)
         return response.choices[0].message.content
 
         # Parse the JSON directly from the raw response

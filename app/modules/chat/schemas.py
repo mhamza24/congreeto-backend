@@ -24,7 +24,7 @@ class ChatMessagePair(BaseModel):
 
 
 class TempChatCreateRequest(BaseModel):
-    chat_id: Union[UUID, None] = None
+    chat_id: Union[str, None] = None
     message: Union[
         str,
         ChatMessagePair,
