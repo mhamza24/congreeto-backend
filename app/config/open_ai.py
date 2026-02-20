@@ -2,7 +2,6 @@ from openai import AsyncOpenAI
 from app.config.settings import get_settings
 
 settings = get_settings()
-
 # Initialize the ASYNC client
 async_client = AsyncOpenAI(
     api_key=settings.OPEN_AI_KEY,

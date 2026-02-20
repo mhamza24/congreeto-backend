@@ -35,8 +35,8 @@ async def create_or_continue_chat(
     print("conversation fetched", is_new)
     # 2️⃣ Build LLM context
     system_prompt_json = json.dumps(aria_system_prompt)
-    llm_messages = [{"role": "system", "content": system_prompt_json}]
-
+    # llm_messages = [{"role": "system", "content": system_prompt_json}]
+    llm_messages = []
     if not is_new:
         history = await chat_repository.get_messages(db, conversation.id)
         for msg in history:
