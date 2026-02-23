@@ -6,8 +6,6 @@ logger = logging.getLogger(__name__)
 
 async def call_openai(messages: list, system_instructions: str = "You are a helpful assistant.") -> str:
     try:
-        print("messages", messages)
-        print("system_instructions", system_instructions)
         response = await async_client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
@@ -17,8 +15,6 @@ async def call_openai(messages: list, system_instructions: str = "You are a help
             max_tokens=OPENAI_MAX_TOKENS,
             temperature=OPENAI_TEMPERATURE,
         )
-        print("response:::", response)
-        print("answer::::::::", response.choices[0].message.content)
         return response.choices[0].message.content
 
     except Exception as e:

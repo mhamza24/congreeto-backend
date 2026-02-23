@@ -1,187 +1,223 @@
-# app/modules/chat/service.py
+"""
+service.py — Business logic layer for the chat module.
 
-from datetime import datetime, timezone
-from uuid import UUID
-from uuid6 import uuid7
-from typing import List, Union, Dict
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
-from . import repository as chat_repository
-from . import models as chat_models
+Responsibilities
+────────────────
+- Orchestrate repository calls (never raw SQL here).
+- Build LLM message context from conversation history.
+- Map ORM objects → response schemas (the "anti-corruption" layer).
+- Own the DB transaction boundary (commit lives here, not in the router).
+
+The service receives and returns public_ids only — internal PKs stay inside
+the repository.
+"""
+
+from __future__ import annotations
+
 import json
-from app.utils.system_prompt_aria import aria_system_prompt
-from .import schemas as chat_schemas
-from app.utils.chat_helper import normalize_conversation
-from app.modules.open_ai import service as open_ai_service
 import logging
+from datetime import datetime
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.open_ai import service as openai_service
+from app.utils.system_prompt_aria import aria_system_prompt
+
+from . import repository as repo
+from . import schemas
+from .models import MessageRole
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# 1. Chat — create or continue
+# ---------------------------------------------------------------------------
 
 async def create_or_continue_chat(
-    payload,
     db: AsyncSession,
-    tenant_id: str = "veloce"
-):
-    print("inside service",payload)
-
-    # 1️⃣ Get or create conversation
-    conversation, is_new = await chat_repository.get_or_create_conversation(
-        db=db,
-        chat_id=payload.chat_id,
-        tenant_id=tenant_id
+    *,
+    payload: schemas.ChatCreateRequest,
+    tenant_id: str,
+) -> schemas.ChatReplyResponse:
+    """
+    Core chat flow:
+      1. Resolve or create conversation (by public_id).
+      2. Load recent history for LLM context (bounded to avoid token bloat).
+      3. Call LLM.
+      4. Persist user + assistant messages.
+      5. Update conversation counters.
+      6. Commit transaction.
+      7. Return public-facing response schema.
+    """
+    # ── 1. Resolve conversation ───────────────────────────────────────────────
+    conversation, is_new = await repo.get_or_create_conversation(
+        db,
+        conversation_public_id=payload.conversation_id,
+        tenant_id=tenant_id,
     )
-    print("conversation fetched", is_new)
-    # 2️⃣ Build LLM context
-    system_prompt_json = json.dumps(aria_system_prompt)
-    # llm_messages = [{"role": "system", "content": system_prompt_json}]
-    llm_messages = []
+
+    # ── 2. Build LLM context ──────────────────────────────────────────────────
+    system_prompt = json.dumps(aria_system_prompt)
+
+    llm_messages: list[dict] = []
+
     if not is_new:
-        history = await chat_repository.get_messages(db, conversation.id)
-        for msg in history:
-            llm_messages.append({
-                "role": msg.role.value,
-                "content": msg.content
-            })
-
-    # Add current user message to context
-    llm_messages.append({
-        "role": "user",
-        "content": payload.message
-    })
-    print("user message added",llm_messages)
-
-    # 3️⃣ Call LLM
-    try:
-        start_time = datetime.now()
-        assistant_content = await open_ai_service.call_openai(
-            llm_messages,
-            system_prompt_json
+        # Only fetch the last N messages to cap the context window.
+        # Adjust the limit to match your model's token budget.
+        history = await repo.get_conversation_history(
+            db,
+            conversation_id=conversation.id,
+            limit=50,
         )
-        print("ai message", assistant_content)
-        response_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    except Exception as e:
-        logging.error(f"OpenAI error: {e}")
-        assistant_content = "Sorry, I could not process your request."
+        llm_messages = [
+            {"role": msg.role.value, "content": msg.content}
+            for msg in history
+        ]
+
+    llm_messages.append({"role": "user", "content": payload.message})
+
+    # ── 3. Call LLM ───────────────────────────────────────────────────────────
+    try:
+        t0 = datetime.now()
+        assistant_content = await openai_service.call_openai(
+            llm_messages,
+            system_prompt,
+        )
+        response_ms = int((datetime.now() - t0).total_seconds() * 1000)
+    except Exception as exc:
+        logger.exception("LLM call failed: %s", exc)
+        assistant_content = "Sorry, I could not process your request right now."
         response_ms = None
 
-    # 4️⃣ Persist messages
-
-    # Store user message
-    await chat_repository.add_message(
-        db=db,
+    # ── 4. Persist messages ───────────────────────────────────────────────────
+    await repo.add_message(
+        db,
         conversation_id=conversation.id,
-        role=chat_models.MessageRole.user,
-        content=payload.message
+        role=MessageRole.user,
+        content=payload.message,
     )
-
-    # Store assistant message
-    assistant_message = await chat_repository.add_message(
-        db=db,
+    assistant_msg = await repo.add_message(
+        db,
         conversation_id=conversation.id,
-        role=chat_models.MessageRole.assistant,
+        role=MessageRole.assistant,
         content=assistant_content,
-        response_ms=response_ms
+        response_ms=response_ms,
     )
 
-    # 5️⃣ Update conversation metadata
-    await chat_repository.update_conversation_activity(
-        conversation=conversation,
-        message_increment=2
+    # ── 5. Update counters ────────────────────────────────────────────────────
+    await repo.update_conversation_activity(
+        conversation,
+        message_increment=2,
     )
 
+    # ── 6. Commit ─────────────────────────────────────────────────────────────
     await db.commit()
 
-    return {
-        "conversation_id": conversation.id,
-        "message_id": assistant_message.id,
-        "role": "assistant",
-        "content": assistant_content
-    }
+    # ── 7. Return ─────────────────────────────────────────────────────────────
+    return schemas.ChatReplyResponse(
+        conversation_id=conversation.public_id,
+        message_id=assistant_msg.public_id,
+        role=MessageRole.assistant,
+        content=assistant_content,
+    )
 
 
+# ---------------------------------------------------------------------------
+# 2. Conversation list (keyset paginated)
+# ---------------------------------------------------------------------------
 
-# ----------------------------
-# Create or Append Chat
-# ----------------------------
+async def list_conversations(
+    db: AsyncSession,
+    *,
+    payload: schemas.ConversationListRequest,
+    tenant_id: str,
+) -> schemas.PaginatedResponse[schemas.ConversationSummaryResponse]:
+    """
+    Return a page of conversations (no messages — list view is lightweight).
 
-# async def create_chat_message(
-#     db: AsyncSession,
-#     payload: ChatCreateRequest,
-# ) -> ChatMessageResponse:
+    Uses keyset pagination — see repository.get_conversations for details.
+    N+1 cannot occur here because messages are never loaded.
+    """
+    conversations, next_cursor, total = await repo.get_conversations(
+        db,
+        tenant_id=tenant_id,
+        page_size=payload.page_size,
+        cursor=payload.cursor,
+        status=payload.status,
+    )
 
-#     # Does conversation exist?
-#     conversation = await repository.get_conversation_by_user_and_business(
-#         db=db,
-#         user_id=payload.user_id,
-#         business_id=payload.business_id,
-#     )
+    items = [
+        schemas.ConversationSummaryResponse(
+            id=conv.public_id,
+            status=conv.status,
+            is_lead=conv.is_lead,
+            total_messages=conv.total_messages,
+            total_tokens_used=conv.total_tokens_used,
+            created_at=conv.created_at,
+            last_activity_at=conv.last_activity_at,
+        )
+        for conv in conversations
+    ]
 
-#     if not conversation:
-#         chat_id = uuid7()
-#         conversation = await repository.create_conversation(
-#             db=db,
-#             chat_id=chat_id,
-#             user_id=payload.user_id,
-#             business_id=payload.business_id,
-#         )
-#     else:
-#         chat_id = conversation.chat_id
-
-#     message = await repository.create_message(
-#         db=db,
-#         chat_id=chat_id,
-#         user_id=payload.user_id,
-#         message=payload.message,
-#     )
-
-#     return ChatMessageResponse.model_validate(message)
-
-
-# async def get_conversation(
-#     db: AsyncSession,
-#     chat_id: UUID,
-# ) -> ChatConversationResponse:
-
-#     conversation = await repository.get_conversation_by_id(
-#         db=db,
-#         chat_id=chat_id,
-#     )
-
-#     if not conversation:
-#         raise NotFoundException("Conversation not found")
-
-#     messages = await repository.get_messages_by_chat_id(
-#         db=db,
-#         chat_id=chat_id,
-#     )
-
-#     return ChatConversationResponse(
-#         chat_id=conversation.chat_id,
-#         business_id=conversation.business_id,
-#         messages=[
-#             ChatMessageResponse.model_validate(msg)
-#             for msg in messages
-#         ],
-#     )
+    return schemas.PaginatedResponse(
+        items=items,
+        meta=schemas.PaginatedMeta(
+            total=total,
+            page_size=payload.page_size,
+            next_cursor=next_cursor,
+            has_next=next_cursor is not None,
+        ),
+    )
 
 
-# async def get_chat_insight(
-#     db: AsyncSession,
-#     chat_id: UUID,
-# ) -> ChatInsightResponse:
+# ---------------------------------------------------------------------------
+# 3. Conversation detail (with messages, eager loaded)
+# ---------------------------------------------------------------------------
 
-#     stats = await repository.get_chat_statistics(
-#         db=db,
-#         chat_id=chat_id,
-#     )
+async def get_conversation_detail(
+    db: AsyncSession,
+    *,
+    conversation_public_id: str,
+    tenant_id: str,
+) -> schemas.ConversationDetailResponse:
+    """
+    Fetch a single conversation with all its messages.
 
-#     if not stats:
-#         raise NotFoundException("Chat not found")
+    Exactly 2 SQL queries regardless of message count (selectinload batch).
+    No N+1.
+    """
+    conversation = await repo.get_conversation_detail(
+        db,
+        public_id=conversation_public_id,
+        tenant_id=tenant_id,
+    )
 
-#     return ChatInsightResponse(
-#         chat_id=chat_id,
-#         total_messages=stats["total_messages"],
-#         last_message_at=stats["last_message_at"],
-#     )
+    if conversation is None:
+        raise ValueError(
+            f"Conversation '{conversation_public_id}' not found."
+        )
+
+    messages = [
+        schemas.MessageResponse(
+            id=msg.public_id,
+            role=msg.role,
+            content=msg.content,
+            tokens_used=msg.tokens_used,
+            model_used=msg.model_used,
+            response_ms=msg.response_ms,
+            created_at=msg.created_at,
+        )
+        for msg in conversation.messages   # already loaded — no extra query
+    ]
+
+    return schemas.ConversationDetailResponse(
+        id=conversation.public_id,
+        status=conversation.status,
+        is_lead=conversation.is_lead,
+        total_messages=conversation.total_messages,
+        total_tokens_used=conversation.total_tokens_used,
+        created_at=conversation.created_at,
+        last_activity_at=conversation.last_activity_at,
+        messages=messages,
+    )

@@ -1,5 +1,5 @@
 from sqlalchemy.pool import QueuePool
-from app.modules.chat.models import Base, Conversation, Messages
+from app.modules.chat.models import Base, Conversation, Message
 
 from logging.config import fileConfig
 
