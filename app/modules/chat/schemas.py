@@ -24,6 +24,11 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ChatbotIdentityEnum(str, Enum):
+    website = "website"
+    veloce_demo = "veloce_demo"
+
+
 class ChatMessagePair(BaseModel):
     user: str
     assistant: str
@@ -45,6 +50,10 @@ class ChatCreateRequest(BaseModel):
         description="Public conversation ID (uuid7). Omit to start a new conversation.",
     )
     message: str = Field(..., min_length=1, max_length=32_000)
+    chatbot_identity: ChatbotIdentityEnum = Field(
+        default=ChatbotIdentityEnum.website,
+        description="Main Veloce website or Veloce as a client, for system prompt",
+    )
 
 
 class ConversationListRequest(BaseModel):

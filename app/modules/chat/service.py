@@ -21,7 +21,8 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.open_ai import service as openai_service
-from app.utils.system_prompt_aria import aria_system_prompt
+from app.utils.system_prompt_aria import aria_veloce_website_guide
+from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 
 from . import repository as repo
 from . import schemas
@@ -58,7 +59,11 @@ async def create_or_continue_chat(
     )
 
     # ── 2. Build LLM context ──────────────────────────────────────────────────
-    system_prompt = json.dumps(aria_system_prompt)
+    if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
+        system_prompt = json.dumps(aria_veloce_website_guide)
+    else:
+        system_prompt = json.dumps(aria_veloce_brand_representative)
+
 
     llm_messages: list[dict] = []
 

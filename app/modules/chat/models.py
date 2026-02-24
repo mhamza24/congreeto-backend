@@ -74,6 +74,11 @@ class MessageRole(str, enum.Enum):
     system    = "system"
 
 
+class ChatbotIdentity(str, enum.Enum):
+    website = "website"
+    veloce_demo = "veloce_demo"
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
