@@ -10,6 +10,9 @@ from app.api.v1.router import router as v1_router
 from fastapi import APIRouter
 from app.config.settings import Settings
 import logging
+from app.config.settings import get_settings
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,7 @@ app = FastAPI(
     docs_url=None if ENVIRONMENT == "PRODUCTION" else "/docs",
     redoc_url=None if ENVIRONMENT == "PRODUCTION" else "/redoc",
     openapi_url=None if ENVIRONMENT == "PRODUCTION" else "/openapi.json",
-    title="Veloce Backend API",
+    title=settings.APP_NAME,
 )
 
 
