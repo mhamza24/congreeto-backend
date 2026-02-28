@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     ENV: str
     DEBUG: bool = False
+    LOG_LEVEL: str = "INFO"
 
     ALEMBIC_DATABASE_URL: str
     DATABASE_URL: str
@@ -21,13 +22,20 @@ class Settings(BaseSettings):
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_USE_SSL: bool = False
     CELERY_DEFAULT_QUEUE: str = "default"
+    CELERY_MAX_TRIES: int = 3
+    CELERY_DEFAULT_RETRY_DELAY: int = 5
+    
 
     OPEN_AI_KEY: str
     OPEN_AI_MODEL: str = "gpt-4.1"
     OPEN_AI_MAX_TOKENS: int = 800
     OPEN_AI_TEMPERATURE: float = 0.7 #0.48
-
-    LOG_LEVEL: str = "INFO"
+    
+    #SCRAPPING SETTINGS
+    SCRAPPER_WEB_MAX_PAGES=100  # safety cap — change as needed
+    SCRAPPER_WEB_HEADLESS=True  # set False to watch the browser
+    SCRAPPER_WEB_TIMEOUT=30_000 # ms per page 
+    
 
     class Config:
         env_file = ".env.development"
