@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.open_ai import service as openai_service
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
+from app.utils.system_prompt_portfolio import veloce_portfolio
 
 from . import repository as repo
 from . import schemas
@@ -63,6 +64,8 @@ async def create_or_continue_chat(
         system_prompt = json.dumps(aria_veloce_website_guide)
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
+        veloce_portfolio_str = json.dumps(veloce_portfolio)
+        system_prompt += "\n\n Company portfolio: " + veloce_portfolio_str
 
 
     llm_messages: list[dict] = []
