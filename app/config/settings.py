@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     SCRAPPER_WEB_HEADLESS:bool=True  # set False to watch the browser
     SCRAPPER_WEB_TIMEOUT:int=30_000 # ms per page 
     
+    SCRAPPER_PDF_TIMEOUT: int = 30  # seconds
+
 
     class Config:
         env_file = ".env.development"
