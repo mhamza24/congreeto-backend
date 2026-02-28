@@ -1,6 +1,5 @@
 import logging
 from app.config.open_ai import async_client, OPENAI_MODEL, OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE
-
 logger = logging.getLogger(__name__)
 
 
@@ -9,7 +8,8 @@ async def call_openai(messages: list, system_instructions: str = "You are a help
         response = await async_client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": system_instructions},
+                {"role": "system", "content":
+                    system_instructions},
                 *messages,  # spread the full history including current user message
             ],
             max_tokens=OPENAI_MAX_TOKENS,
