@@ -2,10 +2,16 @@ from celery import Celery
 import ssl
 import os
 from app.config.settings import get_settings
-
+from enum import Enum
 settings = get_settings()
 
 os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
+
+
+class QUEUEEnum(str, Enum):
+    INGESTION = "ingestion"
+    ANALYSIS = "analysis"
+   
 
 
 celery_app = Celery(

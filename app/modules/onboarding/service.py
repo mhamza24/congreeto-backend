@@ -23,10 +23,12 @@ async def scrap_website_data(
 ) -> schemas.liveLinkScrapperResponse:
 
     celery_task = background_tasks.live_link_scrapper.delay(payload.link)
-    logger.info(
-        f"task enqueued: {celery_task.id} and task status: {celery_task.status}")
 
-    # ── 7. Return ─────────────────────────────────────────────────────────────
+    logger.info(
+        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
+    print(
+        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
+
     return schemas.liveLinkScrapperResponse(
         id=celery_task.id,
         status=celery_task.status

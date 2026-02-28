@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     OPEN_AI_TEMPERATURE: float = 0.7 #0.48
     
     #SCRAPPING SETTINGS
-    SCRAPPER_WEB_MAX_PAGES=100  # safety cap — change as needed
-    SCRAPPER_WEB_HEADLESS=True  # set False to watch the browser
-    SCRAPPER_WEB_TIMEOUT=30_000 # ms per page 
+    SCRAPPER_WEB_MAX_PAGES:int=100  # safety cap — change as needed
+    SCRAPPER_WEB_HEADLESS:bool=True  # set False to watch the browser
+    SCRAPPER_WEB_TIMEOUT:int=30_000 # ms per page 
     
 
     class Config:

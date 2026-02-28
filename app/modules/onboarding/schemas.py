@@ -1,6 +1,7 @@
+from alembic.environment import Dict
 from fastapi import Query
 from pydantic import BaseModel, Field
-from typing import Optional, List, Union, TypeVar, Generic
+from typing import Any, Optional, List, Union, TypeVar, Generic
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -10,7 +11,7 @@ DataT = TypeVar("DataT")
 
 
 class liveLinkScrapperRequest(BaseModel):
-    link: str = Field(
+    link: Union[str, List[str], Dict[str, Any]] = Field(
         description="Live link for scrapping data",
     )
 
