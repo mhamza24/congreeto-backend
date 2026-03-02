@@ -40,7 +40,7 @@ async def create_or_continue_chat(
     db: AsyncSession,
     *,
     payload: schemas.ChatCreateRequest,
-    tenant_id: str,
+
 ) -> schemas.ChatReplyResponse:
     """
     Core chat flow:
@@ -56,7 +56,7 @@ async def create_or_continue_chat(
     conversation, is_new = await repo.get_or_create_conversation(
         db,
         conversation_public_id=payload.conversation_id,
-        tenant_id=tenant_id,
+        tenant_id=payload.tenant_id,
     )
 
     # ── 2. Build LLM context ──────────────────────────────────────────────────

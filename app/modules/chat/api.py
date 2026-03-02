@@ -63,13 +63,11 @@ DBDep     = Annotated[AsyncSession, Depends(get_db)]
 async def chat_endpoint(
     payload: schemas.ChatCreateRequest,
     db: DBDep,
-    tenant_id: TenantDep,
 ) -> ApiResponse[schemas.ChatReplyResponse]:
     try:
         reply = await service.create_or_continue_chat(
             db,
             payload=payload,
-            tenant_id=tenant_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

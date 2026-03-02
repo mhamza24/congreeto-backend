@@ -51,9 +51,12 @@ class ChatCreateRequest(BaseModel):
     )
     message: str = Field(..., min_length=1, max_length=32_000)
     chatbot_identity: ChatbotIdentityEnum = Field(
-        default=ChatbotIdentityEnum.website,
+        default=ChatbotIdentityEnum.veloce_demo,
         description="Main Veloce website or Veloce as a client, for system prompt",
     )
+    tenant_id: str = Field(min_length=1, max_length=100,
+                           default="veloce",
+                           description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
 
 
 class ConversationListRequest(BaseModel):
