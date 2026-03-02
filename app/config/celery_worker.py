@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 import ssl
 import os
 from app.config.settings import get_settings
@@ -20,8 +21,23 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
 
 )
+
+celery_app.conf.beat_schedule = {
+    # Runs every hour at :00 — processes idle conversations
+    "process-idle-conversations": {
+        "task": "tasks.process_idle_conversations",
+        "schedule": crontab(minute=0),  # top of every hour
+    },
+
+    # Runs every day at 8:00 AM — daily insight sweep
+    "daily-insight-sweep": {
+        "task": "tasks.daily_insight_sweep",
+        "schedule": crontab(hour=8, minute=0),
+    },
+
+}
 celery_app.autodiscover_tasks(
-    ['app.modules.onboarding.tasks', 'app.modules.chat.tasks'])
+    ['app.modules.onboarding.tasks', 'app.modules.chat.tasks',])
 
 
 

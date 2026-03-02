@@ -86,6 +86,42 @@ async def chat_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# POST /chat/  — complete a conversation
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/complete",
+    response_model=ApiResponse[schemas.ChatCompleteResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Send a message (creates a new conversation if no conversation_id provided)",
+)
+async def chat_complete_endpoint(
+    payload: schemas.ChatCompleteRequest,
+    db: DBDep,
+) -> ApiResponse[schemas.ChatCompleteResponse]:
+    try:
+        task = await service.complete_conversation(
+            db,
+            payload=payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception:
+        logger.exception("Unexpected error in chat_endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Chat complete successfully. Ai analysis initiated",
+        data=task,
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /chat/  — list conversations (keyset paginated)
 # ---------------------------------------------------------------------------
 

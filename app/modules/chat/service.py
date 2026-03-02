@@ -13,17 +13,19 @@ the repository.
 """
 
 from __future__ import annotations
-
+from fastapi import status
 import json
 import logging
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.exceptions import http_exception_handler
 from app.modules.open_ai import service as openai_service
+from app.modules.chat import tasks as background_tasks
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio
+from app.modules.chat.models import ConversationStatus
 
 from . import repository as repo
 from . import schemas
@@ -62,10 +64,12 @@ async def create_or_continue_chat(
     # ── 2. Build LLM context ──────────────────────────────────────────────────
     if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
         system_prompt = json.dumps(aria_veloce_website_guide)
+        print(":::::::::website")
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
         veloce_portfolio_str = json.dumps(veloce_portfolio)
         system_prompt += "\n\n Company portfolio: " + veloce_portfolio_str
+        print(":::::::::demo")
 
 
     llm_messages: list[dict] = []
@@ -88,7 +92,7 @@ async def create_or_continue_chat(
     # ── 3. Call LLM ───────────────────────────────────────────────────────────
     try:
         t0 = datetime.now()
-        assistant_content = await openai_service.call_openai(
+        assistant_content = await openai_service.openai_call_conversation(
             llm_messages,
             system_prompt,
         )
@@ -129,6 +133,7 @@ async def create_or_continue_chat(
         role=MessageRole.assistant,
         content=assistant_content,
     )
+
 
 
 # ---------------------------------------------------------------------------
@@ -228,4 +233,51 @@ async def get_conversation_detail(
         created_at=conversation.created_at,
         last_activity_at=conversation.last_activity_at,
         messages=messages,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. Conversation completion (trigger background analysis task)
+# ---------------------------------------------------------------------------
+
+async def complete_conversation(
+    db: AsyncSession,
+    *,
+    payload: schemas.ChatCompleteRequest,
+
+) -> schemas.ChatCompleteResponse:
+
+    if payload.tenant_id != "veloce":
+        raise ValueError(
+            f"Tenant with ID {payload.tenant_id} not found.")
+
+    conversation_exists = await repo.get_conversation_by_public_id(
+        db,
+        conversation_public_id=payload.conversation_id,
+        tenant_id=payload.tenant_id,
+    )
+    logger.info(conversation_exists)
+
+    if not conversation_exists:
+        raise ValueError(
+            f"Conversation with ID {payload.conversation_id} not found.")
+    if conversation_exists.status == ConversationStatus.closed:
+        raise ValueError("Conversation is already closed")
+
+    await repo.update_conversation_status(
+        db,
+        conversation__id=conversation_exists.id,
+        tenant_id=payload.tenant_id,
+        status=schemas.ConversationStatus.closed.value
+    )
+    await db.commit()
+    celery_task = background_tasks.chat_completion_task.delay(
+        conversation_exists.id, payload.tenant_id)
+
+    logger.info(
+        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
+    return schemas.ChatCompleteResponse(
+        task_id=celery_task.id,
+        status=celery_task.status
+
     )

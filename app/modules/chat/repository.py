@@ -24,13 +24,15 @@ import base64
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .models import Conversation, ConversationStatus, Message, MessageRole
 
-
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from datetime import datetime, timezone
+from .models import ConversationInsights
 # ---------------------------------------------------------------------------
 # Cursor helpers
 # ---------------------------------------------------------------------------
@@ -92,6 +94,24 @@ async def get_or_create_conversation(
     return conversation, True
 
 
+async def get_conversation_by_public_id(
+    db: AsyncSession,
+    *,
+    conversation_public_id: str,
+    tenant_id: str,
+) -> Conversation | None:
+
+    if not conversation_public_id:
+        return None
+
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.public_id == conversation_public_id,
+            Conversation.tenant_id == tenant_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
 async def update_conversation_activity(
     conversation: Conversation,
     *,
@@ -103,6 +123,19 @@ async def update_conversation_activity(
     conversation.total_messages += message_increment
     conversation.total_tokens_used += token_increment
     conversation.last_activity_at = datetime.now(timezone.utc)
+
+
+async def update_conversation_status(
+        db: AsyncSession,
+        *,
+        conversation__id: str,
+        tenant_id: str,
+        status: ConversationStatus) -> None:
+    await db.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation__id, Conversation.tenant_id == tenant_id)
+        .values(status=ConversationStatus.closed)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +310,107 @@ async def add_message(
     db.add(message)
     await db.flush()   # populate defaults (public_id, id, created_at)
     return message
+
+
+# ---------------------------------------------------------------------------
+# ConversationInsights — writes
+# ---------------------------------------------------------------------------
+
+async def upsert_conversation_insights(
+    db: AsyncSession,
+    *,
+    conversation_id: int,
+    tenant_id: str,
+    insights: dict,
+    lead_data: Optional[dict] = None,
+) -> ConversationInsights:
+    """
+    Upsert conversation insights and update the parent conversation
+    with lead data — all in one transaction.
+
+    insights: the "insights" dict from the OpenAI response
+    lead_data: the "lead" dict from the OpenAI response (name, email, phone)
+    """
+    now = datetime.now(timezone.utc)
+
+    # ── 1. Upsert insights ───────────────────────────────────────────────────
+    stmt = (
+        pg_insert(ConversationInsights)
+        .values(
+            conversation_id=conversation_id,
+            tenant_id=tenant_id,
+            lead_score=insights.get("lead_score"),
+            lead_tier=insights.get("lead_tier"),
+            intent=insights.get("intent"),
+            budget_min=insights.get("budget_min"),
+            budget_max=insights.get("budget_max"),
+            budget_currency=insights.get("budget_currency"),
+            suburbs_mentioned=insights.get("suburbs_mentioned"),
+            cities_mentioned=insights.get("cities_mentioned"),
+            property_types=insights.get("property_types"),
+            bedrooms_wanted=insights.get("bedrooms_wanted"),
+            timeline=insights.get("timeline"),
+            sentiment=insights.get("sentiment"),
+            engagement_score=insights.get("engagement_score"),
+            topics_mentioned=insights.get("topics_mentioned"),
+            ai_summary=insights.get("ai_summary"),
+            ai_insights=insights.get("ai_insights"),
+            processed_at=now,
+            processing_version=insights.get("processing_version", "v1.0"),
+        )
+        .on_conflict_do_update(
+            index_elements=["conversation_id"],
+            set_=dict(
+                lead_score=insights.get("lead_score"),
+                lead_tier=insights.get("lead_tier"),
+                intent=insights.get("intent"),
+                budget_min=insights.get("budget_min"),
+                budget_max=insights.get("budget_max"),
+                budget_currency=insights.get("budget_currency"),
+                suburbs_mentioned=insights.get("suburbs_mentioned"),
+                cities_mentioned=insights.get("cities_mentioned"),
+                property_types=insights.get("property_types"),
+                bedrooms_wanted=insights.get("bedrooms_wanted"),
+                timeline=insights.get("timeline"),
+                sentiment=insights.get("sentiment"),
+                engagement_score=insights.get("engagement_score"),
+                topics_mentioned=insights.get("topics_mentioned"),
+                ai_summary=insights.get("ai_summary"),
+                ai_insights=insights.get("ai_insights"),
+                processed_at=now,
+                processing_version=insights.get("processing_version", "v1.0"),
+            )
+        )
+        .returning(ConversationInsights)
+    )
+
+    result = await db.execute(stmt)
+    saved = result.scalars().first()
+
+    # ── 2. Update conversation with lead data ────────────────────────────────
+    if lead_data:
+        lead_name = lead_data.get("name")
+        lead_email = lead_data.get("email")
+        lead_phone = lead_data.get("phone")
+        ai_summary = insights.get("ai_summary")
+
+        # Only mark as lead if we actually got identifying info
+        # is_lead = any([lead_name, lead_email, lead_phone, ai_summary])
+        is_lead = all([lead_name, lead_email, lead_phone])
+
+        await db.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation_id)
+            .values(
+                is_lead=is_lead,
+                lead_name=lead_name,
+                lead_email=lead_email,
+                lead_phone=lead_phone,
+                summary=ai_summary,
+                status=ConversationStatus.summarized
+            )
+        )
+
+    # ── 3. Commit both together ──────────────────────────────────────────────
+    await db.commit()
+    return saved

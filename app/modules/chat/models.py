@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from uuid6 import uuid7
 from sqlalchemy import (
-    Column, String, Text, Integer, BigInteger, Boolean,
+    ARRAY, Column, String, Text, Integer, BigInteger, Boolean,
     DateTime, Enum, ForeignKey, Index,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -280,3 +280,62 @@ class Message(Base):
             f"<Message public_id={self.public_id!r} "
             f"role={self.role!r} conv={self.conversation_id!r}>"
         )
+
+
+class ConversationInsights(Base):
+    __tablename__ = "conversation_insights"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id = Column(BigInteger, ForeignKey(
+        "conversations.id", ondelete="CASCADE"), unique=True, nullable=False)
+    # ALWAYS denormalized here for fast dashboard queries
+    tenant_id = Column(String, nullable=False)
+
+    # ── Lead Scoring ─────────────────────────────────────────────────────────
+    lead_score = Column(Integer, nullable=True)   # 0–100, LLM-generated
+    lead_tier = Column(String,  nullable=True)   # "hot" | "nurture" | "cold"
+    # "buy" | "rent" | "invest" | "browse"
+    intent = Column(String,  nullable=True)
+
+    # ── Real Estate Specifics ─────────────────────────────────────────────────
+    budget_min = Column(Integer, nullable=True)   # extracted PKR/USD value
+    budget_max = Column(Integer, nullable=True)
+    budget_currency = Column(String,  nullable=True)   # "PKR" | "USD"
+    # ["DHA", "Bahria Town", "Gulberg"]
+    suburbs_mentioned = Column(ARRAY(String), nullable=True)
+    cities_mentioned = Column(ARRAY(String), nullable=True)
+    # ["apartment", "plot", "house"]
+    property_types = Column(ARRAY(String), nullable=True)
+    bedrooms_wanted = Column(Integer, nullable=True)
+    # "immediate" | "3_months" | "6_months" | "browsing"
+    timeline = Column(String,  nullable=True)
+
+    # ── Sentiment & Engagement ────────────────────────────────────────────────
+    # "positive" | "neutral" | "negative"
+    sentiment = Column(String,  nullable=True)
+    # based on message count, depth
+    engagement_score = Column(Integer, nullable=True)
+
+    # ── Topics (for heatmap + frequency analysis) ─────────────────────────────
+    # ["payment plan", "NOC", "possession"]
+    topics_mentioned = Column(ARRAY(String), nullable=True)
+
+    # ── AI Narrative ──────────────────────────────────────────────────────────
+    # 2-3 sentence human-readable summary
+    ai_summary = Column(Text, nullable=True)
+    # trend observations for this conversation
+    ai_insights = Column(Text, nullable=True)
+
+    # ── Processing State ──────────────────────────────────────────────────────
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    # "v1.2" — lets you reprocess if prompt changes
+    processing_version = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_insights_tenant_id",        "tenant_id"),
+        Index("ix_insights_tenant_lead_tier", "tenant_id", "lead_tier"),
+        Index("ix_insights_tenant_intent",    "tenant_id", "intent"),
+        Index("ix_insights_tenant_budget",
+              "tenant_id", "budget_min", "budget_max"),
+        Index("ix_insights_conversation_id",  "conversation_id"),
+    )

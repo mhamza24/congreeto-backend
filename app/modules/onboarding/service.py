@@ -26,9 +26,6 @@ async def scrap_website_data(
 
     logger.info(
         f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
-    print(
-        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
-
     return schemas.liveLinkScrapperResponse(
         id=celery_task.id,
         status=celery_task.status

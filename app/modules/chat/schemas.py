@@ -51,12 +51,30 @@ class ChatCreateRequest(BaseModel):
     )
     message: str = Field(..., min_length=1, max_length=32_000)
     chatbot_identity: ChatbotIdentityEnum = Field(
-        default=ChatbotIdentityEnum.veloce_demo,
+        default=ChatbotIdentityEnum.veloce_demo.value,
         description="Main Veloce website or Veloce as a client, for system prompt",
     )
     tenant_id: str = Field(min_length=1, max_length=100,
                            default="veloce",
                            description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
+
+
+class ChatCompleteRequest(BaseModel):
+    """
+    Complete a conversation.
+
+    - Omit `conversation_id` to start a complete conversation.
+    - Pass an existing `conversation_id` (public_id) to continue one.
+    """
+    conversation_id: str = Field(
+        default=None,
+        description="Public conversation ID (uuid7). Omit to complete a  conversation.",
+    )
+    tenant_id: str = Field(min_length=1, max_length=100,
+                           default="veloce",
+                           description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
+
+
 
 
 class ConversationListRequest(BaseModel):
@@ -134,7 +152,6 @@ class ConversationDetailResponse(BaseModel):
     created_at: datetime
     last_activity_at: datetime
     messages: List[MessageResponse]
-
     model_config = {"from_attributes": True}
 
 
@@ -147,6 +164,17 @@ class ChatReplyResponse(BaseModel):
     message_id: str = Field(description="Public message ID (uuid7).")
     role: MessageRole
     content: str
+
+
+class ChatCompleteResponse(BaseModel):
+    # message: str = Field(
+    #     description="Chat marks the conversation as complete, initiate Ai insights pipeline.")
+    task_id: str = Field(
+        description="unique identifier chat completion task for tracking in background task manager like Celery")
+    status: str = Field(
+        description="background task status: pending, completed, failed")
+
+
 
 
 # ---------------------------------------------------------------------------
