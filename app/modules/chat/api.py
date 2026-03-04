@@ -36,14 +36,14 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 # (replace with real auth when ready)
 # ---------------------------------------------------------------------------
 
-async def get_tenant_id() -> str:
+async def get_tenant_id(tenant_id: str | None = Query(default=None)) -> str:
     """
-    Placeholder: extract tenant_id from JWT / API-key header.
-    Replace with real auth logic — e.g.:
-        token_data = await auth_barrier(request)
-        return token_data.tenant_id
+    Extract tenant_id from query param (?tenant_id=xxx).
+    Falls back to "veloce" if not provided.
+    Replace with real auth logic when ready.
     """
-    return "veloce"
+    return tenant_id or "veloce"
+
 
 
 TenantDep = Annotated[str, Depends(get_tenant_id)]

@@ -54,6 +54,7 @@ async def create_or_continue_chat(
       6. Commit transaction.
       7. Return public-facing response schema.
     """
+    logger.info(f"Received chat request: {payload}")
     # ── 1. Resolve conversation ───────────────────────────────────────────────
     conversation, is_new = await repo.get_or_create_conversation(
         db,
