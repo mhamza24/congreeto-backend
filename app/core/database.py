@@ -4,9 +4,36 @@ from contextlib import asynccontextmanager
 
 settings = get_settings()
 
+# -----------------------------
+# DATABASE URL TRANSFORMATION
+# -----------------------------
+
+def build_async_db_url() -> str:
+    raw_url = settings.DATABASE_URL
+
+    if not raw_url:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    # Heroku provides: postgres://
+    if raw_url.startswith("postgres://"):
+        raw_url = raw_url.replace(
+            "postgres://",
+            "postgresql+asyncpg://",
+            1,
+        )
+
+    # Ensure SSL in production (Heroku requires it)
+    if "sslmode=" not in raw_url:
+        raw_url += "?sslmode=require"
+
+    return raw_url
+
+
+DATABASE_URL = build_async_db_url()
+
 # Module-level engine — ONLY for FastAPI routes (shares FastAPI's event loop)
 async_engine = create_async_engine(
-    settings.DATABASE_URL,
+    DATABASE_URL,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
@@ -27,7 +54,7 @@ async def get_db() -> AsyncSession:
 @asynccontextmanager
 async def get_task_db_session():
     engine = create_async_engine(
-        settings.DATABASE_URL,
+        DATABASE_URL,
         pool_size=2,        # Small — each task is short-lived
         max_overflow=3,
         pool_pre_ping=True,
