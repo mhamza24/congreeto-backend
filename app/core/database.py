@@ -22,10 +22,6 @@ def build_async_db_url() -> str:
             1,
         )
 
-    # Ensure SSL in production (Heroku requires it)
-    if "sslmode=" not in raw_url:
-        raw_url += "?sslmode=require"
-
     return raw_url
 
 
@@ -37,6 +33,7 @@ async_engine = create_async_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
+    connect_args={"ssl": True},
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -59,6 +56,7 @@ async def get_task_db_session():
         max_overflow=3,
         pool_pre_ping=True,
         pool_recycle=60,
+        connect_args={"ssl": True},
     )
     try:
         factory = async_sessionmaker(
