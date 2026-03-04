@@ -22,18 +22,18 @@ def background_analysis(conversation_id: str):
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
 )
-def chat_completion_task(self, conversation_id: str, tenant_id: str):
+def chat_completion_task(self, conversation__id: str, tenant_id: str):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             result = loop.run_until_complete(
-                run_analysis(conversation_id, tenant_id))
+                run_analysis(conversation__id, tenant_id))
         finally:
             loop.close()
             asyncio.set_event_loop(None)
 
-        return {"conversation_id": conversation_id, "result": result}
+        return {"conversation__id": conversation__id, "result": result}
     except Exception as exc:
         countdown = min(300, 2 ** self.request.retries * 10)
         raise self.retry(exc=exc, countdown=countdown)

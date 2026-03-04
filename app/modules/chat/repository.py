@@ -134,7 +134,7 @@ async def update_conversation_status(
     await db.execute(
         update(Conversation)
         .where(Conversation.id == conversation__id, Conversation.tenant_id == tenant_id)
-        .values(status=ConversationStatus.closed)
+        .values(status=status)
     )
 
 
@@ -259,7 +259,7 @@ async def get_conversation_detail(
 async def get_conversation_history(
     db: AsyncSession,
     *,
-    conversation_id: str,          # internal PK — fast
+    conversation__id: str,          # internal PK — fast
     limit: Optional[int] = None,   # None = all; set to cap LLM context window
 ) -> List[Message]:
     """
@@ -271,7 +271,7 @@ async def get_conversation_history(
     """
     stmt = (
         select(Message)
-        .where(Message.conversation_id == conversation_id)
+        .where(Message.conversation_id == conversation__id)
         .order_by(Message.created_at.asc())
     )
     if limit:
@@ -319,7 +319,7 @@ async def add_message(
 async def upsert_conversation_insights(
     db: AsyncSession,
     *,
-    conversation_id: int,
+    conversation__id: int,
     tenant_id: str,
     insights: dict,
     lead_data: Optional[dict] = None,
@@ -337,7 +337,7 @@ async def upsert_conversation_insights(
     stmt = (
         pg_insert(ConversationInsights)
         .values(
-            conversation_id=conversation_id,
+            conversation_id=conversation__id,
             tenant_id=tenant_id,
             lead_score=insights.get("lead_score"),
             lead_tier=insights.get("lead_tier"),
@@ -400,7 +400,7 @@ async def upsert_conversation_insights(
 
         await db.execute(
             update(Conversation)
-            .where(Conversation.id == conversation_id)
+            .where(Conversation.id == conversation__id)
             .values(
                 is_lead=is_lead,
                 lead_name=lead_name,

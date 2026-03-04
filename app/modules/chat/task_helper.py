@@ -5,18 +5,19 @@ from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_ins
 from app.config.settings import get_settings
 from app.config.celery_worker import celery_app, QUEUEEnum
 from app.modules.open_ai import service as ai_service
+from app.modules.chat import schemas as chat_schema
+from app.modules.email import service as email_service
 import logging
 from . import repository as repo
 import logging
 logger = logging.getLogger(__name__)
 
 
-async def run_analysis(conversation_id: int, tenant_id: str) -> dict:
+async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
     async with get_task_db_session() as db:
         messages = await repo.get_conversation_history(
             db,
-            conversation_id=conversation_id,
-            limit=50,
+            conversation__id=conversation__id,
         )
 
         formatted_messages = [
@@ -33,16 +34,29 @@ async def run_analysis(conversation_id: int, tenant_id: str) -> dict:
             parsed = json.loads(raw_response)
         except json.JSONDecodeError:
             logger.error(
-                f"Failed to parse OpenAI response for conversation {conversation_id}: {raw_response}")
+                f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
             raise
 
         saved = await repo.upsert_conversation_insights(
             db,
-            conversation_id=conversation_id,
+            conversation__id=conversation__id,
             tenant_id=tenant_id,
             insights=parsed.get("insights", {}),
             # updates conversation.lead_* fields
             lead_data=parsed.get("lead"),
         )
 
-        return {"insights_id": saved.id, "conversation_id": conversation_id}
+        await email_service.send_lead_insight_email(insights=parsed.get("insights", {}),
+                                                    lead=parsed.get("lead"),
+                                                    messages=formatted_messages,
+                                                    recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
+
+        await repo.update_conversation_status(
+            db,
+            conversation__id=conversation__id,
+            tenant_id=tenant_id,
+            status=chat_schema.ConversationStatus.emailed.value
+        )
+        await db.commit()
+
+        return {"insights_id": saved.id, "conversation_id": conversation__id}
