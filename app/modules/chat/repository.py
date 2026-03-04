@@ -259,7 +259,7 @@ async def get_conversation_detail(
 async def get_conversation_history(
     db: AsyncSession,
     *,
-    conversation__id: str,          # internal PK — fast
+    conversation__id: int,          # internal PK — fast
     limit: Optional[int] = None,   # None = all; set to cap LLM context window
 ) -> List[Message]:
     """

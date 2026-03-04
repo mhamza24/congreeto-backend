@@ -54,14 +54,13 @@ async def create_or_continue_chat(
       6. Commit transaction.
       7. Return public-facing response schema.
     """
-    logger.info(payload)
     # ── 1. Resolve conversation ───────────────────────────────────────────────
     conversation, is_new = await repo.get_or_create_conversation(
         db,
         conversation_public_id=payload.conversation_id,
         tenant_id=payload.tenant_id,
     )
-    logger.info(conversation, is_new)
+
     # ── 2. Build LLM context ──────────────────────────────────────────────────
     if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
         system_prompt = json.dumps(aria_veloce_website_guide)
@@ -80,7 +79,7 @@ async def create_or_continue_chat(
         # Adjust the limit to match your model's token budget.
         history = await repo.get_conversation_history(
             db,
-            conversation_id=conversation.id,
+            conversation__id=conversation.id,
             limit=50,
         )
         llm_messages = [
