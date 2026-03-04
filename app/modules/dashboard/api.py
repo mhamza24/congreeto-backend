@@ -30,7 +30,7 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
             response_model=ApiResponse[schemas.DashboardSummaryResponse],
             status_code=status.HTTP_200_OK,)
 async def get_summary(#payload: schemas.DashboardSummaryRequest,
-                      db: DBDep, tenant_id=TenantDep):
+                      db: DBDep, tenant_id: TenantDep):
     try:
         result = await service.fetch_summary(
             db,
