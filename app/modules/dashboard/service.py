@@ -19,11 +19,12 @@ logger = logging.getLogger(__name__)
 
 async def fetch_summary(
     db: AsyncSession,
-    #*,
+    *,
     #payload: schemas.DashboardSummaryRequest,
+    tenant_id: str,
 
 ) -> schemas.DashboardSummaryResponse:
-    summary = await repo.get_dashboard_summary(db)
+    summary = await repo.get_dashboard_summary(db, tenant_id=tenant_id)
     return schemas.DashboardSummaryResponse(
         summary=summary
     )

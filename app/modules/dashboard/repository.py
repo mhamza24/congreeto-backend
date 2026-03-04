@@ -6,10 +6,10 @@ from sqlalchemy import text
 
 async def get_dashboard_summary(
     db: AsyncSession,
-    # *,
-    # tenant_id: Optional[str],
+    *,
+    tenant_id: str,
 ) -> dict:
-    query = text(""" 
+    query = text(f""" 
                  WITH base AS (
     SELECT
         c.id,
@@ -25,7 +25,7 @@ async def get_dashboard_summary(
         ci.engagement_score
     FROM conversations c
     LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
-    WHERE c.tenant_id = 'veloce'  -- replace with your tenant_id
+    WHERE c.tenant_id = '{tenant_id}'  
 ),
 
 -- ── KPI Cards ────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ response_time AS (
         ROUND(AVG(m.response_ms) / 1000.0, 2)                                  AS avg_response_time_sec
     FROM messages m
     JOIN conversations c ON c.id = m.conversation_id
-    WHERE c.tenant_id = 'veloce'  -- replace with your tenant_id
+    WHERE c.tenant_id = '{tenant_id}'    -- replace with your tenant_id
       AND m.role = 'assistant'
       AND m.response_ms IS NOT NULL
 )
