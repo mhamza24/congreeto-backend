@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
 
     class Config:
-        env_file = ".env.development"
+        env_file = ".env"
 
 
 @lru_cache
