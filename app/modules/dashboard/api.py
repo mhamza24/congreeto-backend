@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
+
+async def get_tenant_id(tenant_id: str | None = Query(default=None)) -> str:
+    """
+    Extract tenant_id from query param (?tenant_id=xxx).
+    Falls back to "veloce" if not provided.
+    Replace with real auth logic when ready.
+    """
+    return tenant_id or "veloce"
+TenantDep = Annotated[str, Depends(get_tenant_id)]
 DBDep = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -26,9 +35,8 @@ async def get_summary(#payload: schemas.DashboardSummaryRequest,
         result = await service.fetch_summary(
             db,
            # payload=payload,
-            #tenant_id='veloce',
+           tenant_id=TenantDep,
         )
-        await email_service.test(["muhammadhamzakhalid24@gmail.com","muhammadhamzakhalid248@gmail.com"])
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

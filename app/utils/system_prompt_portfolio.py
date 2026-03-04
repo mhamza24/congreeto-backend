@@ -500,6 +500,7 @@ veloce_portfolio = {
             "Designer tapware and freestanding baths",
             "Smart home capability — lighting and climate control",
             "NBN connectivity",
+            "Ducted reverse cycle air conditioning",
         ],
         "Lifestyle": (
             "Parkland directly opposite for morning jogs, dog walks, and evening strolls. "
@@ -509,101 +510,164 @@ veloce_portfolio = {
         "Listings": [
             {
                 "ListingID": "VIL-TER-01",
-                "Title": "Terrace Residence 1",
+                "Title": "The Greenway Terrace",
+                "SubTitle": "Terrace Residence 1",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
+                "Study": False,
                 "Garage": "Secure rear-access garage",
                 "Courtyard": True,
                 "Type": "Terrace",
-                "PriceDisplay": "Enquire for pricing",
+                "PriceFrom": 599000,
+                "PriceDisplay": "From $599,000",
                 "Availability": "Available",
                 "Features": [
                     "Private landscaped courtyard",
                     "Secure rear-access garage",
-                    "Smart home readiness",
+                    "Open-plan living flowing to courtyard",
+                    "Stone kitchen surfaces and engineered timber flooring",
+                    "Smart home capability",
                     "Premium finishes throughout",
                     "Directly opposite Vilara Park greenspace",
+                    "Strata maintained common landscaping",
                 ],
                 "Ideal_For": [
-                    "Professionals and young couples",
-                    "First home buyers stepping into the market",
-                    "Downsizers wanting elegance without maintenance",
+                    "First home buyers entering the market strategically",
+                    "Professionals wanting lock-and-leave convenience",
+                    "Downsizers seeking simplicity with style",
                 ],
+                "KeyPitch": (
+                    "The entry point to the Terrace Collection — but it doesn't feel like one. "
+                    "Refined finishes, parkside address, and a price that makes sense for first home buyers."
+                ),
+                "FirstHomeBuyerNote": (
+                    "WA first home buyers may be eligible for the First Home Owner Grant "
+                    "and stamp duty concessions. Speak to our finance team early."
+                ),
             },
             {
                 "ListingID": "VIL-TER-02",
-                "Title": "Terrace Residence 2",
+                "Title": "The Parkfront Terrace",
+                "SubTitle": "Terrace Residence 2",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
-                "Garage": "Secure rear-access garage",
+                "Study": True,
+                "Garage": "Secure rear-access double garage",
                 "Courtyard": True,
                 "Type": "Terrace",
-                "PriceDisplay": "Enquire for pricing",
+                "PriceFrom": 619000,
+                "PriceDisplay": "From $619,000",
                 "Availability": "Available",
                 "Features": [
-                    "Private landscaped courtyard",
-                    "Secure rear-access garage",
-                    "Smart home readiness",
-                    "Premium finishes throughout",
-                    "Directly opposite Vilara Park greenspace",
+                    "Direct park frontage with open green outlook",
+                    "Private rear courtyard — fully landscaped, ready for entertaining",
+                    "Secure rear-access double garage",
+                    "Stone benchtops, premium European appliances (Miele or equivalent)",
+                    "Soft-close cabinetry and designer tapware",
+                    "Engineered timber flooring through living zone",
+                    "High ceilings throughout",
+                    "Smart home integration — lighting and climate control",
+                    "Ducted reverse cycle air conditioning",
+                    "NBN ready",
+                    "Well-lit, pedestrian-friendly streetscape",
+                    "Strata maintained common landscaping",
                 ],
                 "Ideal_For": [
-                    "Professionals and young couples",
-                    "First home buyers stepping into the market",
-                    "Downsizers wanting elegance without maintenance",
+                    "Professionals commuting to Perth CBD",
+                    "First home buyers wanting park-facing living",
+                    "Downsizers seeking security and low maintenance",
                 ],
+                "KeyPitch": (
+                    "Opening your front door to open green space instead of traffic changes the feel of daily life. "
+                    "Direct park frontage, double garage, and premium finishes — hard to match at this price point."
+                ),
+                "FirstHomeBuyerNote": (
+                    "WA first home buyers may be eligible for the First Home Owner Grant "
+                    "and stamp duty concessions."
+                ),
             },
             {
                 "ListingID": "VIL-TER-03",
-                "Title": "Terrace Residence 3",
+                "Title": "The Corner Signature Terrace",
+                "SubTitle": "Terrace Residence 3",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
+                "Study": True,
                 "Garage": "Secure rear-access garage",
                 "Courtyard": True,
                 "Type": "Terrace",
-                "PriceDisplay": "Enquire for pricing",
+                "PriceFrom": 639000,
+                "PriceDisplay": "From $639,000",
                 "Availability": "Available",
                 "Features": [
-                    "Private landscaped courtyard",
+                    "Corner position — natural light from multiple angles",
+                    "Park views from balcony across Vilara Park greenery",
+                    "Enclosed study — genuine work-from-home flexibility",
+                    "Private rear courtyard — fully landscaped and functional",
                     "Secure rear-access garage",
-                    "Smart home readiness",
-                    "Premium finishes throughout",
-                    "Directly opposite Vilara Park greenspace",
+                    "Stone benchtops and premium European appliances",
+                    "Engineered timber flooring",
+                    "High ceilings throughout",
+                    "Smart lighting and climate control",
+                    "Ducted reverse cycle air conditioning",
+                    "NBN ready",
+                    "Trellised walkways and safe, well-lit boulevard",
+                    "Strata maintained common areas",
                 ],
                 "Ideal_For": [
-                    "Professionals and young couples",
-                    "First home buyers stepping into the market",
-                    "Downsizers wanting elegance without maintenance",
+                    "Professionals commuting to the CBD who need WFH flexibility",
+                    "Couples wanting lifestyle balance and architectural distinction",
+                    "Buyers prioritising light, privacy and corner presence",
                 ],
+                "KeyPitch": (
+                    "Corner position means more light and more presence. "
+                    "The enclosed study makes WFH actually work — it's not an afterthought, it's a genuine room."
+                ),
             },
             {
                 "ListingID": "VIL-TER-04",
-                "Title": "Terrace Residence 4",
+                "Title": "The Courtyard Signature Terrace",
+                "SubTitle": "Terrace Residence 4",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
+                "Study": True,
                 "Garage": "Secure rear-access garage",
                 "Courtyard": True,
+                "CourtyardExtended": True,
                 "Type": "Terrace",
-                "PriceDisplay": "Enquire for pricing",
+                "PriceFrom": 649000,
+                "PriceDisplay": "From $649,000",
                 "Availability": "Available",
                 "Features": [
-                    "Private landscaped courtyard",
+                    "Extended private courtyard — room for dining table, lounge setting and greenery",
                     "Secure rear-access garage",
-                    "Smart home readiness",
-                    "Premium finishes throughout",
-                    "Directly opposite Vilara Park greenspace",
+                    "Open-plan living with timber flooring flowing to courtyard",
+                    "Stone benchtops and premium European appliances",
+                    "Smart home integration — adjust lighting and temperature remotely",
+                    "Master suite — elegant and calming",
+                    "Main bathroom with freestanding bath",
+                    "High ceilings throughout",
+                    "Ducted reverse cycle air conditioning",
+                    "NBN ready",
+                    "Landscaped, safe and well-lit boulevard",
+                    "Strata maintained external landscaping",
                 ],
                 "Ideal_For": [
-                    "Professionals and young couples",
-                    "First home buyers stepping into the market",
-                    "Downsizers wanting elegance without maintenance",
+                    "Downsizers wanting a private garden retreat without maintenance overhead",
+                    "Professionals and couples who entertain outdoors",
+                    "Buyers building their future in a boutique parkside setting",
                 ],
+                "KeyPitch": (
+                    "The extended courtyard is the standout — genuine entertaining space, not just a token outdoor area. "
+                    "If outdoor living matters, this is the one in the collection."
+                ),
             },
         ],
         "TerraceNote": (
-            "Individual terrace pricing is available on enquiry. "
-            "With only 4 remaining from a collection of 10, these are genuinely scarce. "
-            "WA first home buyers may be eligible for the First Home Owner Grant and stamp duty concessions."
+            "Only 4 remaining from a collection of 10 — genuinely scarce. "
+            "Individual terrace pricing ranges from $599,000 to $649,000. "
+            "WA first home buyers may be eligible for the First Home Owner Grant and stamp duty concessions. "
+            "Finance support available through accredited partners."
         ),
     },
 
@@ -612,10 +676,14 @@ veloce_portfolio = {
     # ─────────────────────────────────────────────────────────────────────────
     "PortfolioGuidance": {
         "BudgetMatching": {
-            "Under_700K": (
-                "The Haven house and land package starts from $699K — premium inclusions, "
-                "3 bedrooms and study nook. Great entry point. "
-                "Terrace collection pricing also available on enquiry and may suit this range."
+            "Under_650K": (
+                "The Greenway Terrace starts from $599K — refined finishes, 2 bed/2 bath, private courtyard. "
+                "Ideal entry point, especially for WA first home buyers eligible for FHOG. "
+                "The Parkfront Terrace (from $619K) and Corner Signature Terrace (from $639K) also fall here."
+            ),
+            "AUD_650K_to_700K": (
+                "The Courtyard Signature Terrace (from $649K) is the standout — extended courtyard, study, premium finishes. "
+                "The Haven house and land (from $699K) is also reachable — 3 bed, 2 bath, study nook, full standard inclusions."
             ),
             "AUD_700K_to_800K": (
                 "The Solara (from $749K) and The Marlow (from $779K) are the sweet spot here. "
@@ -639,8 +707,9 @@ veloce_portfolio = {
         },
         "BuyerTypeMatching": {
             "FirstHomeBuyer": [
-                "VIL-HL-HAVEN — The Haven from $699K. Premium inclusions, manageable size, eligible for FHOG.",
-                "VIL-TER-01 to VIL-TER-04 — Terraces. Lock-and-leave convenience, parkside lifestyle.",
+                "VIL-TER-01 — The Greenway Terrace from $599K. Refined entry, FHOG eligible, lock-and-leave.",
+                "VIL-TER-02 — The Parkfront Terrace from $619K. Park-facing, premium, FHOG eligible.",
+                "VIL-HL-HAVEN — The Haven from $699K. Premium inclusions, manageable size, FHOG eligible.",
             ],
             "Family": [
                 "VIL-HL-SOLARA — The Solara. 4 bed, theatre, big alfresco. Lives brilliantly.",
@@ -653,12 +722,14 @@ veloce_portfolio = {
                 "VIL-APT-201 — Residence 201. Park views, balcony, rooftop amenities. Lock-and-leave.",
                 "VIL-APT-302 — Residence 302. Corner apartment with study zone. WFH-ready.",
                 "VIL-APT-502 — Residence 502. Executive layout with retreat and top-floor views.",
-                "VIL-TER-01 to VIL-TER-04 — Terraces. Low maintenance, parkside, close to highway.",
+                "VIL-TER-03 — Corner Signature Terrace. WFH study, park views, corner light.",
+                "VIL-TER-02 — Parkfront Terrace. Low maintenance, parkside, direct highway access.",
             ],
             "Downsizer": [
                 "VIL-APT-102 — Residence 102. Private garden apartment — outdoor space without maintenance.",
                 "VIL-APT-401 — Residence 401. 3 bedrooms, space without a big garden.",
-                "VIL-TER-01 to VIL-TER-04 — Terraces. Own front door, own courtyard, strata handles the rest.",
+                "VIL-TER-04 — Courtyard Signature Terrace. Extended courtyard, own front door, strata handles the rest.",
+                "VIL-TER-01 — Greenway Terrace. Elegance without upkeep, parkside calm.",
             ],
             "Investor": [
                 "VIL-APT-201 — Residence 201. Strong rental appeal, park facing, rooftop amenities.",
@@ -678,7 +749,8 @@ veloce_portfolio = {
             "If budget is slightly short, pivot warmly: acknowledge it positively and show the closest fit. "
             "If a visitor's preferred type has no match, guide them to the most similar option and explain the lifestyle crossover. "
             "Penthouse enquiries: always offer a private consultation rather than stating price in chat. "
-            "Terrace pricing: available on enquiry — frame scarcity naturally ('only 4 left from a collection of 10'). "
+            "Terrace pricing: ranges from $599K–$649K — name the specific terrace and its price naturally. "
+            "Frame terrace scarcity naturally ('only 4 left from a collection of 10'). "
             "Finance options are available across all collections — introduce naturally when appropriate."
         ),
     },
