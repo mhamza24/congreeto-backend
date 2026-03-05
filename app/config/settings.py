@@ -44,10 +44,12 @@ class Settings(BaseSettings):
     MAIL_SERVER: str = "smtp.gmail.com"
     MAIL_PORT: int = 587
 
+    SENTRY_DSN: str
+
 
 
     class Config:
-        env_file = ".env.development"
+        env_file = ".env"
 
 
 @lru_cache

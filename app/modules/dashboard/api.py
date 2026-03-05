@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Dict, Any
+
+import sentry_sdk
 from app.core.database import get_db
 from app.core.response import ApiResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +44,7 @@ async def get_summary(#payload: schemas.DashboardSummaryRequest,
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in dashboard summary endpoint")
+        sentry_sdk.capture_exception(Exception)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch dashboard summary. Please try again later.",

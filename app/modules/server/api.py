@@ -19,3 +19,7 @@ async def health_check():
             "status": "healthy"
         }
     )
+    
+@router.get("/sentry-debug")
+async def trigger_error():
+    division_by_zero = 1 / 0

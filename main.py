@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi import HTTPException
-
+from app.config.sentry import init_sentry
 from app.core import exceptions
 from app.config.logging import setup_logging
 from app.api.v1.router import router as v1_router
@@ -36,6 +36,7 @@ app = FastAPI(
     title=settings.APP_NAME,
 )
 
+init_sentry()
 
 # Enable CORS
 app.add_middleware(
