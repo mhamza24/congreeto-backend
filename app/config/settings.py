@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     OPEN_AI_KEY: str
     OPEN_AI_MODEL: str = "gpt-4.1"
     OPEN_AI_MAX_TOKENS: int = 800
-    OPEN_AI_TEMPERATURE: float = 0.7 #0.48
+    OPEN_AI_TEMPERATURE: float = 0.48
     
     #SCRAPPING SETTINGS
     SCRAPPER_WEB_MAX_PAGES:int=100  # safety cap — change as needed
