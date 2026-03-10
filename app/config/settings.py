@@ -1,5 +1,15 @@
-from pydantic_settings import BaseSettings
+import os
 from functools import lru_cache
+from pydantic_settings import BaseSettings
+
+
+ENV = os.getenv("ENV", "development")
+
+ENV_FILES = {
+    "DEVELOPMENT": ".env.development",
+    "STAGING": ".env.staging",
+    "PRODUCTION": ".env",
+}
 
 
 class Settings(BaseSettings):
@@ -24,19 +34,16 @@ class Settings(BaseSettings):
     CELERY_DEFAULT_QUEUE: str = "default"
     CELERY_MAX_TRIES: int = 3
     CELERY_DEFAULT_RETRY_DELAY: int = 5
-    
 
     OPEN_AI_KEY: str
     OPEN_AI_MODEL: str = "gpt-4.1"
     OPEN_AI_MAX_TOKENS: int = 800
     OPEN_AI_TEMPERATURE: float = 0.48
-    
-    #SCRAPPING SETTINGS
-    SCRAPPER_WEB_MAX_PAGES:int=100  # safety cap — change as needed
-    SCRAPPER_WEB_HEADLESS:bool=True  # set False to watch the browser
-    SCRAPPER_WEB_TIMEOUT:int=30_000 # ms per page 
-    
-    SCRAPPER_PDF_TIMEOUT: int = 30  # seconds
+
+    SCRAPPER_WEB_MAX_PAGES: int = 100
+    SCRAPPER_WEB_HEADLESS: bool = True
+    SCRAPPER_WEB_TIMEOUT: int = 30_000
+    SCRAPPER_PDF_TIMEOUT: int = 30
 
     MAIL_USERNAME: str
     MAIL_PASSWORD: str
@@ -46,10 +53,8 @@ class Settings(BaseSettings):
 
     SENTRY_DSN: str
 
-
-
     class Config:
-        env_file = ".env"
+        env_file = ENV_FILES.get(ENV, ".env.development")
 
 
 @lru_cache

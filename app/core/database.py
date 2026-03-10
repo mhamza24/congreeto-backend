@@ -8,6 +8,7 @@ settings = get_settings()
 # DATABASE URL TRANSFORMATION
 # -----------------------------
 
+
 def build_async_db_url() -> str:
     raw_url = settings.DATABASE_URL
 
@@ -27,13 +28,18 @@ def build_async_db_url() -> str:
 
 DATABASE_URL = build_async_db_url()
 
+
+
 # Module-level engine — ONLY for FastAPI routes (shares FastAPI's event loop)
+connect_args = {}
+if settings.ENV != "DEVELOPMENT":
+    connect_args = {"ssl": True}
 async_engine = create_async_engine(
     DATABASE_URL,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
-   connect_args={"ssl": True},
+    connect_args=connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
