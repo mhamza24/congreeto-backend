@@ -33,7 +33,7 @@ def live_link_scrapper(self, link: str) -> str:
     try:
         # Safely run async code in sync Celery task
         result = asyncio.run(website_parser.scrape_websites(link))
-        print(result)
+        # print(result)
         # Save result to DB here if needed
         logger.info(f"Scraping completed for link: {link}")
         print(f"Scraping completed for link: {link}")

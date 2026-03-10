@@ -65,15 +65,16 @@ async def create_or_continue_chat(
     # ── 2. Build LLM context ──────────────────────────────────────────────────
     if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
         system_prompt = json.dumps(aria_veloce_website_guide)
-        print(":::::::::website")
+        
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
         veloce_portfolio_str = json.dumps(veloce_portfolio)
         system_prompt += "\n\n Company portfolio: " + veloce_portfolio_str
-        print(":::::::::demo")
+        
 
 
     llm_messages: list[dict] = []
+
 
     if not is_new:
         # Only fetch the last N messages to cap the context window.
@@ -87,8 +88,14 @@ async def create_or_continue_chat(
             {"role": msg.role.value, "content": msg.content}
             for msg in history
         ]
+    else:
+        llm_messages.append(
+            {"role": "assistant", "content": "Hi, I'm Aria your guide to everything Veloce. What can I help with?"})
+
 
     llm_messages.append({"role": "user", "content": payload.message})
+
+    
 
     # ── 3. Call LLM ───────────────────────────────────────────────────────────
     try:
@@ -107,6 +114,12 @@ async def create_or_continue_chat(
     await repo.add_message(
         db,
         conversation_id=conversation.id,
+        role=MessageRole.assistant,
+        content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
+    )
+    await repo.add_message(
+        db,
+        conversation_id=conversation.id,
         role=MessageRole.user,
         content=payload.message,
     )
@@ -121,7 +134,7 @@ async def create_or_continue_chat(
     # ── 5. Update counters ────────────────────────────────────────────────────
     await repo.update_conversation_activity(
         conversation,
-        message_increment=2,
+        message_increment=3,
     )
 
     # ── 6. Commit ─────────────────────────────────────────────────────────────

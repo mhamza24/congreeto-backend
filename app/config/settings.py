@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings
 
 
-ENV = os.getenv("ENV", "development")
+ENV = os.getenv("ENV", "DEVELOPMENT")
 
 ENV_FILES = {
     "DEVELOPMENT": ".env.development",
@@ -38,7 +38,12 @@ class Settings(BaseSettings):
     OPEN_AI_KEY: str
     OPEN_AI_MODEL: str = "gpt-4.1"
     OPEN_AI_MAX_TOKENS: int = 800
+    OPEN_AI_MAX_RETRIES: int = 3
+    OPEN_AI_TIMEOUT: float = 30.0
     OPEN_AI_TEMPERATURE: float = 0.48
+    OPEN_AI_TOP_P: float = 0.9
+    OPEN_AI_FREQUENCY_PENALTY: float = 0.1
+    OPEN_AI_PRESENCE_PENALTY: float = 0.1
 
     SCRAPPER_WEB_MAX_PAGES: int = 100
     SCRAPPER_WEB_HEADLESS: bool = True
@@ -55,6 +60,8 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ENV_FILES.get(ENV, ".env.development")
+
+
 
 
 @lru_cache
