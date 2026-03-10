@@ -91,7 +91,12 @@ async def create_or_continue_chat(
     else:
         llm_messages.append(
             {"role": "assistant", "content": "Hi, I'm Aria your guide to everything Veloce. What can I help with?"})
-
+        await repo.add_message(
+        db,
+        conversation_id=conversation.id,
+        role=MessageRole.assistant,
+        content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
+     )
 
     llm_messages.append({"role": "user", "content": payload.message})
 
@@ -111,12 +116,7 @@ async def create_or_continue_chat(
         response_ms = None
 
     # ── 4. Persist messages ───────────────────────────────────────────────────
-    await repo.add_message(
-        db,
-        conversation_id=conversation.id,
-        role=MessageRole.assistant,
-        content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
-    )
+    
     await repo.add_message(
         db,
         conversation_id=conversation.id,
