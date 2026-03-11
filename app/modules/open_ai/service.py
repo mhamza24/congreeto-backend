@@ -1,4 +1,6 @@
 import logging
+import re
+
 from app.config.open_ai import async_client, OPENAI_MODEL, OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPEN_AI_FREQUENCY_PENALTY, OPEN_AI_PRESENCE_PENALTY, OPEN_AI_TOP_P
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,9 @@ async def openai_call_conversation(messages: list, system_instructions: str) -> 
             ],
             **OPENAI_CALL_PARAMS
         )
-        return response.choices[0].message.content
-
+        cleaned_response = re.sub(
+            r"[—–-]", ",", response.choices[0].message.content)
+        return cleaned_response
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         return "Sorry, I could not generate a response. Please try again shortly."
@@ -40,7 +43,9 @@ async def openai_call_conversation_analysis(messages: list, system_instructions:
             ],
             **OPENAI_CALL_PARAMS
         )
-        return response.choices[0].message.content
+        cleaned_response = re.sub(
+            r"[—–-]", ",", response.choices[0].message.content)
+        return cleaned_response
 
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
