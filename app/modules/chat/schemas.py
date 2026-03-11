@@ -57,7 +57,8 @@ class ChatCreateRequest(BaseModel):
     tenant_id: str = Field(min_length=1, max_length=100,
                            default="veloce",
                            description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
-
+    user_local_timestamp: Optional[datetime] = Field(
+        default=None, description="User's local timestamp for time-aware system prompts (optional, ISO format)")
 
 class ChatCompleteRequest(BaseModel):
     """

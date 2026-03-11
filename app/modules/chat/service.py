@@ -25,6 +25,7 @@ from app.modules.chat import tasks as background_tasks
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio
+from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.modules.chat.models import ConversationStatus
 
 from . import repository as repo
@@ -54,7 +55,6 @@ async def create_or_continue_chat(
       6. Commit transaction.
       7. Return public-facing response schema.
     """
-    logger.info(f"Received chat request: {payload}")
     # ── 1. Resolve conversation ───────────────────────────────────────────────
     conversation, is_new = await repo.get_or_create_conversation(
         db,
@@ -63,6 +63,10 @@ async def create_or_continue_chat(
     )
 
     # ── 2. Build LLM context ──────────────────────────────────────────────────
+
+    time_aware_system_prompt = get_time_awareness_prompt(
+        payload.user_local_timestamp)
+
     if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
         system_prompt = json.dumps(aria_veloce_website_guide)
         
@@ -71,7 +75,8 @@ async def create_or_continue_chat(
         veloce_portfolio_str = json.dumps(veloce_portfolio)
         system_prompt += "\n\n Company portfolio: " + veloce_portfolio_str
         
-
+    system_prompt += "\n\n Time awareness: " + \
+        json.dumps(time_aware_system_prompt)
 
     llm_messages: list[dict] = []
 
