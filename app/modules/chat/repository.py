@@ -424,3 +424,135 @@ async def upsert_conversation_insights(
     # ── 3. Commit both together ──────────────────────────────────────────────
     await db.commit()
     return saved
+
+
+
+async def upsert_website_conversation_insights(
+    db: AsyncSession,
+    *,
+    conversation__id: int,
+    tenant_id: str,
+    insights: dict,
+    lead_data: Optional[dict] = None,
+) -> ConversationInsights:
+    """
+    Upsert conversation insights for Veloce WEBSITE (B2B) conversations
+    and update the parent conversation with lead data — all in one transaction.
+
+    This method handles the getveloce.com website chatbot context where
+    the visitor is a real estate professional evaluating Veloce/ARIA for
+    their business — NOT a property buyer.
+
+    Column remapping vs the property chatbot:
+    ─────────────────────────────────────────
+      budget_min        → always None  (not applicable)
+      budget_max        → always None  (not applicable)
+      budget_currency   → subscription preference: "monthly" | "annual" | None
+      suburbs_mentioned → pain points string array
+      cities_mentioned  → business operating locations string array
+      property_types    → business type as single-item string array
+      bedrooms_wanted   → always None  (not applicable)
+
+    insights : the "insights" dict from the LLM response (Veloce website prompt)
+    lead_data: the "lead" dict from the LLM response (name, email, phone)
+    """
+    now = datetime.now(timezone.utc)
+
+    # ── Remap B2B fields from their repurposed column names ──────────────────
+    # These clarify intent at the call site — the DB columns are shared,
+    # but the semantics differ between chatbot contexts.
+    subscription_preference = insights.get("budget_currency")   # "monthly" | "annual" | None
+    pain_points             = insights.get("suburbs_mentioned")  # string[] | None
+    business_locations      = insights.get("cities_mentioned")   # string[] | None
+    business_type           = insights.get("property_types")     # ["real_estate_agency"] | None
+
+    # ── 1. Upsert insights ───────────────────────────────────────────────────
+    stmt = (
+        pg_insert(ConversationInsights)
+        .values(
+            conversation_id     = conversation__id,
+            tenant_id           = tenant_id,
+            lead_score          = insights.get("lead_score"),
+            lead_tier           = insights.get("lead_tier"),
+            intent              = insights.get("intent"),
+
+            # Not applicable in B2B context — always None
+            budget_min          = None,
+            budget_max          = None,
+            bedrooms_wanted     = None,
+
+            # Repurposed columns — B2B semantics
+            budget_currency     = subscription_preference,
+            suburbs_mentioned   = pain_points,
+            cities_mentioned    = business_locations,
+            property_types      = business_type,
+
+            timeline            = insights.get("timeline"),
+            sentiment           = insights.get("sentiment"),
+            engagement_score    = insights.get("engagement_score"),
+            topics_mentioned    = insights.get("topics_mentioned"),
+            ai_summary          = insights.get("ai_summary"),
+            ai_insights         = insights.get("ai_insights"),
+            processed_at        = now,
+            processing_version  = insights.get("processing_version", "v1.0-website"),
+        )
+        .on_conflict_do_update(
+            index_elements=["conversation_id"],
+            set_=dict(
+                lead_score          = insights.get("lead_score"),
+                lead_tier           = insights.get("lead_tier"),
+                intent              = insights.get("intent"),
+
+                budget_min          = None,
+                budget_max          = None,
+                bedrooms_wanted     = None,
+
+                budget_currency     = subscription_preference,
+                suburbs_mentioned   = pain_points,
+                cities_mentioned    = business_locations,
+                property_types      = business_type,
+
+                timeline            = insights.get("timeline"),
+                sentiment           = insights.get("sentiment"),
+                engagement_score    = insights.get("engagement_score"),
+                topics_mentioned    = insights.get("topics_mentioned"),
+                ai_summary          = insights.get("ai_summary"),
+                ai_insights         = insights.get("ai_insights"),
+                processed_at        = now,
+                processing_version  = insights.get("processing_version", "v1.0-website"),
+            )
+        )
+        .returning(ConversationInsights)
+    )
+
+    result = await db.execute(stmt)
+    saved  = result.scalars().first()
+
+    # ── 2. Update conversation with lead data ────────────────────────────────
+    if lead_data:
+        lead_name  = lead_data.get("name")
+        lead_email = lead_data.get("email")
+        lead_phone = lead_data.get("phone")
+        ai_summary = insights.get("ai_summary")
+
+        # Website leads: mark as lead only when all three identifiers are present.
+        # B2B visitors often share email/phone at end of conversation — requiring
+        # all three avoids flagging partial contacts as qualified leads.
+        is_lead = all([lead_name, lead_email, lead_phone])
+
+        await db.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation__id)
+            .values(
+                is_lead    = is_lead,
+                lead_name  = lead_name,
+                lead_email = lead_email,
+                lead_phone = lead_phone,
+                summary    = ai_summary,
+                status     = ConversationStatus.summarized,
+            )
+        )
+
+    # ── 3. Commit both together ──────────────────────────────────────────────
+    await db.commit()
+    return saved
