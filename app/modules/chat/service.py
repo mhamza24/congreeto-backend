@@ -26,7 +26,8 @@ from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
-from app.modules.chat.models import ConversationStatus
+from app.modules.chat.models import ConversationStatus, Message
+
 
 from . import repository as repo
 from . import schemas
