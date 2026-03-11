@@ -556,3 +556,46 @@ async def upsert_website_conversation_insights(
     # ── 3. Commit both together ──────────────────────────────────────────────
     await db.commit()
     return saved
+
+
+# ---------------------------------------------------------------------------
+# Corn jobs — fetching idle conversations for analysis
+# ---------------------------------------------------------------------------
+
+async def get_idle_conversations(
+    db: AsyncSession,
+    idle_before: datetime,
+) -> list[tuple[int, str]]:
+    """
+    Return (id, tenant_id) pairs for every in_progress conversation
+    that has had no activity since `idle_before`.
+
+    Excludes conversations that are already being processed
+    (status != in_progress) so a slow worker never double-fires.
+    """
+    result = await db.execute(
+        select(Conversation.id, Conversation.tenant_id)
+        .where(
+            Conversation.status == ConversationStatus.in_progress,
+            Conversation.last_activity_at < idle_before,
+        )
+    )
+    return result.all()          # list of Row(id, tenant_id)
+
+
+async def get_idle_conversations(
+    db: AsyncSession,
+    idle_before: datetime,
+) -> list:
+    """
+    Returns all in_progress conversations with no activity since idle_before.
+    Used exclusively by the idle-conversation cron job.
+    """
+    result = await db.execute(
+        select(Conversation.id, Conversation.tenant_id)
+        .where(
+            Conversation.status == ConversationStatus.in_progress,
+            Conversation.last_activity_at < idle_before,
+        )
+    )
+    return result.all()

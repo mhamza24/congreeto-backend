@@ -1,6 +1,7 @@
 from app.core.database import get_db, get_task_db_session
 import asyncio
 import json
+from datetime import datetime, timezone, timedelta
 from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights
 from app.config.settings import get_settings
 from app.config.celery_worker import celery_app, QUEUEEnum
@@ -10,8 +11,11 @@ from app.modules.email import service as email_service
 import logging
 from . import repository as repo
 import logging
+
+settings = get_settings()
 logger = logging.getLogger(__name__)
 
+IDLE_THRESHOLD_MINUTES = settings.CHAT_IDLE_THRESHOLD_MINUTES
 
 async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
     async with get_task_db_session() as db:
@@ -79,3 +83,21 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
         await db.commit()
 
         return {"insights_id": saved.id, "conversation_id": conversation__id}
+
+
+async def _fetch_idle_conversations() -> list[tuple[int, str]]:
+    """
+    Open a short-lived DB session, query idle conversations, close session.
+    Isolated here so the Celery task body stays clean and synchronous.
+    """
+    idle_before = datetime.now(timezone.utc) - \
+        timedelta(minutes=IDLE_THRESHOLD_MINUTES)
+
+    async for db in get_db():
+        try:
+            rows = await repo.get_idle_conversations(db, idle_before=idle_before)
+            return [(row.id, row.tenant_id) for row in rows]
+        finally:
+            await db.close()
+
+    return []
