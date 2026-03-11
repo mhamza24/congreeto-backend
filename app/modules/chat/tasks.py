@@ -53,10 +53,7 @@ def chat_completion_task(self, conversation__id: str, tenant_id: str):
 # ──────────────────────────────────────────────────────────────
 
 @celery_app.task(
-    bind=True,
     name="tasks.process_idle_conversations",   # must match beat_schedule key
-    max_retries=settings.CELERY_MAX_TRIES,
-    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
 )
 def process_idle_conversations():
