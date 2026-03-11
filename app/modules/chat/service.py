@@ -271,10 +271,9 @@ async def complete_conversation(
     payload: schemas.ChatCompleteRequest,
 
 ) -> schemas.ChatCompleteResponse:
-
-    if payload.tenant_id != "veloce":
-        raise ValueError(
-            f"Tenant with ID {payload.tenant_id} not found.")
+    print(payload)
+    if payload.tenant_id not in ("veloce", "veloce_website"):
+        raise ValueError(f"Tenant with ID {payload.tenant_id} not found.")
 
     conversation_exists = await repo.get_conversation_by_public_id(
         db,
