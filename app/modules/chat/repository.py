@@ -312,8 +312,18 @@ async def add_message(
     return message
 
 
+async def add_messages(
+    db: AsyncSession,
+    *,
+    messages: list[Message],
+) -> list[Message]:
+
+    db.add_all(messages)
+    await db.flush()
+    return messages
+
 # ---------------------------------------------------------------------------
-# ConversationInsights — writes
+# Conversation Insights — writes
 # ---------------------------------------------------------------------------
 
 async def upsert_conversation_insights(

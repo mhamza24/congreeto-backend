@@ -43,115 +43,120 @@ async def create_or_continue_chat(
     db: AsyncSession,
     *,
     payload: schemas.ChatCreateRequest,
-
 ) -> schemas.ChatReplyResponse:
-    """
-    Core chat flow:
-      1. Resolve or create conversation (by public_id).
-      2. Load recent history for LLM context (bounded to avoid token bloat).
-      3. Call LLM.
-      4. Persist user + assistant messages.
-      5. Update conversation counters.
-      6. Commit transaction.
-      7. Return public-facing response schema.
-    """
-    # ── 1. Resolve conversation ───────────────────────────────────────────────
+
+    # ── 1. Resolve conversation ─────────────────────────────────────────────
     conversation, is_new = await repo.get_or_create_conversation(
         db,
         conversation_public_id=payload.conversation_id,
         tenant_id=payload.tenant_id,
     )
 
-    # ── 2. Build LLM context ──────────────────────────────────────────────────
-
+    # ── 2. Build system prompt ──────────────────────────────────────────────
     time_aware_system_prompt = get_time_awareness_prompt(
-        payload.user_local_timestamp)
+        payload.user_local_timestamp
+    )
 
     if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
         system_prompt = json.dumps(aria_veloce_website_guide)
-        
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
-        veloce_portfolio_str = json.dumps(veloce_portfolio)
-        system_prompt += "\n\n Company portfolio: " + veloce_portfolio_str
-        
-    system_prompt += "\n\n Time awareness: " + \
+        system_prompt += "\n\nCompany portfolio: " + \
+            json.dumps(veloce_portfolio)
+
+    system_prompt += "\n\nTime awareness: " + \
         json.dumps(time_aware_system_prompt)
 
+    # ── 3. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
 
-
     if not is_new:
-        # Only fetch the last N messages to cap the context window.
-        # Adjust the limit to match your model's token budget.
         history = await repo.get_conversation_history(
             db,
             conversation__id=conversation.id,
             limit=50,
         )
+
         llm_messages = [
             {"role": msg.role.value, "content": msg.content}
             for msg in history
         ]
     else:
-        llm_messages.append(
-            {"role": "assistant", "content": "Hi, I'm Aria your guide to everything Veloce. What can I help with?"})
-        await repo.add_message(
-        db,
-        conversation_id=conversation.id,
-        role=MessageRole.assistant,
-        content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
-     )
+        greeting = "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
+        llm_messages.append({"role": "assistant", "content": greeting})
 
     llm_messages.append({"role": "user", "content": payload.message})
 
-    
-
-    # ── 3. Call LLM ───────────────────────────────────────────────────────────
+    # ── 4. Call LLM ─────────────────────────────────────────────────────────
     try:
         t0 = datetime.now()
+
         assistant_content = await openai_service.openai_call_conversation(
             llm_messages,
             system_prompt,
         )
+
         response_ms = int((datetime.now() - t0).total_seconds() * 1000)
+
     except Exception as exc:
         logger.exception("LLM call failed: %s", exc)
+
         assistant_content = "Sorry, I could not process your request right now."
         response_ms = None
 
-    # ── 4. Persist messages ───────────────────────────────────────────────────
-    
-    await repo.add_message(
-        db,
-        conversation_id=conversation.id,
-        role=MessageRole.user,
-        content=payload.message,
-    )
-    assistant_msg = await repo.add_message(
-        db,
-        conversation_id=conversation.id,
-        role=MessageRole.assistant,
-        content=assistant_content,
-        response_ms=response_ms,
+    # ── 5. Prepare messages for persistence ─────────────────────────────────
+    messages_to_insert = []
+
+    if is_new:
+        messages_to_insert.append(
+            Message(
+                conversation_id=conversation.id,
+                role=MessageRole.assistant,
+                content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
+            )
+        )
+
+    messages_to_insert.extend(
+        [
+            Message(
+                conversation_id=conversation.id,
+                role=MessageRole.user,
+                content=payload.message,
+            ),
+            Message(
+                conversation_id=conversation.id,
+                role=MessageRole.assistant,
+                content=assistant_content,
+                response_ms=response_ms,
+            ),
+        ]
     )
 
-    # ── 5. Update counters ────────────────────────────────────────────────────
+    # ── 6. Persist messages in one batch ─────────────────────────────────────
+    persisted_messages = await repo.add_messages(
+        db,
+        messages=messages_to_insert,
+    )
+
+    assistant_msg = persisted_messages[-1]
+
+    # ── 7. Update counters correctly ─────────────────────────────────────────
     await repo.update_conversation_activity(
         conversation,
-        message_increment=3,
+        message_increment=len(messages_to_insert),
     )
 
-    # ── 6. Commit ─────────────────────────────────────────────────────────────
+    # ── 8. Commit ───────────────────────────────────────────────────────────
     await db.commit()
 
-    # ── 7. Return ─────────────────────────────────────────────────────────────
+    # ── 9. Return response ──────────────────────────────────────────────────
     return schemas.ChatReplyResponse(
         conversation_id=conversation.public_id,
         message_id=assistant_msg.public_id,
         role=MessageRole.assistant,
         content=assistant_content,
     )
+
 
 
 
