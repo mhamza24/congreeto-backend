@@ -62,6 +62,7 @@ class Settings(BaseSettings):
 
     CHAT_IDLE_THRESHOLD_MINUTES: int = 15
     CHAT_IDLE_BATCH_SIZE: int = 100
+    CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT: int = 5
     
     
     class Config:

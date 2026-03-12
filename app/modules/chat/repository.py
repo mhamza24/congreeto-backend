@@ -35,6 +35,10 @@ from .models import Conversation, ConversationStatus, Message, MessageRole
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from datetime import datetime, timezone
 from .models import ConversationInsights
+from app.config.settings import get_settings
+
+settings = get_settings()
+CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT = settings.CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT
 # ---------------------------------------------------------------------------
 # Cursor helpers
 # ---------------------------------------------------------------------------
@@ -282,6 +286,38 @@ async def get_conversation_history(
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
+
+async def get_previous_sessions_by_identity(
+    db: AsyncSession,
+    *,
+    identity_hash: str,
+    exclude_conversation_id: int,
+    tenant_id: str,
+) -> list[Conversation]:
+    """
+    Fetch all previous closed conversations for a given identity hash.
+    Excludes the current conversation.
+    Ordered newest first so ARIA sees most recent context at the top.
+    Capped at 5 — no need to send ARIA 20 sessions worth of summaries.
+    """
+    result = await db.execute(
+        select(Conversation)
+        .where(
+            Conversation.identity_hash == identity_hash,
+            Conversation.tenant_id == tenant_id,
+            Conversation.id != exclude_conversation_id,
+            Conversation.status.in_([
+                ConversationStatus.closed,
+                ConversationStatus.summarized,
+                ConversationStatus.emailed,
+                ConversationStatus.archived,
+            ]),
+            Conversation.summary.isnot(None),
+        )
+        .order_by(Conversation.created_at.desc())
+        .limit(CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT)
+    )
+    return result.scalars().all()
 
 # ---------------------------------------------------------------------------
 # Message — writes

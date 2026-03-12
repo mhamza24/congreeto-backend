@@ -22,12 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import http_exception_handler
 from app.modules.open_ai import service as openai_service
 from app.modules.chat import tasks as background_tasks
+from app.utils.email_extractor import extract_and_validate_identity
+from app.utils.hashing_utils import hash_identity
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.modules.chat.models import ConversationStatus, Message
-
+from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
 
 from . import repository as repo
 from . import schemas
@@ -53,7 +55,30 @@ async def create_or_continue_chat(
         tenant_id=payload.tenant_id,
     )
 
-    # ── 2. Build system prompt ──────────────────────────────────────────────
+    # ── 2. Previous session recall ──────────────────────────────────────────────
+    # Only runs if identity captured in this message.
+    # No DB write here — purely read and inject.
+    previous_sessions_prompt = None
+
+    identity_value, identity_type, identity_valid = extract_and_validate_identity(
+        payload.message
+    )
+
+    if identity_valid:
+        identity_hash = hash_identity(identity_value)
+
+        previous_sessions = await repo.get_previous_sessions_by_identity(
+            db,
+            identity_hash=identity_hash,
+            exclude_conversation_id=conversation.id,
+            tenant_id=payload.tenant_id,
+        )
+
+    if previous_sessions:
+        returning_visitor_prompt = get_returning_visitor_prompt(
+            previous_sessions)
+
+    # ── 3. Build system prompt ──────────────────────────────────────────────
     time_aware_system_prompt = get_time_awareness_prompt(
         payload.user_local_timestamp
     )
@@ -67,8 +92,14 @@ async def create_or_continue_chat(
 
     system_prompt += "\n\nTime awareness: " + \
         json.dumps(time_aware_system_prompt)
+    if previous_sessions:
+        system_prompt += "\n\nReturning visitor context: " + \
+            json.dumps(returning_visitor_prompt)
+    # Inject previous sessions recap if we found any
+    if previous_sessions_prompt:
+        system_prompt += "\n\n" + previous_sessions_prompt
 
-    # ── 3. Build LLM context ────────────────────────────────────────────────
+    # ── 4. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
 
     if not is_new:
@@ -77,7 +108,6 @@ async def create_or_continue_chat(
             conversation__id=conversation.id,
             limit=50,
         )
-
         llm_messages = [
             {"role": msg.role.value, "content": msg.content}
             for msg in history
@@ -88,24 +118,20 @@ async def create_or_continue_chat(
 
     llm_messages.append({"role": "user", "content": payload.message})
 
-    # ── 4. Call LLM ─────────────────────────────────────────────────────────
+    # ── 5. Call LLM ─────────────────────────────────────────────────────────
     try:
         t0 = datetime.now()
-
         assistant_content = await openai_service.openai_call_conversation(
             llm_messages,
             system_prompt,
         )
-
         response_ms = int((datetime.now() - t0).total_seconds() * 1000)
-
     except Exception as exc:
         logger.exception("LLM call failed: %s", exc)
-
         assistant_content = "Sorry, I could not process your request right now."
         response_ms = None
 
-    # ── 5. Prepare messages for persistence ─────────────────────────────────
+    # ── 6. Prepare messages for persistence ─────────────────────────────────
     messages_to_insert = []
 
     if is_new:
@@ -117,48 +143,40 @@ async def create_or_continue_chat(
             )
         )
 
-    messages_to_insert.extend(
-        [
-            Message(
-                conversation_id=conversation.id,
-                role=MessageRole.user,
-                content=payload.message,
-            ),
-            Message(
-                conversation_id=conversation.id,
-                role=MessageRole.assistant,
-                content=assistant_content,
-                response_ms=response_ms,
-            ),
-        ]
-    )
+    messages_to_insert.extend([
+        Message(
+            conversation_id=conversation.id,
+            role=MessageRole.user,
+            content=payload.message,
+        ),
+        Message(
+            conversation_id=conversation.id,
+            role=MessageRole.assistant,
+            content=assistant_content,
+            response_ms=response_ms,
+        ),
+    ])
 
-    # ── 6. Persist messages in one batch ─────────────────────────────────────
-    persisted_messages = await repo.add_messages(
-        db,
-        messages=messages_to_insert,
-    )
-
+    # ── 7. Persist messages in one batch ─────────────────────────────────────
+    persisted_messages = await repo.add_messages(db, messages=messages_to_insert)
     assistant_msg = persisted_messages[-1]
 
-    # ── 7. Update counters correctly ─────────────────────────────────────────
+    # ── 8. Update counters ────────────────────────────────────────────────────
     await repo.update_conversation_activity(
         conversation,
         message_increment=len(messages_to_insert),
     )
 
-    # ── 8. Commit ───────────────────────────────────────────────────────────
+    # ── 9. Commit ────────────────────────────────────────────────────────────
     await db.commit()
 
-    # ── 9. Return response ──────────────────────────────────────────────────
+    # ── 10. Return response ───────────────────────────────────────────────────
     return schemas.ChatReplyResponse(
         conversation_id=conversation.public_id,
         message_id=assistant_msg.public_id,
         role=MessageRole.assistant,
         content=assistant_content,
     )
-
-
 
 
 # ---------------------------------------------------------------------------
