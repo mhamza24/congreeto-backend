@@ -63,11 +63,12 @@ async def create_or_continue_chat(
     identity_value, identity_type, identity_valid = extract_and_validate_identity(
             payload.message
         )
+    print("identity_type", identity_type)
     logger.info(f"[chat] identity_value={identity_value} type={identity_type} valid={identity_valid}")
 
     if identity_valid:
             identity_hash = hash_identity(identity_value)
-
+            print("identity_hash", identity_hash)
             previous_sessions = await repo.get_previous_sessions_by_identity(
                 db,
                 identity_hash=identity_hash,
@@ -76,6 +77,8 @@ async def create_or_continue_chat(
             )
 
             if previous_sessions:
+                print(
+                    f"Previous sessions found for identity hash {identity_hash}: {[s.public_id for s in previous_sessions]}")
                 logger.info(f"[chat] Returning visitor — {len(previous_sessions)} previous session(s) found")
                 returning_visitor_prompt = get_returning_visitor_prompt(previous_sessions)
 
