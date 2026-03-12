@@ -55,31 +55,29 @@ async def create_or_continue_chat(
         tenant_id=payload.tenant_id,
     )
 
-    # ── 2. Previous session recall ──────────────────────────────────────────────
-    # Only runs if identity captured in this message.
-    # No DB write here — purely read and inject.
-    previous_sessions_prompt = None
-    previous_sessions = []
+    # ── 2. Previous session recall ──────────────────────────────────────────
+    # Only on first message of a new conversation — never mid-chat.
+    # Purely read — no DB writes here.
+    returning_visitor_prompt = None
 
     identity_value, identity_type, identity_valid = extract_and_validate_identity(
-        payload.message
-    )
+            payload.message
+        )
+    logger.info(f"[chat] identity_value={identity_value} type={identity_type} valid={identity_valid}")
 
     if identity_valid:
-        identity_hash = hash_identity(identity_value)
+            identity_hash = hash_identity(identity_value)
 
-        previous_sessions = await repo.get_previous_sessions_by_identity(
-            db,
-            identity_hash=identity_hash,
-            exclude_conversation_id=conversation.id,
-            tenant_id=payload.tenant_id,
-        )
+            previous_sessions = await repo.get_previous_sessions_by_identity(
+                db,
+                identity_hash=identity_hash,
+                exclude_conversation_id=conversation.id,
+                tenant_id=payload.tenant_id,
+            )
 
-    if previous_sessions:
-        logger.info(":::::::sessions found", previous_sessions)
-        returning_visitor_prompt = get_returning_visitor_prompt(
-            previous_sessions)
-
+            if previous_sessions:
+                logger.info(f"[chat] Returning visitor — {len(previous_sessions)} previous session(s) found")
+                returning_visitor_prompt = get_returning_visitor_prompt(previous_sessions)
 
     # ── 3. Build system prompt ──────────────────────────────────────────────
     time_aware_system_prompt = get_time_awareness_prompt(
@@ -90,17 +88,12 @@ async def create_or_continue_chat(
         system_prompt = json.dumps(aria_veloce_website_guide)
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
-        system_prompt += "\n\nCompany portfolio: " + \
-            json.dumps(veloce_portfolio)
+        system_prompt += "\n\nCompany portfolio: " + json.dumps(veloce_portfolio)
 
-    system_prompt += "\n\nTime awareness: " + \
-        json.dumps(time_aware_system_prompt)
-    if previous_sessions:
-        system_prompt += "\n\nReturning visitor context: " + \
-            json.dumps(returning_visitor_prompt)
-    # Inject previous sessions recap if we found any
-    if previous_sessions_prompt:
-        system_prompt += "\n\n" + previous_sessions_prompt
+    system_prompt += "\n\nTime awareness: " + json.dumps(time_aware_system_prompt)
+
+    if returning_visitor_prompt:
+        system_prompt += "\n\nReturning visitor context: " + json.dumps(returning_visitor_prompt)
 
     # ── 4. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
