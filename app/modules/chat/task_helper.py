@@ -29,7 +29,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             {"role": msg.role.value, "content": msg.content}
             for msg in messages
         ]
-        if tenant_id is "veloce_website":
+        if tenant_id == "veloce_website":
             raw_response = await ai_service.openai_call_conversation_analysis(
                 formatted_messages,
                 json.dumps(system_prompt_veloce_website_insights)
@@ -47,7 +47,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
             raise
 
-        if tenant_id is "veloce_website":
+        if tenant_id == "veloce_website":
             saved = await repo.upsert_website_conversation_insights(
                 db,
                 conversation__id=conversation__id,
