@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    IDENTITY_HASH_SALT: str
+
     CELERY_RESULT_EXPIRES: int = 18000
     CELERY_TASK_TRACK_STARTED: bool = True
     CELERY_TASK_SERIALIZER: str = "json"

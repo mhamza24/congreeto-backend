@@ -28,6 +28,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.utils.hashing_utils import hash_identity
+
 from .models import Conversation, ConversationStatus, Message, MessageRole
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -416,6 +418,11 @@ async def upsert_conversation_insights(
                 lead_name=lead_name,
                 lead_email=lead_email,
                 lead_phone=lead_phone,
+                identity_hash=(
+                    hash_identity(lead_email) if lead_email
+                    else hash_identity(lead_phone) if lead_phone
+                    else None
+                ),
                 summary=ai_summary,
                 status=ConversationStatus.summarized
             )
@@ -548,6 +555,11 @@ async def upsert_website_conversation_insights(
                 lead_name  = lead_name,
                 lead_email = lead_email,
                 lead_phone = lead_phone,
+                identity_hash=(
+                    hash_identity(lead_email) if lead_email
+                    else hash_identity(lead_phone) if lead_phone
+                    else None
+                ),
                 summary    = ai_summary,
                 status     = ConversationStatus.summarized,
             )
