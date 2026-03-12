@@ -59,6 +59,7 @@ async def create_or_continue_chat(
     # Only runs if identity captured in this message.
     # No DB write here — purely read and inject.
     previous_sessions_prompt = None
+    previous_sessions = []
 
     identity_value, identity_type, identity_valid = extract_and_validate_identity(
         payload.message
@@ -77,6 +78,7 @@ async def create_or_continue_chat(
     if previous_sessions:
         returning_visitor_prompt = get_returning_visitor_prompt(
             previous_sessions)
+
 
     # ── 3. Build system prompt ──────────────────────────────────────────────
     time_aware_system_prompt = get_time_awareness_prompt(

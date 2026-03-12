@@ -60,7 +60,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                                                                 lead=parsed.get(
                                                                     "lead"),
                                                                 messages=formatted_messages,
-                                                                recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au", "Taha.salman@odysseynleo.com.au"])
+                                                                recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
         else:
             saved = await repo.upsert_conversation_insights(
                 db,
@@ -73,7 +73,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             await email_service.send_lead_insight_email(insights=parsed.get("insights", {}),
                                                     lead=parsed.get("lead"),
                                                     messages=formatted_messages,
-                                                    recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au", "Taha.salman@odysseynleo.com.au"])
+                                                    recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
 
         await repo.update_conversation_status(
             db,
