@@ -56,31 +56,35 @@ async def create_or_continue_chat(
     )
 
     # ── 2. Previous session recall ──────────────────────────────────────────
-    # Only on first message of a new conversation — never mid-chat.
-    # Purely read — no DB writes here.
     returning_visitor_prompt = None
 
     identity_value, identity_type, identity_valid = extract_and_validate_identity(
-            payload.message
+        payload.message
+    )
+
+    if identity_valid and not conversation.identity_hash:
+        identity_hash = hash_identity(identity_value)
+
+        previous_sessions = await repo.get_previous_sessions_by_identity(
+            db,
+            identity_hash=identity_hash,
+            exclude_conversation_id=conversation.id,
+            tenant_id=payload.tenant_id,
         )
-    print("identity_type", identity_type)
-    logger.info(f"[chat] identity_value={identity_value} type={identity_type} valid={identity_valid}")
 
-    if identity_valid:
-            identity_hash = hash_identity(identity_value)
-            print("identity_hash", identity_hash)
-            previous_sessions = await repo.get_previous_sessions_by_identity(
-                db,
-                identity_hash=identity_hash,
-                exclude_conversation_id=conversation.id,
-                tenant_id=payload.tenant_id,
-            )
+        if previous_sessions:
+            logger.info(
+                f"[chat] Returning visitor — {len(previous_sessions)} previous session(s) found")
+            returning_visitor_prompt = get_returning_visitor_prompt(
+                previous_sessions)
 
-            if previous_sessions:
-                print(
-                    f"Previous sessions found for identity hash {identity_hash}: {[s.public_id for s in previous_sessions]}")
-                logger.info(f"[chat] Returning visitor — {len(previous_sessions)} previous session(s) found")
-                returning_visitor_prompt = get_returning_visitor_prompt(previous_sessions)
+        # # Save hash — ensures recap only fires once per conversation
+        # conversation.identity_hash = identity_hash
+        # await repo.update_conversation_identity_hash(
+        #     db,
+        #     conversation__id=conversation.id,
+        #     identity_hash=identity_hash,
+        # )
 
     # ── 3. Build system prompt ──────────────────────────────────────────────
     time_aware_system_prompt = get_time_awareness_prompt(
@@ -93,10 +97,11 @@ async def create_or_continue_chat(
         system_prompt = json.dumps(aria_veloce_brand_representative)
         system_prompt += "\n\nCompany portfolio: " + json.dumps(veloce_portfolio)
 
-    system_prompt += "\n\nTime awareness: " + json.dumps(time_aware_system_prompt)
-
     if returning_visitor_prompt:
-        system_prompt += "\n\nReturning visitor context: " + json.dumps(returning_visitor_prompt)
+        system_prompt += "\n\nIMMEDIATE ACTION REQUIRED — EXECUTE BEFORE ANYTHING ELSE: " + \
+            json.dumps(returning_visitor_prompt)
+
+    system_prompt += "\n\nTime awareness: " + json.dumps(time_aware_system_prompt)
 
     # ── 4. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
@@ -114,6 +119,26 @@ async def create_or_continue_chat(
     else:
         greeting = "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
         llm_messages.append({"role": "assistant", "content": greeting})
+
+    # If returning visitor — inject reminder immediately before current message
+    # This sits closest to ARIA's next response, overriding conversation history pull
+    if returning_visitor_prompt:
+        llm_messages.append({
+            "role": "user",
+            "content": (
+                "SYSTEM REMINDER: Before replying to my next message, "
+                "acknowledge that I have visited before and give a natural recap "
+                "of our previous conversation. Context: "
+                + json.dumps(returning_visitor_prompt)
+            )
+        })
+        llm_messages.append({
+            "role": "assistant",
+            "content": (
+                "Understood. I will acknowledge your return and naturally recap "
+                "our previous conversation before responding to your message."
+            )
+        })
 
     llm_messages.append({"role": "user", "content": payload.message})
 
@@ -176,7 +201,6 @@ async def create_or_continue_chat(
         role=MessageRole.assistant,
         content=assistant_content,
     )
-
 
 # ---------------------------------------------------------------------------
 # 2. Conversation list (keyset paginated)
@@ -288,7 +312,7 @@ async def complete_conversation(
     payload: schemas.ChatCompleteRequest,
 
 ) -> schemas.ChatCompleteResponse:
-    print(payload)
+
     if payload.tenant_id not in ("veloce", "veloce_website"):
         raise ValueError(f"Tenant with ID {payload.tenant_id} not found.")
 
@@ -297,7 +321,6 @@ async def complete_conversation(
         conversation_public_id=payload.conversation_id,
         tenant_id=payload.tenant_id,
     )
-    logger.info(conversation_exists)
 
     if not conversation_exists:
         raise ValueError(

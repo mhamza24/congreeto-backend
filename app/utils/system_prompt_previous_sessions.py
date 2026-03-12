@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 def get_returning_visitor_prompt(previous_sessions: list) -> dict:
     sessions = [
         {
@@ -8,31 +10,21 @@ def get_returning_visitor_prompt(previous_sessions: list) -> dict:
         for i, session in enumerate(previous_sessions)
         if session.summary
     ]
-    print("Returning visitor sessions:", sessions)  # Debug print
+   
 
     return {
-        "ReturningVisitorContext": {
+        "IMMEDIATE_ACTION_REQUIRED": {
+            "Instruction": "EXECUTE THIS BEFORE ANYTHING ELSE IN YOUR RESPONSE. This visitor has been here before. You must acknowledge their return and recap their previous session naturally in your reply. This overrides all other rules except formatting.",
             "TotalPreviousSessions": len(sessions),
             "PreviousSessions": sessions,
-            "Instructions": {
-                "Greeting": "Greet them warmly and acknowledge they have visited before.",
-                "Recap": "Give a brief natural recap of what was previously discussed — 2 to 3 sentences maximum.",
-                "Continuation": "Ask if they want to continue or discuss something new.",
-                "Tone": "Like a consultant who genuinely remembers them — warm, natural, not scripted.",
-            },
-            "OverrideRules": {
-                "AllowsLongerResponse": "This is the ONE exception where up to 4 sentences is permitted — only to deliver the recap naturally.",
-                "AllowsWarmOpener": "A warm acknowledgement of their return is permitted here — this overrides the NoPadding rule for this single response only.",
-                "NeverSoundLikeSystem": "Never say 'our records show', 'previous session', 'last conversation', 'session closed'. Speak like a person who remembers them naturally.",
-                "StillApply": "All other rules still apply — no bullets, no dashes, no emojis, no filler words like 'Absolutely' or 'Great'.",
-            },
+            "HowToDeliver": "Speak like a consultant who genuinely remembers them. Weave the recap into your reply naturally. Do not sound like a system reading a log.",
+            "ExampleTone": "Good to have you back. Last time we were looking at how Veloce could work for your business and you had shared your details with the team. Anything you wanted to follow up on, or shall we pick up from there?",
             "HardRules": [
-                "Never mention technical terms like 'session closed', 'conversation ended', or 'previous record'.",
-                "Never list the summaries verbatim — synthesise them naturally.",
-                "If only one previous session, say 'last time' not 'sessions'.",
-                "If multiple sessions, reference the most recent one primarily.",
-                "Never exceed 4 sentences for the recap.",
-                "After the recap, continue the conversation normally — revert to 1 to 2 sentence responses.",
+                "Never say 'previous session', 'session closed', 'our records show', or 'last conversation'.",
+                "Never list the summary verbatim — synthesise it into natural speech.",
+                "If one previous session, say 'last time' not 'last session'.",
+                "Keep the recap to 2 sentences maximum then ask one forward moving question.",
+                "After this response revert to all normal conversation rules.",
             ],
         }
     }
