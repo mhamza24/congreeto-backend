@@ -76,6 +76,7 @@ async def create_or_continue_chat(
         )
 
     if previous_sessions:
+        logger.info(":::::::sessions found", previous_sessions)
         returning_visitor_prompt = get_returning_visitor_prompt(
             previous_sessions)
 
