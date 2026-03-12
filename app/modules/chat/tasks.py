@@ -10,13 +10,12 @@ from app.config.celery_worker import celery_app, QUEUEEnum
 from app.modules.open_ai import service as ai_service
 import logging
 from . import repository as repo
-from .task_helper import run_analysis,_fetch_idle_conversations,_dispatch_in_batches
+from .task_helper import run_analysis
+from .cron_tasks import _dispatch_in_batches
 
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
-
 
 
 @celery_app.task
