@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     SENTRY_DSN: str
 
     CHAT_IDLE_THRESHOLD_MINUTES: int = 15
+    CHAT_IDLE_BATCH_SIZE: int = 100
+    
+    
     class Config:
         env_file = ENV_FILES.get(ENV, ".env.development")
 

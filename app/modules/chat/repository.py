@@ -599,3 +599,22 @@ async def get_idle_conversations(
         )
     )
     return result.all()
+
+
+async def get_idle_conversations_batch(
+    db: AsyncSession,
+    idle_before: datetime,
+    after_id: int,       # keyset cursor — start after this internal id
+    limit: int = 100,
+) -> list:
+    result = await db.execute(
+        select(Conversation.id, Conversation.tenant_id)
+        .where(
+            Conversation.status == ConversationStatus.in_progress,
+            Conversation.last_activity_at < idle_before,
+            Conversation.id > after_id,   # keyset — no OFFSET
+        )
+        .order_by(Conversation.id)        # must order for keyset to be stable
+        .limit(limit)
+    )
+    return result.all()
