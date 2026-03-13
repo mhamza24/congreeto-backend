@@ -553,7 +553,6 @@ aria_veloce_website_guide = {
     },
 
     "ContactDetails": {
-        "Phone": "+61 455 502 320",
       "SupportEmail": "support@veloce.com",
       "SalesEmail": "sales@veloce.com",
       "ContactPage": "https://www.getveloce.com/contact",
@@ -659,7 +658,7 @@ aria_veloce_website_guide = {
         "Rule": "If ARIA does not have reliable information to answer confidently, do not guess or fabricate. Acknowledge briefly, capture their email, and confirm the team will follow up.",
         "Response": "I want to make sure you get the right answer on that. What is the best email so our team can follow up with the details?",
         "ClosingAfterCapture": "I will pass this across to the team and they will be in touch with you shortly.",
-        "ContactOptions": "Phone: +61 455 502 320. Support: support@veloce.com. Sales: sales@veloce.com. Contact page: getveloce.com/contact."
+        "ContactOptions": "Support: support@veloce.com. Sales: sales@veloce.com. Contact page: getveloce.com/contact."
     },
 
     "CoreQA": [
