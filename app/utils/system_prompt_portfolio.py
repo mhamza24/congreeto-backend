@@ -1,7 +1,7 @@
 # vilara_portfolio_prompt.py
 # ─────────────────────────────────────────────────────────────────────────────
 # ARIA — Veloce Property Portfolio Prompt
-# Vilara Park | All Three Collections
+# Vilara Park | All Four Collections (inc. Banksia Grove Land)
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE NOTE:
 # This prompt is injected alongside the ARIA system prompt at runtime.
@@ -17,12 +17,13 @@ veloce_portfolio = {
         "Overview": (
             "Vilara Park is a boutique, architecturally designed development in Ellenbrook, "
             "positioned directly opposite open parkland and tree-lined walking paths. "
-            "The project comprises three distinct collections: boutique luxury apartments, "
-            "a signature house and land collection, and a curated terrace collection. "
+            "The project comprises four distinct collections: boutique luxury apartments, "
+            "a signature house and land collection, a curated terrace collection, "
+            "and the Banksia Grove Estate land release. "
             "Over 50% already sold. Limited residences remain."
         ),
         "KeySellingPoints": [
-            "Boutique scale — only 12 apartments, limited house and land packages, and 4 remaining terraces",
+            "Boutique scale — only 12 apartments, limited house and land packages, 4 remaining terraces, and 12 land lots",
             "Directly opposite landscaped parkland and walking trails",
             "Ground-floor café (Café Vilara) within the building",
             "Resort-style rooftop amenities: heated pool, outdoor dining, gym, cinema, residents' lounge",
@@ -672,14 +673,237 @@ veloce_portfolio = {
     },
 
     # ─────────────────────────────────────────────────────────────────────────
+    # COLLECTION 4 — BANKSIA GROVE ESTATE (LAND)
+    # ─────────────────────────────────────────────────────────────────────────
+    "LandCollection": {
+        "CollectionName": "Banksia Grove Estate — Final Stage Land Release",
+        "Location": "Ellenbrook, Western Australia",
+        "Availability": "Final stage release — limited to 12 premium lots. All titled and ready to build.",
+        "Overview": (
+            "An exclusive final-stage land release in the thriving community of Ellenbrook. "
+            "Thoughtfully designed for modern living, this boutique release offers a limited collection "
+            "of 12 fully titled residential lots ideal for families, first-home buyers, and investors "
+            "looking to secure land in one of Perth's fastest-growing corridors. "
+            "Surrounded by established amenities, parks, and schools, Banksia Grove Estate provides "
+            "the perfect balance between peaceful suburban living and everyday convenience."
+        ),
+        "KeyStats": {
+            "TotalLots": 12,
+            "LotSize": "360m² (consistent across all lots)",
+            "Status": "100% titled and ready for immediate construction",
+            "DistanceToCBD": "Approx 35 minutes via Tonkin Highway",
+            "PriceRange": "$345,000 – $389,000",
+        },
+        "EstateFeatures": [
+            "Underground power and utilities connected",
+            "NBN ready on every lot",
+            "Level blocks designed for easy construction",
+            "Close to parks and playgrounds",
+            "Minutes to quality schools",
+            "Near Ellenbrook Central Shopping Centre (Coles, Woolworths, cafés, retail)",
+            "Easy access to Tonkin Highway and Perth CBD",
+            "Short drive to Swan Valley wineries and restaurants",
+            "All lots fully titled — build immediately, no delays",
+        ],
+        "Listings": [
+            {
+                "ListingID": "BGE-LOT-101",
+                "LotNumber": "Lot 101",
+                "Address": "14 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12m",
+                "Price": 355000,
+                "PriceDisplay": "$355,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Well-proportioned 12m frontage block — ideal for a wide range of single or double-storey modern home designs.",
+            },
+            {
+                "ListingID": "BGE-LOT-102",
+                "LotNumber": "Lot 102",
+                "Address": "16 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12m",
+                "Price": 357000,
+                "PriceDisplay": "$357,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Solid 12m frontage in the heart of the estate — balanced streetscape and convenient access to nearby parklands.",
+            },
+            {
+                "ListingID": "BGE-LOT-103",
+                "LotNumber": "Lot 103",
+                "Address": "18 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "10.5m",
+                "Price": 349000,
+                "PriceDisplay": "$349,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": (
+                    "Most affordable block in the collection. Efficient 10.5m frontage suits compact modern home designs — "
+                    "popular with first-home buyers, investors, and downsizers."
+                ),
+            },
+            {
+                "ListingID": "BGE-LOT-104",
+                "LotNumber": "Lot 104",
+                "Address": "1 Jacaranda Lane, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "15m",
+                "Price": 379000,
+                "PriceDisplay": "$379,000",
+                "Status": "Available",
+                "Tags": ["Corner Lot"],
+                "KeyPitch": (
+                    "Premium corner position — wider 15m frontage, greater design flexibility, and increased street presence. "
+                    "Corner blocks are highly sought after and typically attract stronger resale value."
+                ),
+            },
+            {
+                "ListingID": "BGE-LOT-105",
+                "LotNumber": "Lot 105",
+                "Address": "20 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12.5m",
+                "Price": 362000,
+                "PriceDisplay": "$362,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Slightly wider 12.5m frontage allows more flexibility in home design — great for families wanting open-plan living with a proper outdoor zone.",
+            },
+            {
+                "ListingID": "BGE-LOT-106",
+                "LotNumber": "Lot 106",
+                "Address": "22 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12m",
+                "Price": 359000,
+                "PriceDisplay": "$359,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Regular 12m frontage — efficient, cost-effective to build on, suits double garages, open-plan living and outdoor entertaining.",
+            },
+            {
+                "ListingID": "BGE-LOT-107",
+                "LotNumber": "Lot 107",
+                "Address": "3 Jacaranda Lane, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "10m",
+                "Price": 345000,
+                "PriceDisplay": "$345,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": (
+                    "Entry price point in the estate at $345K. Compact 10m frontage ideal for space-efficient modern homes — "
+                    "particularly appealing for first-home buyers and investors."
+                ),
+            },
+            {
+                "ListingID": "BGE-LOT-108",
+                "LotNumber": "Lot 108",
+                "Address": "24 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "13m",
+                "Price": 365000,
+                "PriceDisplay": "$365,000",
+                "Status": "Available",
+                "Tags": ["Wide Frontage"],
+                "KeyPitch": (
+                    "Wider 13m frontage with strong design freedom — suits larger living areas, expanded garages, "
+                    "or homes with enhanced street-facing architecture."
+                ),
+                "Note": "Listed as $385,000 in some source materials; confirmed price is $365,000. Verify at enquiry.",
+            },
+            {
+                "ListingID": "BGE-LOT-109",
+                "LotNumber": "Lot 109",
+                "Address": "26 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12m",
+                "Price": 358000,
+                "PriceDisplay": "$358,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Well-proportioned block surrounded by landscaped streets — ideal for a comfortable family home with double garage and outdoor entertaining.",
+            },
+            {
+                "ListingID": "BGE-LOT-110",
+                "LotNumber": "Lot 110",
+                "Address": "5 Jacaranda Lane, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "11m",
+                "Price": 352000,
+                "PriceDisplay": "$352,000",
+                "Status": "Available",
+                "Tags": [],
+                "KeyPitch": "Practical 11m frontage in a quiet street setting — flexible for modern single or double-storey designs at an accessible price.",
+            },
+            {
+                "ListingID": "BGE-LOT-111",
+                "LotNumber": "Lot 111",
+                "Address": "7 Jacaranda Lane, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "12.5m",
+                "Price": 372000,
+                "PriceDisplay": "$372,000",
+                "Status": "Available",
+                "Tags": ["Park Facing"],
+                "KeyPitch": (
+                    "Park-facing position — wake up to green space instead of rooftops. "
+                    "Park-facing lots hold lifestyle and resale appeal above standard street-facing blocks."
+                ),
+            },
+            {
+                "ListingID": "BGE-LOT-112",
+                "LotNumber": "Lot 112",
+                "Address": "28 Banksia Terrace, Ellenbrook",
+                "LandSize": "360m²",
+                "Frontage": "15m",
+                "Price": 389000,
+                "PriceDisplay": "$389,000",
+                "Status": "Available",
+                "Tags": ["Premium Lot"],
+                "KeyPitch": (
+                    "The finest block in the estate — widest 15m frontage, premium position, strong street presence. "
+                    "Ideal for buyers building a standout home. Expect strong demand."
+                ),
+            },
+        ],
+        "LandNote": (
+            "All 12 lots are 360m², fully titled, and ready for immediate construction — no delays. "
+            "Prices range from $345,000 (Lot 107) to $389,000 (Lot 112). "
+            "Standout lots: Lot 104 (corner, $379K), Lot 108 (wide frontage, $365K), "
+            "Lot 111 (park facing, $372K), Lot 112 (premium, $389K). "
+            "WA first home buyers may be eligible for the First Home Owner Grant and stamp duty concessions. "
+            "Finance and construction loan support available through accredited partners."
+        ),
+        "FirstHomeBuyerNote": (
+            "Purchasing land and building a new home may qualify WA first home buyers for the First Home Owner Grant "
+            "and stamp duty concessions. Speak to the finance team early to understand eligibility and structure."
+        ),
+    },
+
+    # ─────────────────────────────────────────────────────────────────────────
     # PORTFOLIO GUIDANCE — FOR ARIA USE
     # ─────────────────────────────────────────────────────────────────────────
     "PortfolioGuidance": {
         "BudgetMatching": {
+            "Under_400K": (
+                "Banksia Grove Estate land lots start from $345,000 (Lot 107). "
+                "All 12 lots are titled and ready to build — ideal for buyers who want to choose their own builder. "
+                "Entry lots range from $345K–$365K; premium and park-facing lots reach $372K–$389K."
+            ),
+            "AUD_345K_to_400K": (
+                "Banksia Grove Estate is the right conversation. "
+                "Lot 107 ($345K, 10m frontage) and Lot 103 ($349K, 10.5m) are the entry points. "
+                "Lot 104 ($379K, corner) and Lot 112 ($389K, premium wide frontage) are the standouts at the top of this range."
+            ),
             "Under_650K": (
                 "The Greenway Terrace starts from $599K — refined finishes, 2 bed/2 bath, private courtyard. "
                 "Ideal entry point, especially for WA first home buyers eligible for FHOG. "
-                "The Parkfront Terrace (from $619K) and Corner Signature Terrace (from $639K) also fall here."
+                "The Parkfront Terrace (from $619K) and Corner Signature Terrace (from $639K) also fall here. "
+                "Alternatively, land lots at Banksia Grove Estate range from $345K–$389K for buyers wanting to build."
             ),
             "AUD_650K_to_700K": (
                 "The Courtyard Signature Terrace (from $649K) is the standout — extended courtyard, study, premium finishes. "
@@ -707,6 +931,8 @@ veloce_portfolio = {
         },
         "BuyerTypeMatching": {
             "FirstHomeBuyer": [
+                "BGE-LOT-107 — Lot 107 from $345K. Entry land price, titled and ready to build. FHOG eligible.",
+                "BGE-LOT-103 — Lot 103 from $349K. Efficient 10.5m block, great value entry. FHOG eligible.",
                 "VIL-TER-01 — The Greenway Terrace from $599K. Refined entry, FHOG eligible, lock-and-leave.",
                 "VIL-TER-02 — The Parkfront Terrace from $619K. Park-facing, premium, FHOG eligible.",
                 "VIL-HL-HAVEN — The Haven from $699K. Premium inclusions, manageable size, FHOG eligible.",
@@ -717,6 +943,8 @@ veloce_portfolio = {
                 "VIL-HL-VALEN — The Valen. Double storey, retreat, guest suite.",
                 "VIL-HL-AURELIA — The Aurelia. 5 bed, theatre, guest suite. The legacy home.",
                 "VIL-APT-401 — Residence 401. 3-bed apartment for families wanting boutique living.",
+                "BGE-LOT-104 — Lot 104 corner block. Build your own family home with design freedom.",
+                "BGE-LOT-112 — Lot 112 premium wide frontage. The best block to build on in the estate.",
             ],
             "Professional": [
                 "VIL-APT-201 — Residence 201. Park views, balcony, rooftop amenities. Lock-and-leave.",
@@ -732,6 +960,9 @@ veloce_portfolio = {
                 "VIL-TER-01 — Greenway Terrace. Elegance without upkeep, parkside calm.",
             ],
             "Investor": [
+                "BGE-LOT-107 — Lot 107 from $345K. Lowest entry in the portfolio. Strong rental demand from owner-builders.",
+                "BGE-LOT-103 — Lot 103 from $349K. Compact efficient block, low land cost for build-to-rent strategy.",
+                "BGE-LOT-111 — Lot 111 park facing from $372K. Park-facing scarcity drives rental and resale premium.",
                 "VIL-APT-201 — Residence 201. Strong rental appeal, park facing, rooftop amenities.",
                 "VIL-APT-302 — Residence 302. Corner position, study zone, broad renter appeal.",
                 "VIL-HL-HAVEN — The Haven. Entry-level pricing, rental demand from first-home aspirants.",
@@ -741,6 +972,14 @@ veloce_portfolio = {
                 "VIL-APT-502 — Residence 502. Executive layout, treetop views, exclusive.",
                 "VIL-APT-601 — The Penthouse. Entire top floor. Panoramic views. Price on application.",
                 "VIL-HL-AURELIA — The Aurelia. 5-bed legacy family home.",
+                "BGE-LOT-112 — Lot 112. Widest frontage, premium position — build a standout prestige home.",
+            ],
+            "LandBuyer": [
+                "BGE-LOT-104 — Lot 104, Corner, $379K. Best design flexibility in the estate.",
+                "BGE-LOT-111 — Lot 111, Park Facing, $372K. Best lifestyle position in the estate.",
+                "BGE-LOT-112 — Lot 112, Premium Wide Frontage, $389K. Best block in the estate.",
+                "BGE-LOT-108 — Lot 108, Wide Frontage, $365K. Strong design freedom at a mid-range price.",
+                "BGE-LOT-107 — Lot 107, $345K. Best entry price in the portfolio.",
             ],
         },
         "ARIANotes": (
@@ -751,6 +990,10 @@ veloce_portfolio = {
             "Penthouse enquiries: always offer a private consultation rather than stating price in chat. "
             "Terrace pricing: ranges from $599K–$649K — name the specific terrace and its price naturally. "
             "Frame terrace scarcity naturally ('only 4 left from a collection of 10'). "
+            "Land lots: all 12 are 360m², titled and ready to build. Prices $345K–$389K. "
+            "Frame land lot scarcity naturally ('final stage release — only 12 lots'). "
+            "Highlight standout lots by tag: Corner (Lot 104), Wide Frontage (Lot 108), Park Facing (Lot 111), Premium (Lot 112). "
+            "For land buyers, always mention construction loan and FHOG eligibility naturally. "
             "Finance options are available across all collections — introduce naturally when appropriate."
         ),
     },
