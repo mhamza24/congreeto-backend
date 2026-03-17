@@ -25,9 +25,9 @@ from sqlalchemy import (
     ARRAY, Column, String, Text, Integer, BigInteger, Boolean,
     DateTime, Enum, ForeignKey, Index,
 )
-from sqlalchemy.orm import declarative_base, relationship
-
-Base = declarative_base()
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import ENUM
+from app.core.db_base import Base
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,14 @@ class ConversationStatus(str, enum.Enum):
     summarized  = "summarized"
     emailed     = "emailed"
     archived    = "archived"
+    
+    # PostgreSQL enum for database
+    conversationstatus_enum = ENUM(
+        'in_progress', 'closed', 'summarized', 'emailed', 'archived',
+        name='conversationstatus',
+        create_type=False   # avoids trying to recreate in migrations
+    )
+
 
 
 class MessageRole(str, enum.Enum):
@@ -77,6 +85,7 @@ class MessageRole(str, enum.Enum):
 class ChatbotIdentity(str, enum.Enum):
     website = "website"
     veloce_demo = "veloce_demo"
+
 
 
 # ---------------------------------------------------------------------------

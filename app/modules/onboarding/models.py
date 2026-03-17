@@ -43,8 +43,8 @@ from sqlalchemy.orm import declarative_base, relationship
 #   from .models import Base, utcnow, new_public_id
 #
 # For standalone clarity, they are re-declared here:
+from app.core.db_base import Base
 
-Base = declarative_base()
 
 
 def utcnow() -> datetime:

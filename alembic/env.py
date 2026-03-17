@@ -1,6 +1,7 @@
 from sqlalchemy.pool import QueuePool
-from app.modules.chat.models import Base, Conversation, Message, ConversationInsights
-
+from app.core.db_base import Base
+from app.modules.chat.models import  Conversation, Message, ConversationInsights
+from app.modules.inquiries.models import  GeneralInquiry, DemoInquiry
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
