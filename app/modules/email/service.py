@@ -4,6 +4,9 @@ from typing import Any
 from fastapi_mail import FastMail, MessageSchema, MessageType
 from app.config.email import conf as email_config
 
+import logging
+
+logger = logging.getLogger(__name__)
 fm = FastMail(email_config)
 
 
@@ -494,6 +497,8 @@ async def send_lead_insight_email(
         body=html_body,
         subtype=MessageType.html,
     ))
+    logger.info(
+        f"Sent lead email to {recipients} for lead {lead_name} with tier {tier}")
 
 
 async def send_website_lead_insight_email(
@@ -530,3 +535,5 @@ async def send_website_lead_insight_email(
         body=html_body,
         subtype=MessageType.html,
     ))
+    logger.info(
+        f"Sent website lead email to {recipients} for lead {lead_name} with intent {raw_intent}")
