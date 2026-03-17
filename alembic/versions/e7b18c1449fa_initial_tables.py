@@ -1,8 +1,8 @@
-"""initial
+"""initial_tables
 
-Revision ID: bece44b17c01
+Revision ID: e7b18c1449fa
 Revises: 
-Create Date: 2026-03-17 16:13:58.561851
+Create Date: 2026-03-17 19:54:36.585311
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'bece44b17c01'
+revision: str = 'e7b18c1449fa'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -63,7 +63,7 @@ def upgrade() -> None:
     sa.Column('property_sectors', postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment='List of selected property sectors'),
     sa.Column('states', postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment='List of selected Australian states'),
     sa.Column('message', sa.Text(), nullable=True),
-    sa.Column('status', sa.Enum('submitted', 'reviewed', 'contacted', 'qualified', 'converted', 'archived', name='inquirystatus'), nullable=False),
+    sa.Column('status', sa.Enum('submitted', 'reviewed', 'contacted', 'qualified', 'converted', 'archived', 'inquirystatus_enum', name='inquirystatus'), nullable=False),
     sa.Column('visitor_ip_hash', sa.String(), nullable=True),
     sa.Column('visitor_ua', sa.String(), nullable=True),
     sa.Column('page_url', sa.String(), nullable=True),
@@ -84,7 +84,7 @@ def upgrade() -> None:
     sa.Column('company_name', sa.String(), nullable=True),
     sa.Column('subject', sa.String(), nullable=False),
     sa.Column('message', sa.Text(), nullable=False),
-    sa.Column('status', sa.Enum('submitted', 'reviewed', 'contacted', 'qualified', 'converted', 'archived', name='inquirystatus'), nullable=False),
+    sa.Column('status', sa.Enum('submitted', 'reviewed', 'contacted', 'qualified', 'converted', 'archived', 'inquirystatus_enum', name='inquirystatus'), nullable=False),
     sa.Column('visitor_ip_hash', sa.String(), nullable=True),
     sa.Column('visitor_ua', sa.String(), nullable=True),
     sa.Column('page_url', sa.String(), nullable=True),

@@ -66,15 +66,14 @@ class ConversationStatus(str, enum.Enum):
     summarized  = "summarized"
     emailed     = "emailed"
     archived    = "archived"
-    
-    # PostgreSQL enum for database
-    conversationstatus_enum = ENUM(
-        'in_progress', 'closed', 'summarized', 'emailed', 'archived',
-        name='conversationstatus',
-        create_type=False   # avoids trying to recreate in migrations
-    )
 
 
+# Define the PostgreSQL ENUM type separately, outside the class
+conversationstatus_pg_enum = ENUM(
+    'in_progress', 'closed', 'summarized', 'emailed', 'archived',
+    name='conversationstatus',
+    create_type=False
+)
 
 class MessageRole(str, enum.Enum):
     user      = "user"
@@ -134,7 +133,7 @@ class Conversation(Base):
 
     # ── Status & Lifecycle ───────────────────────────────────────────────────
     status = Column(
-        Enum(ConversationStatus),
+        Enum(ConversationStatus, name='conversationstatus', create_type=False),
         nullable=False,
         default=ConversationStatus.in_progress,
     )
