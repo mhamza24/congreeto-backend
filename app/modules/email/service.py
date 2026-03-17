@@ -3,11 +3,18 @@ from typing import Any
 
 from fastapi_mail import FastMail, MessageSchema, MessageType
 from app.config.email import conf as email_config
+from app.config.settings import get_settings
 
+settings = get_settings()
 import logging
 
 logger = logging.getLogger(__name__)
 fm = FastMail(email_config)
+
+
+print(f"Using server: {settings.MAIL_SERVER}")
+print(f"Using port: {settings.MAIL_PORT}")
+print(f"Using username: {settings.MAIL_USERNAME}")
 
 
 async def test(recipients_list: list[str], username: str = "MHK"):
