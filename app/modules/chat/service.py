@@ -27,6 +27,7 @@ from app.utils.hashing_utils import hash_identity
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio
+from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.modules.chat.models import ConversationStatus, Message
 from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
@@ -37,15 +38,6 @@ from .models import MessageRole
 
 logger = logging.getLogger(__name__)
 
-ADMIN_CONSOLE_SYSTEM_PROMPT = """
-You are an internal support assistant for the Veloce admin portal.
-Your job is to help portal users — such as admins and staff — navigate the platform.
-When a user asks where to find a feature, setting, or piece of data, guide them clearly
-to the relevant section of the portal (e.g. "You can find that under Settings > Tenants"
-or "Navigate to the Conversations tab on the left sidebar").
-Keep responses concise, practical, and navigation-focused.
-Do not discuss topics unrelated to the admin portal.
-""".strip()
 
 # ---------------------------------------------------------------------------
 # 1. Chat — create or continue
@@ -228,7 +220,7 @@ async def admin_console_chat(
     """
 
     # ── 1. Build system prompt ──────────────────────────────────────────────
-    system_prompt = ADMIN_CONSOLE_SYSTEM_PROMPT
+    system_prompt = json.dumps(admin_console_system_prompt)
 
     if payload.tenant_id:
         system_prompt += f"\n\nTenant context: {payload.tenant_id}"
