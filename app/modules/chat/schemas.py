@@ -32,6 +32,10 @@ class ChatbotIdentityEnum(str, Enum):
 class ChatMessagePair(BaseModel):
     user: str
     assistant: str
+    
+class AdminConsoleMessage(BaseModel):
+    role: MessageRole
+    content: str = Field(..., min_length=1, max_length=32_000)
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +63,29 @@ class ChatCreateRequest(BaseModel):
                            description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
     user_local_timestamp: Optional[datetime] = Field(
         default=None, description="User's local timestamp for time-aware system prompts (optional, ISO format)")
+
+
+
+class AdminConsoleChatCreateRequest(BaseModel):
+    """
+    Stateless admin console chat — no DB persistence.
+    Pass the full conversation history (including the latest user message) on every call.
+    """
+    messages: list[AdminConsoleMessage] = Field(
+        ...,
+        min_length=1,
+        description="Full conversation history with roles. Latest user message must be last.",
+    )
+    tenant_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Optional tenant ID for custom personalization.",
+    )
+    user_local_timestamp: Optional[datetime] = Field(
+        default=None,
+        description="User's local timestamp for time-aware system prompts (ISO format).",
+    )
+
 
 class ChatCompleteRequest(BaseModel):
     """
@@ -163,6 +190,11 @@ class ConversationDetailResponse(BaseModel):
 class ChatReplyResponse(BaseModel):
     conversation_id: str = Field(description="Public conversation ID (uuid7).")
     message_id: str = Field(description="Public message ID (uuid7).")
+    role: MessageRole
+    content: str
+
+
+class AdminConsoleChatReplyResponse(BaseModel):
     role: MessageRole
     content: str
 

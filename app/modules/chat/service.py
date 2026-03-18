@@ -37,6 +37,15 @@ from .models import MessageRole
 
 logger = logging.getLogger(__name__)
 
+ADMIN_CONSOLE_SYSTEM_PROMPT = """
+You are an internal support assistant for the Veloce admin portal.
+Your job is to help portal users — such as admins and staff — navigate the platform.
+When a user asks where to find a feature, setting, or piece of data, guide them clearly
+to the relevant section of the portal (e.g. "You can find that under Settings > Tenants"
+or "Navigate to the Conversations tab on the left sidebar").
+Keep responses concise, practical, and navigation-focused.
+Do not discuss topics unrelated to the admin portal.
+""".strip()
 
 # ---------------------------------------------------------------------------
 # 1. Chat — create or continue
@@ -202,8 +211,56 @@ async def create_or_continue_chat(
         content=assistant_content,
     )
 
+
 # ---------------------------------------------------------------------------
-# 2. Conversation list (keyset paginated)
+# 2. Chat — chatting continue
+# ---------------------------------------------------------------------------
+
+async def admin_console_chat(
+    db: AsyncSession,
+    *,
+    payload: schemas.AdminConsoleChatCreateRequest,
+) -> schemas.AdminConsoleChatReplyResponse:
+    """
+    Stateless chat for the admin console.
+    Accepts full message history, calls the LLM, returns the reply.
+    Nothing is read from or written to the database.
+    """
+
+    # ── 1. Build system prompt ──────────────────────────────────────────────
+    system_prompt = ADMIN_CONSOLE_SYSTEM_PROMPT
+
+    if payload.tenant_id:
+        system_prompt += f"\n\nTenant context: {payload.tenant_id}"
+
+    time_aware = get_time_awareness_prompt(payload.user_local_timestamp)
+    system_prompt += "\n\nTime awareness: " + json.dumps(time_aware)
+
+    # ── 2. Build LLM message list ───────────────────────────────────────────
+    llm_messages: list[dict] = [
+        {"role": msg.role.value, "content": msg.content}
+        for msg in payload.messages
+    ]
+
+    # ── 3. Call LLM ─────────────────────────────────────────────────────────
+    try:
+        assistant_content = await openai_service.openai_call_conversation(
+            llm_messages,
+            system_prompt,
+        )
+    except Exception as exc:
+        logger.exception("LLM call failed in admin console chat: %s", exc)
+        assistant_content = "Sorry, I could not process your request right now."
+
+    # ── 4. Return — no DB writes ─────────────────────────────────────────────
+    return schemas.AdminConsoleChatReplyResponse(
+        role=MessageRole.assistant,
+        content=assistant_content,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Conversation list (keyset paginated)
 # ---------------------------------------------------------------------------
 
 async def list_conversations(
@@ -251,7 +308,7 @@ async def list_conversations(
 
 
 # ---------------------------------------------------------------------------
-# 3. Conversation detail (with messages, eager loaded)
+# 4. Conversation detail (with messages, eager loaded)
 # ---------------------------------------------------------------------------
 
 async def get_conversation_detail(
@@ -303,7 +360,7 @@ async def get_conversation_detail(
 
 
 # ---------------------------------------------------------------------------
-# 4. Conversation completion (trigger background analysis task)
+# 5. Conversation completion (trigger background analysis task)
 # ---------------------------------------------------------------------------
 
 async def complete_conversation(

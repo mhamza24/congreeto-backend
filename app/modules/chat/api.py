@@ -86,6 +86,36 @@ async def chat_endpoint(
         data=reply,
     )
 
+# ---------------------------------------------------------------------------
+# POST /chat/  — create or continue a conversation [ADMIN PORTAL]
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/admin_console",
+    response_model=ApiResponse[schemas.AdminConsoleChatReplyResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Stateless admin console chat — full history in, reply out. No DB persistence.",
+)
+async def admin_console_chat_endpoint(
+    payload: schemas.AdminConsoleChatCreateRequest,
+     db: DBDep,
+) -> ApiResponse[schemas.AdminConsoleChatReplyResponse]:
+    try:
+        reply = await service.admin_console_chat( db,payload=payload)
+    except Exception:
+        logger.exception("Unexpected error in admin_console_chat_endpoint")
+        sentry_sdk.capture_exception(Exception)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Message processed successfully.",
+        data=reply,
+    )
 
 # ---------------------------------------------------------------------------
 # POST /chat/  — complete a conversation
