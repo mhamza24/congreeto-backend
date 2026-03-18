@@ -38,7 +38,8 @@ async def create_general(session: AsyncSession, data: GeneralInquiryCreateReques
             "subject":      data.subject,
             "message":      data.message,
         },
-        recipients=["muhammadhamzakhalid248@gmail.com"],
+        recipients=["muhammadhamzakhalid248@gmail.com",
+                    "contact@getveloce.com"],
     )
     return await create_general_inquiry(session, inquiry)
 
@@ -82,7 +83,8 @@ async def create_demo(session: AsyncSession, data: DemoInquiryCreateRequest) -> 
             "states":            data.states,             # list[str]
             "message":           data.message,
         },
-        recipients=["muhammadhamzakhalid248@gmail.com"],
+        recipients=["muhammadhamzakhalid248@gmail.com",
+                    "contact@getveloce.com"],
     )
     
     return await create_demo_inquiry(session, inquiry)
