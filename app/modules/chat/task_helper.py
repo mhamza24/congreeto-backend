@@ -75,6 +75,18 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                                                     messages=formatted_messages,
                                                     recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
 
+        # Send follow-up email if lead exists and email is provided
+        if parsed.get("email"):
+            await email_service.send_conversation_followup_email(
+                lead_email=parsed["email"],
+                lead_name=parsed.get("name"),
+                topics=parsed.get("topics_mentioned") or [
+                ],  # website chatbot
+                # topics=insights.get("suburbs_mentioned") or [], # property chatbot (pain points)
+                messages=messages,
+                ai_summary=parsed.get("ai_summary") or "",
+            )
+
         await repo.update_conversation_status(
             db,
             conversation__id=conversation__id,

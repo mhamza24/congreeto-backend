@@ -22,6 +22,9 @@ Sections
        send_demo_inquiry_email()           ← demo request
        send_lead_insight_email()           ← property chatbot lead
        send_website_lead_insight_email()   ← website B2B lead
+  H. Conversation follow-up email (sent to visitor after chat ends)
+       build_conversation_followup_html()  ← HTML builder
+       send_conversation_followup_email()  ← public send method
 """
 
 from __future__ import annotations
@@ -353,7 +356,7 @@ def _build_internal_demo_html(
         _kv("Company",          company)         +
         _kv("Website",          company_website) +
         _kv("Property Sectors", sectors_html)    +
-        _kv("State",           states_html)
+        _kv("States",           states_html)
     )
     return _render_email_shell(
         accent=accent,
@@ -928,3 +931,189 @@ async def send_website_lead_insight_email(
     logger.info(
         f"Sent website lead email to {recipients} for lead {lead_name} with intent {raw_intent}"
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# H. Conversation follow-up email  (sent directly to the visitor)
+# ══════════════════════════════════════════════════════════════
+
+def build_conversation_followup_html(
+    *,
+    first_name: str,
+    topics: list[str],
+    messages: list[dict],
+    ai_summary: str,
+    website_name: str = "Veloce",
+) -> str:
+    """
+    A personalised follow-up email sent to the visitor after their chatbot
+    conversation ends (only when their email was captured during the chat).
+
+    Shows:
+      - A warm reminder of where the conversation happened
+      - Topic pills  — the key subjects discussed
+      - A brief AI summary of what was covered
+      - The full conversation transcript so they can refer back
+    """
+
+    # ── Topic pills ───────────────────────────────────────────
+    topic_pills = ""
+    if topics:
+        pills = "".join(
+            f'<span style="display:inline-block;margin:3px 4px 3px 0;'
+            f'padding:4px 12px;border-radius:20px;'
+            f'background:{BRAND["offWhite"]};border:1px solid {BRAND["border"]};'
+            f'font-size:12px;color:{BRAND["textDark"]};font-family:Georgia,serif;">'
+            f'{topic}</span>'
+            for topic in topics
+        )
+        topic_pills = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
+          <tr>
+            <td>
+              <p style="margin:0 0 10px;font-size:10px;font-weight:700;
+                        text-transform:uppercase;letter-spacing:1.2px;
+                        color:{BRAND['textLight']};">
+                Topics we covered
+              </p>
+              <div style="line-height:2.2;">{pills}</div>
+            </td>
+          </tr>
+        </table>"""
+
+    # ── Summary block ─────────────────────────────────────────
+    summary_block = ""
+    if ai_summary:
+        summary_block = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+          <tr>
+            <td style="border-left:3px solid {BRAND['teal']};padding-left:14px;">
+              <p style="margin:0 0 6px;font-size:10px;font-weight:700;
+                        text-transform:uppercase;letter-spacing:1px;
+                        color:{BRAND['teal']};">
+                Conversation summary
+              </p>
+              <p style="margin:0;font-size:13px;color:{BRAND['textMid']};
+                        line-height:1.75;font-family:Georgia,serif;">
+                {ai_summary}
+              </p>
+            </td>
+          </tr>
+        </table>"""
+
+    # ── Transcript ────────────────────────────────────────────
+    transcript_block = ""
+    if messages:
+        transcript_rows = _render_messages(messages)
+        transcript_block = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+          <tr>
+            <td>
+              <p style="margin:0 0 12px;font-size:10px;font-weight:700;
+                        text-transform:uppercase;letter-spacing:1.2px;
+                        color:{BRAND['textLight']};">
+                Your conversation
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0">
+                {transcript_rows}
+              </table>
+            </td>
+          </tr>
+        </table>"""
+
+    # ── Full body ─────────────────────────────────────────────
+    body = f"""
+    <p style="margin:0 0 16px;font-size:15px;color:{BRAND['textDark']};line-height:1.75;">
+      Thank you for chatting with us on
+      <a href="https://getveloce.com" target="_blank"
+         style="color:{BRAND['teal']};text-decoration:none;font-weight:600;">
+        getveloce.com</a>.
+      We wanted to send you a quick summary of your conversation so you have it
+      handy for future reference.
+    </p>
+
+    {topic_pills}
+    {summary_block}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;">
+      <tr><td style="border-top:1px solid {BRAND['border']};font-size:0;line-height:0;">&nbsp;</td></tr>
+    </table>
+
+    {transcript_block}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 0;">
+      <tr><td style="border-top:1px solid {BRAND['border']};font-size:0;line-height:0;">&nbsp;</td></tr>
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+      <tr>
+        <td style="background:{BRAND['offWhite']};border-left:3px solid {BRAND['brown']};
+                   border-radius:0 4px 4px 0;padding:14px 16px;">
+          <p style="margin:0 0 6px;font-size:13px;color:{BRAND['textDark']};line-height:1.65;">
+            Have more questions or ready to take the next step?
+          </p>
+          <p style="margin:0;font-size:13px;">
+            <a href="mailto:contact@getveloce.com"
+               style="color:{BRAND['teal']};text-decoration:none;font-weight:600;">
+              contact@getveloce.com
+            </a>
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:20px 0 0;font-size:11px;color:{BRAND['textLight']};line-height:1.6;">
+      Please note this is an automated email. Replies to this address will not be received.
+    </p>
+    """
+
+    return _render_shell(first_name=first_name, body_html=body)
+
+
+async def send_conversation_followup_email(
+    *,
+    lead_email: str,
+    lead_name: str | None,
+    topics: list[str],
+    messages: list[dict],
+    ai_summary: str = "",
+) -> None:
+    """
+    Sent directly to the visitor after their chatbot conversation ends,
+    only when their email was captured during the session.
+
+    Args:
+        lead_email:  The visitor's email captured during chat.
+        lead_name:   Full name if captured — first name extracted for greeting.
+        topics:      List of topics discussed. Pass insights.get("topics_mentioned")
+                     for website chatbot, or insights.get("suburbs_mentioned")
+                     remapped pain-points for property chatbot.
+        messages:    Full conversation [{"role": ..., "content": ...}].
+        ai_summary:  Short AI-generated summary from insights.get("ai_summary").
+
+    Usage (call this after saving the conversation, only if email was captured):
+
+        if lead.get("email"):
+            await send_conversation_followup_email(
+                lead_email=lead["email"],
+                lead_name=lead.get("name"),
+                topics=insights.get("topics_mentioned") or [],
+                messages=messages,
+                ai_summary=insights.get("ai_summary") or "",
+            )
+    """
+    first_name = (lead_name or "").split()[0] if lead_name else "there"
+
+    await fm.send_message(MessageSchema(
+        subject="Your conversation with Veloce — recap & next steps",
+        recipients=[lead_email],
+        body=build_conversation_followup_html(
+            first_name=first_name,
+            topics=topics,
+            messages=messages,
+            ai_summary=ai_summary,
+        ),
+        subtype=MessageType.html,
+    ))
+
+    logger.info(f"Conversation follow-up email sent to {lead_email}")
