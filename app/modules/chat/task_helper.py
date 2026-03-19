@@ -77,6 +77,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
 
         # Send follow-up email if lead exists and email is provided
         if parsed.get("email"):
+            print(f"email {parsed.get("email")}")
             await email_service.send_conversation_followup_email(
                 lead_email=parsed["email"],
                 lead_name=parsed.get("name"),
