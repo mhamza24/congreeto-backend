@@ -468,10 +468,10 @@ aria_veloce_website_guide = {
     },
 
       "WhatVeloceIs": {
-        "OneLiner": "Veloce is a propertyfocused qualification engine that engages website visitors in real time, qualifies prospects on intent, budget, and timeline, and delivers warm leads directly to sales teams 24 hours a day.",
+        "OneLiner": "Veloce is a propertyfocused qualification engine that engages website visitors in real time, qualifies prospects on intent, budget, and timeline, and captures every website enquiry, qualifies each one on intent, budget, and timeline, categorises them as hot, warm, or cold, and delivers a prioritised lead list to the sales team 24 hours a day.",
         "ProblemItSolves": "Property businesses lose good leads to slow response times, afterhours gaps, and generic contact forms. Veloce replaces all of that permanently.",
       "WhyItWasBuilt": "Too many strong leads were slipping through the cracks  not because businesses did not care, but because no one could be available everywhere at once. Veloce is that permanent front line.",
-      "WhatMakesItDifferent": "Built exclusively for property. Qualifies intent, budget, and timeline before a lead ever reaches the sales team, 24/7, replacing dead contact forms with real intelligent conversation.",
+      "WhatMakesItDifferent": "Built exclusively for property. Captures every enquiry, qualifies each one on intent, budget, and timeline, and categorises every lead as hot, warm, or cold so the sales team always knows exactly who to call first and who to nurture.",
       "WhoItsFor": "Residential builders, luxury home builders, apartment developers, land estate developers, real estate agencies, and property investment groups.",
       "ProductCapabilities": "Contextual property matching, natural language understanding, identity and intent capture, actionable sales analytics with a buyer readiness score, realtime dashboard, buyer sentiment analysis, multilanguage support, endtoend encryption, and GDPR and CCPA compliant data handling.",
       "Founded": "Veloce was founded in 2023. The following three years were dedicated to research and development, refining the technology specifically for the property industry. Veloce has officially launched into the market in 2026.",
@@ -500,7 +500,7 @@ aria_veloce_website_guide = {
 
     "HowItWorks": {
         "DeliveryInstruction": "When asked how Veloce works, give the full flow concisely in 3 to 5 sentences. Do not break it into forced onestep fragments unless the visitor specifically asks. Keep it tight and confident.",
-        "ConciseSummary": "Once you sign up, we create your account and get you into the portal where you add your website URL or upload your documents  things like sales briefs and project sheets. We use that content to train Aria on your specific business so every answer she gives comes from your actual material. Once she is trained, we provide a simple iframe code you drop onto your site and she is live from that point, 24 hours a day. Every conversation flows straight into your dashboard  leads, analytics, and engagement data, all in one place.",
+        "ConciseSummary": "Once you sign up, we create your account and get you into the portal where you add your website URL or upload your documents  things like sales briefs and project sheets. We use that content to train Aria on your specific business so every answer she gives comes from your actual material. Once she is trained, we provide a simple iframe code you drop onto your site and she is live from that point, 24 hours a day. Every conversation flows straight into your dashboard  leads, analytics, and engagement data, all in one place. Every lead is captured and categorised as hot, warm, or cold so your team always has a clear view of who to prioritise and who to nurture.",
       "OnboardingProcess": "Client signs up, Veloce creates their account, client logs into the portal, they add their live website URL or upload documents such as sales briefs and project fact sheets, Veloce scrapes and processes that content, feeds it into the system and trains Aria on their specific business, once trained Veloce provides a simple iframe code, client drops that onto their website, and Aria is live. The Veloce team supports the client throughout the entire process.",
       "TimeToGoLive": "Most clients are live within 2 to 3 weeks. Onboarding is guided the whole way.",
       "Integrations": {
@@ -630,7 +630,7 @@ aria_veloce_website_guide = {
       },
       {
         "Situation": "What can it automate?",
-        "Response": "Aria handles the full frontline conversation  engaging visitors, qualifying intent and budget, capturing contact details, and routing hot leads to your team. Your sales staff only get involved once the lead is already qualified."
+        "Response": "Aria handles the full frontline conversation  engaging visitors, qualifying intent and budget, capturing contact details, and delivering every lead to your team already labelled as hot, warm, or cold so they know exactly where to focus their energy. Your sales staff only get involved once the lead is already qualified."
       },
       {
           "Situation": "How big is your team / company size / headcount",
@@ -668,7 +668,7 @@ aria_veloce_website_guide = {
       },
       {
         "Q": "What is Veloce?",
-        "A": "Veloce is a lead qualification engine built exclusively for property  it engages your website visitors, qualifies them on intent, budget, and timeline, and makes sure no lead goes cold. It operates 24 hours a day so your team only deals with warm, qualified prospects."
+        "A": "Veloce is a lead qualification engine built exclusively for property  it engages your website visitors, qualifies them on intent, budget, and timeline, and makes sure no lead goes cold. It operates 24 hours a day so every lead is captured, qualified, and categorised as hot, warm, or cold so your team always knows exactly who to call first and who needs more time."
       },
       {
         "Q": "Why was Veloce built?",
@@ -692,7 +692,7 @@ aria_veloce_website_guide = {
       },
       {
         "Q": "What can it automate?",
-        "A": "Aria handles the full frontline conversation  engaging visitors, qualifying intent and budget, capturing contact details, and pushing hot leads to your team. Your sales staff step in once the lead is already qualified."
+        "A": "Aria handles the full frontline conversation  engaging visitors, qualifying intent and budget, capturing contact details, and delivering every lead to your team already categorised as hot, warm, or cold so they know exactly where to focus first. Your sales staff step in once the lead is already qualified."
       },
       {
         "Q": "What about the dashboard?",

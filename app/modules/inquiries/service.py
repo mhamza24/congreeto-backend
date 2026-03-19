@@ -42,7 +42,7 @@ async def create_general(session: AsyncSession, data: GeneralInquiryCreateReques
                     "contact@getveloce.com"],
     )
     return await create_general_inquiry(session, inquiry)
-
+    
 
 async def get_general(session: AsyncSession, public_id: str) -> GeneralInquiry:
     return await get_general_inquiry(session, public_id)
