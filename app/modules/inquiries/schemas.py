@@ -1,5 +1,5 @@
 # app/modules/inquiries/schemas.py
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -44,6 +44,39 @@ class DemoInquiryCreateRequest(BaseModel):
     message: Optional[str] = Field(None, max_length=5000)
 
 
+class AffiliationInquiryCreateRequest(BaseModel):
+    # Contact Details
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    phone: Optional[str] = Field(None, max_length=20)
+
+    # Category
+    category: Optional[str] = Field(None, max_length=50)
+
+    # Australian Business Identifiers
+    abn: Optional[str] = Field(None, min_length=11, max_length=11, description="Australian Business Number — exactly 11 digits")
+    acn: Optional[str] = Field(None, min_length=9, max_length=9, description="Australian Company Number — exactly 9 digits")
+
+    # Legal / Corporate Details
+    legal_entity_name: Optional[str] = Field(None, max_length=300)
+    gst_applicable: Optional[str] = Field(None, max_length=20)
+    company_type: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("abn")
+    @classmethod
+    def abn_must_be_digits(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.isdigit():
+            raise ValueError("ABN must contain digits only")
+        return v
+
+    @field_validator("acn")
+    @classmethod
+    def acn_must_be_digits(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.isdigit():
+            raise ValueError("ACN must contain digits only")
+        return v
+
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
@@ -78,3 +111,39 @@ class DemoInquiryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AffiliationInquiryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    # Identity
+    public_id: str
+
+    # Contact Details
+    first_name: str
+    last_name: str
+    email: str
+    phone: Optional[str]
+
+    # Category
+    category: Optional[str]
+
+    # Australian Business Identifiers
+    abn: Optional[str]
+    acn: Optional[str]
+
+    # Legal / Corporate Details
+    legal_entity_name: Optional[str]
+    gst_applicable: Optional[str]
+    company_type: Optional[str]
+
+    # Lifecycle
+    status: str
+
+    # Metadata
+    visitor_ip_hash: Optional[str]
+    visitor_ua: Optional[str]
+    page_url: Optional[str]
+
+    # Timestamps
+    created_at: datetime

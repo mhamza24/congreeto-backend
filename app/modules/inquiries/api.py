@@ -71,3 +71,30 @@ async def create_demo_inquiry(
         message="Demo inquiry created and emails sent successfully.",
         data=demo_inquiry,
     )
+    
+    
+@router.post(
+    "/affiliation",
+    response_model=ApiResponse[schemas.AffiliationInquiryResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new affiliation inquiry",
+)
+async def create_affiliation_inquiry(
+    payload: schemas.AffiliationInquiryCreateRequest,
+    db: DBDep,
+) -> ApiResponse[schemas.AffiliationInquiryResponse]:
+    try:
+        affiliation_inquiry = await service.create_affiliation(db, payload)
+    except Exception as exc:
+        logger.exception("Unexpected error in create_affiliation_inquiry")
+        sentry_sdk.capture_exception(exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create affiliation inquiry. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Affiliation inquiry created and emails sent successfully.",
+        data=affiliation_inquiry,
+    )

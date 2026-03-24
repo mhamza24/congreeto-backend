@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
-from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, InquiryStatus
+from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, InquiryStatus,AffiliationInquiry
 
 
 # -----------------------
@@ -74,3 +74,14 @@ async def update_demo_inquiry_status(session: AsyncSession, public_id: str, stat
     )
     await session.commit()
     return await get_demo_inquiry(session, public_id)
+
+
+# -----------------------
+# Affiliation Inquiry
+# -----------------------
+
+async def _persist_affiliation_inquiry(session: AsyncSession, inquiry: AffiliationInquiry) -> AffiliationInquiry:
+    session.add(inquiry)
+    await session.commit()
+    await session.refresh(inquiry)
+    return inquiry

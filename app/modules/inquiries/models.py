@@ -62,7 +62,7 @@ class InquiryStatus(str, enum.Enum):
     archived = "archived"
 
 
-    inquirystatus_enum = ENUM(
+inquirystatus_enum = ENUM(
         "submitted", "reviewed", "contacted", "qualified", "converted", "archived",
         name="inquirystatus",
         create_type=False,  # avoid trying to recreate type in migrations
@@ -199,4 +199,97 @@ class DemoInquiry(Base):
         return (
             f"<DemoInquiry public_id={self.public_id!r} "
             f"company={self.company_name!r}>"
+        )
+
+# ---------------------------------------------------------------------
+# Affiliation Inquiry Model
+# ---------------------------------------------------------------------
+
+class AffiliationInquiry(Base):
+    __tablename__ = "affiliation_inquiries"
+
+    # Identity
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    public_id = Column(
+        String,
+        unique=True,
+        nullable=False,
+        default=new_public_id,
+        comment="External identifier (uuid7)"
+    )
+
+    # Contact Details
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+
+    # Category — kept as plain string for extensibility (e.g. "individual", "agency", ...)
+    category = Column(
+        String,
+        nullable=True,
+        comment="Applicant category: individual, agency, or any future value"
+    )
+
+    # Australian Business Identifiers
+    abn = Column(
+        String,
+        nullable=True,
+        comment="Australian Business Number (11 digits, stored as string to preserve leading zeros)"
+    )
+    acn = Column(
+        String,
+        nullable=True,
+        comment="Australian Company Number (9 digits, stored as string)"
+    )
+
+    # Legal / Corporate Details
+    legal_entity_name = Column(String, nullable=True)
+
+    gst_applicable = Column(
+        String,
+        nullable=True,
+        comment="GST registration status: yes, no, or future values"
+    )
+
+    # Company type — plain string for extensibility
+    # (e.g. "sole_trader", "private_ltd", "trust", "partnership", ...)
+    company_type = Column(
+        String,
+        nullable=True,
+        comment="Business structure type: sole_trader, private_ltd, trust, etc."
+    )
+
+    # Lifecycle
+    status = Column(
+       inquirystatus_enum,
+        nullable=False,
+        default=InquiryStatus.submitted
+    )
+
+    # Metadata
+    visitor_ip_hash = Column(String, nullable=True)
+    visitor_ua = Column(String, nullable=True)
+    page_url = Column(String, nullable=True)
+
+    # Timestamps
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_affiliation_inquiries_public_id", "public_id"),
+        Index("ix_affiliation_inquiries_status", "status"),
+        Index("ix_affiliation_inquiries_created_at", "created_at"),
+        Index("ix_affiliation_inquiries_email", "email"),
+        Index("ix_affiliation_inquiries_abn", "abn"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AffiliationInquiry public_id={self.public_id!r} "
+            f"email={self.email!r} category={self.category!r}>"
         )
