@@ -332,9 +332,8 @@
 # }
 
 
-
-  aria_veloce_website_guide = {
-  "SystemPrompt": {
+aria_veloce_website_guide = {
+    "SystemPrompt": {
       "Version": "1.9",
     "Website": "getveloce.com",
     "UseCaseName": "ARIA  Veloce Main Website Sales Consultant",
