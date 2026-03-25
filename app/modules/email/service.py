@@ -430,7 +430,7 @@ def _build_internal_affiliation_html(
     Internal team notification for a new affiliation application.
     Renders only the collected form data — no AI summary or insights.
     """
-    accent = TIER_ACCENT["warm"]
+    accent = TIER_ACCENT["hot"]
 
     contact_rows = (
         _kv("Name",  full_name) +
@@ -439,12 +439,11 @@ def _build_internal_affiliation_html(
     )
 
     business_rows = (
-        _kv("Category",       (category or "").replace("_", " ").title() or None)     +
-        _kv("ABN",            abn)                                                     +
-        _kv("ACN",            acn)                                                     +
-        _kv("Legal Entity",   legal_entity_name)                                       +
-        _kv("GST Applicable", (gst_applicable or "").title() or None)                 +
-        _kv("Company Type",   (company_type or "").replace("_", " ").title() or None)
+        _kv("Category", (category or "").replace("_", " ").title() or None) +
+        _kv("ABN" if abn else "ACN", abn or acn) +
+        _kv("Company name", legal_entity_name) +
+        _kv("GST Applicable", (gst_applicable or "").title() or None) 
+        #_kv("Company Type", (company_type or "").replace("_", " ").title() or None)
     )
 
     return f"""<!DOCTYPE html>
