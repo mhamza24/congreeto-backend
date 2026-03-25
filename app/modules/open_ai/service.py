@@ -1,9 +1,9 @@
 import logging
 import re
-
+from app.utils.llm_response_cleaner import clean_response_helper
 from app.config.open_ai import async_client, OPENAI_MODEL, OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPEN_AI_FREQUENCY_PENALTY, OPEN_AI_PRESENCE_PENALTY, OPEN_AI_TOP_P
 logger = logging.getLogger(__name__)
-
+ 
 # Define common OpenAI call parameters once
 OPENAI_CALL_PARAMS = {
     "model": OPENAI_MODEL,
@@ -24,7 +24,7 @@ async def openai_call_conversation(messages: list, system_instructions: str) -> 
             ],
             **OPENAI_CALL_PARAMS
         )
-        cleaned_response = cleaned_response(response.choices[0].message.content)
+        cleaned_response = clean_response_helper(response.choices[0].message.content)
         return cleaned_response
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
@@ -43,7 +43,7 @@ async def openai_call_conversation_analysis(messages: list, system_instructions:
             **OPENAI_CALL_PARAMS
         )
        
-        cleaned_response =  cleaned_response(response.choices[0].message.content)
+        cleaned_response =  clean_response_helper(response.choices[0].message.content)
         return cleaned_response
 
     except Exception as e:

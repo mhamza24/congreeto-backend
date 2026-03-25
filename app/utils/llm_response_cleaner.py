@@ -1,7 +1,7 @@
 import re
 
 
-def clean_response(text: str) -> str:
+def clean_response_helper(text: str) -> str:
     # Step 1: Find all URLs and replace them with a placeholder
     url_pattern = r'https?://[^\s]+'
     urls = re.findall(url_pattern, text)
