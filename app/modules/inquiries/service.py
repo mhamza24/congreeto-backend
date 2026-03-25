@@ -147,9 +147,9 @@ async def create_affiliation(
         },
         recipients=[
             "muhammadhamzakhalid248@gmail.com",
-            "contact@getveloce.com",
-            "taha.salman@getveloce.com"
         ],
+        
+        #"contact@getveloce.com","taha.salman@getveloce.com"
     )
 
     return await _persist_affiliation_inquiry(session, inquiry)
