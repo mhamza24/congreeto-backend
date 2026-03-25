@@ -300,7 +300,7 @@ def build_affiliation_confirmation_html(first_name: str = "there") -> str:
     <p style="margin:0 0 16px;font-size:15px;color:{BRAND['textDark']};line-height:1.75;">
       We&#8217;re pleased to confirm that your affiliation application has been received.
       Our team will review your details and be in touch within the next
-      <strong>2&ndash;3 business days</strong> to discuss the next steps.
+      <strong>next business day</strong> to discuss the next steps.
     </p>
 
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
