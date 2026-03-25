@@ -62,8 +62,8 @@ BRAND = {
 
 TIER_ACCENT = {
     "hot":     "#D93025",
-    "warm":    "#E8780C",
-    "nurture": "#0F7B6C",
+    "warm":    "#0F7B6C",
+    "nurture": "#E8780C",
     "cold":    "#3A5F8A",
 }
 
@@ -114,11 +114,11 @@ def _render_shell(*, first_name: str, body_html: str) -> str:
     <tr>
       <td style="padding:32px 40px 24px;border-bottom:1px solid {BRAND['border']};">
         <a href="https://getveloce.com" target="_blank"
-           style="text-decoration:none;display:inline-block;">
-          <span style="font-family:'Georgia',serif;font-size:26px;font-weight:700;
-                        letter-spacing:-0.5px;color:{BRAND['brown']};">Vel</span><span
-               style="font-family:'Georgia',serif;font-size:26px;font-weight:700;
-                       letter-spacing:-0.5px;color:{BRAND['teal']};">oce</span>
+          style="text-decoration:none;display:inline-block;">
+          <img src="https://getveloce.com/Logo_2.png"
+              alt="Veloce"
+              width="160"
+              style="display:block;height:auto;max-width:160px;" />
         </a>
       </td>
     </tr>
@@ -430,7 +430,7 @@ def _build_internal_affiliation_html(
     Internal team notification for a new affiliation application.
     Renders only the collected form data — no AI summary or insights.
     """
-    accent = TIER_ACCENT["hot"]
+    accent = TIER_ACCENT["warm"]
 
     contact_rows = (
         _kv("Name",  full_name) +
