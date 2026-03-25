@@ -1075,7 +1075,7 @@ async def send_affiliation_inquiry_email(
 
     # 2. Internal notification → team
     await fm.send_message(MessageSchema(
-        subject=f"[Affiliation] {full_name} — {(inquiry.get('company_type') or 'Unknown Type').replace('_', ' ').title()}",
+        subject=f"[Affiliation] {full_name} — {(inquiry.get('category') or 'Unknown Type').replace('_', ' ').title()}",
         recipients=recipients,
         body=_build_internal_affiliation_html(
             full_name=full_name,
