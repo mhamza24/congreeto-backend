@@ -49,15 +49,24 @@ fm       = FastMail(email_config)
 # ══════════════════════════════════════════════════════════════
 
 BRAND = {
-    "brown":       "#A47764",
-    "burntOrange": "#CC5500",
-    "teal":        "#069494",
-    "white":       "#FFFFFF",
-    "offWhite":    "#FAF9F8",
-    "textDark":    "#1A1A1A",
-    "textMid":     "#4A4A4A",
-    "textLight":   "#8A8A8A",
-    "border":      "#E8E0DC",
+    # existing
+    'brown':       '#A0785A',
+    'burntOrange': '#C8622A',
+    'teal':        '#2A8C8C',
+    'offWhite':    '#F5F3F0',
+    'white':       '#FFFFFF',
+    'border':      '#E8E4E0',
+    'textDark':    '#1A1A1A',
+    'textMid':     '#555555',
+    'textLight':   '#999999',
+
+    # dark mode equivalents (use in media query overrides)
+    'dm_bg':        '#1E1E1E',
+    'dm_card':      '#2A2A2A',
+    'dm_border':    '#3A3A3A',
+    'dm_textDark':  '#F0F0F0',
+    'dm_textMid':   '#AAAAAA',
+    'dm_textLight': '#777777',
 }
 
 TIER_ACCENT = {
@@ -76,49 +85,75 @@ def _render_shell(*, first_name: str, body_html: str) -> str:
     """
     Wraps body_html in the branded Veloce email shell.
     Used for all customer-facing acknowledgement emails.
+    Supports light and dark mode.
     """
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
   <title>Veloce</title>
+  <style>
+    :root {{ color-scheme: light dark; }}
+
+    @media (prefers-color-scheme: dark) {{
+      body           {{ background-color:{BRAND['dm_bg']} !important; }}
+      .email-wrapper {{ background-color:{BRAND['dm_bg']} !important; }}
+      .email-card    {{ background-color:{BRAND['dm_card']} !important; }}
+      .border-cell   {{ border-bottom-color:{BRAND['dm_border']} !important; }}
+      .divider-cell  {{ border-top-color:{BRAND['dm_border']} !important; }}
+      .text-dark     {{ color:{BRAND['dm_textDark']} !important; }}
+      .text-mid      {{ color:{BRAND['dm_textMid']} !important; }}
+      .text-light    {{ color:{BRAND['dm_textLight']} !important; }}
+      .teal-link     {{ color:{BRAND['teal']} !important; }}
+      hr             {{ border-top-color:{BRAND['dm_border']} !important; }}
+    }}
+  </style>
 </head>
-<body style="margin:0;padding:0;background:{BRAND['offWhite']};
+<body class="email-wrapper"
+      style="margin:0;padding:0;background:{BRAND['offWhite']};
              font-family:'Georgia',serif;">
 
 <table width="100%" cellpadding="0" cellspacing="0"
+       class="email-wrapper"
        style="background:{BRAND['offWhite']};padding:40px 16px;">
   <tr><td align="center">
 
   <table width="560" cellpadding="0" cellspacing="0"
+         class="email-card"
          style="max-width:560px;background:{BRAND['white']};
                 border-radius:4px;
-                box-shadow:0 1px 8px rgba(0,0,0,.06);
-                overflow:hidden;">
+                box-shadow:0 1px 8px rgba(0,0,0,.06);">
 
     <!-- Top accent bar: brown | burntOrange | teal -->
     <tr>
-      <td style="font-size:0;line-height:0;height:5px;">
-        <table width="100%" cellpadding="0" cellspacing="0">
+      <td style="padding:0;margin:0;font-size:0;line-height:0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+               style="width:100%;table-layout:fixed;">
           <tr>
-            <td style="background:{BRAND['brown']};width:33.3%;height:5px;">&nbsp;</td>
-            <td style="background:{BRAND['burntOrange']};width:33.3%;height:5px;">&nbsp;</td>
-            <td style="background:{BRAND['teal']};width:33.4%;height:5px;">&nbsp;</td>
+            <td width="33%" height="5"
+                style="background:{BRAND['brown']};width:33%;height:5px;font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
+            <td width="34%" height="5"
+                style="background:{BRAND['burntOrange']};width:34%;height:5px;font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
+            <td width="33%" height="5"
+                style="background:{BRAND['teal']};width:33%;height:5px;font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
           </tr>
         </table>
       </td>
     </tr>
 
-    <!-- Logo / wordmark -->
+    <!-- Logo -->
     <tr>
-      <td style="padding:32px 40px 24px;border-bottom:1px solid {BRAND['border']};">
+      <td class="border-cell"
+          style="padding:32px 40px 24px;border-bottom:1px solid {BRAND['border']};">
         <a href="https://getveloce.com" target="_blank"
-          style="text-decoration:none;display:inline-block;">
+           style="text-decoration:none;display:inline-block;">
           <img src="https://getveloce.com/Logo_2.png"
-              alt="Veloce"
-              width="160"
-              style="display:block;height:auto;max-width:160px;" />
+               alt="Veloce"
+               width="160"
+               style="display:block;height:auto;max-width:160px;" />
         </a>
       </td>
     </tr>
@@ -126,7 +161,8 @@ def _render_shell(*, first_name: str, body_html: str) -> str:
     <!-- Greeting -->
     <tr>
       <td style="padding:32px 40px 0;">
-        <p style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};line-height:1.6;">
+        <p class="text-dark"
+           style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};line-height:1.6;">
           Hi {first_name},
         </p>
       </td>
@@ -142,20 +178,24 @@ def _render_shell(*, first_name: str, body_html: str) -> str:
     <!-- Divider -->
     <tr>
       <td style="padding:0 40px;">
-        <hr style="border:none;border-top:1px solid {BRAND['border']};margin:0;" />
+        <hr class="divider-cell"
+            style="border:none;border-top:1px solid {BRAND['border']};margin:0;" />
       </td>
     </tr>
 
     <!-- Sign-off -->
     <tr>
       <td style="padding:28px 40px;">
-        <p style="margin:0 0 4px;font-size:13px;color:{BRAND['textMid']};line-height:1.6;">
+        <p class="text-mid"
+           style="margin:0 0 4px;font-size:13px;color:{BRAND['textMid']};line-height:1.6;">
           Warm regards,
         </p>
-        <p style="margin:0 0 2px;font-size:13px;font-weight:700;color:{BRAND['textDark']};">
+        <p class="text-dark"
+           style="margin:0 0 2px;font-size:13px;font-weight:700;color:{BRAND['textDark']};">
           Veloce Customer Service Team
         </p>
         <a href="https://getveloce.com" target="_blank"
+           class="teal-link"
            style="font-size:12px;color:{BRAND['teal']};text-decoration:none;">
           getveloce.com
         </a>
@@ -165,18 +205,21 @@ def _render_shell(*, first_name: str, body_html: str) -> str:
     <!-- Divider -->
     <tr>
       <td style="padding:0 40px;">
-        <hr style="border:none;border-top:1px solid {BRAND['border']};margin:0;" />
+        <hr class="divider-cell"
+            style="border:none;border-top:1px solid {BRAND['border']};margin:0;" />
       </td>
     </tr>
 
     <!-- Footer: privacy notice -->
     <tr>
       <td style="padding:20px 40px 28px;">
-        <p style="margin:0 0 6px;font-size:10px;font-weight:700;
+        <p class="text-light"
+           style="margin:0 0 6px;font-size:10px;font-weight:700;
                   text-transform:uppercase;letter-spacing:1px;color:{BRAND['textLight']};">
           Privacy &amp; Confidentiality Notice
         </p>
-        <p style="margin:0;font-size:10px;color:{BRAND['textLight']};line-height:1.65;">
+        <p class="text-light"
+           style="margin:0;font-size:10px;color:{BRAND['textLight']};line-height:1.65;">
           This email and any attachments are confidential and intended solely for the
           addressee. If you have received this email in error, please notify the sender
           immediately and delete it from your system. Any unauthorised use, disclosure,
