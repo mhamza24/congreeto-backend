@@ -2,12 +2,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ARIA — Veloce Property Portfolio Prompt
 # Vilara Park | All Four Collections (inc. Banksia Grove Land)
+# Version 1.1 — Listing URLs added to all properties
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE NOTE:
 # This prompt is injected alongside the ARIA system prompt at runtime.
 # ARIA uses this data to match visitors to listings, present options with
 # authority, and guide conversations toward viewings and consultations.
 # In production, replace with real-time database/embedding lookups.
+# LINK RULE: When presenting any property to a visitor, always include the
+# listing URL inline so the visitor can view it directly. Never mention a
+# property without its link. Include the full URL including https:// so
+# the platform renders a clickable preview.
 # ─────────────────────────────────────────────────────────────────────────────
 
 veloce_portfolio = {
@@ -69,6 +74,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-102",
                 "Title": "Residence 102 — Private Garden Apartment",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-102",
                 "Level": 1,
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -101,6 +107,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-201",
                 "Title": "Residence 201 — Park-Facing Balcony",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-201",
                 "Level": 2,
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -131,6 +138,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-302",
                 "Title": "Residence 302 — Corner Residence",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-302",
                 "Level": 3,
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -163,6 +171,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-401",
                 "Title": "Residence 401 — Elevated Park Outlook",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-401",
                 "Level": 4,
                 "Bedrooms": 3,
                 "Bathrooms": 2,
@@ -194,6 +203,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-502",
                 "Title": "Residence 502 — Executive Residence",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-502",
                 "Level": 5,
                 "Bedrooms": 3,
                 "Bathrooms": 2,
@@ -225,6 +235,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-APT-601",
                 "Title": "Residence 601 — The Penthouse",
+                "URL": "https://getveloce.com/landingpage/categories/apartments/residence-601",
                 "Level": 6,
                 "Bedrooms": 4,
                 "Bathrooms": 3,
@@ -287,6 +298,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-HAVEN",
                 "Title": "The Haven — Single Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-haven",
                 "Storeys": 1,
                 "Bedrooms": 3,
                 "Bathrooms": 2,
@@ -320,6 +332,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-SOLARA",
                 "Title": "The Solara — Single Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-solara",
                 "Storeys": 1,
                 "Bedrooms": 4,
                 "Bathrooms": 2,
@@ -351,6 +364,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-MARLOW",
                 "Title": "The Marlow — Single Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-marlow",
                 "Storeys": 1,
                 "Bedrooms": 4,
                 "Bathrooms": 2,
@@ -379,6 +393,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-ELLINGTON",
                 "Title": "The Ellington — Single Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-ellington",
                 "Storeys": 1,
                 "Bedrooms": 4,
                 "Bathrooms": 2,
@@ -412,6 +427,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-VALEN",
                 "Title": "The Valen — Double Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-valen",
                 "Storeys": 2,
                 "Bedrooms": 4,
                 "Bathrooms": 3,
@@ -445,6 +461,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-HL-AURELIA",
                 "Title": "The Aurelia — Double Storey",
+                "URL": "https://getveloce.com/landingpage/categories/home-land-packages/the-aurelia",
                 "Storeys": 2,
                 "Bedrooms": 5,
                 "Bathrooms": 3,
@@ -512,6 +529,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-TER-01",
                 "Title": "The Greenway Terrace",
+                "URL": "https://getveloce.com/landingpage/categories/terraces/the-greenway-terrace",
                 "SubTitle": "Terrace Residence 1",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -549,6 +567,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-TER-02",
                 "Title": "The Parkfront Terrace",
+                "URL": "https://getveloce.com/landingpage/categories/terraces/the-parkfront-terrace",
                 "SubTitle": "Terrace Residence 2",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -590,6 +609,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-TER-03",
                 "Title": "The Corner Signature Terrace",
+                "URL": "https://getveloce.com/landingpage/categories/terraces/the-corner-signature-terrace",
                 "SubTitle": "Terrace Residence 3",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -628,6 +648,7 @@ veloce_portfolio = {
             {
                 "ListingID": "VIL-TER-04",
                 "Title": "The Courtyard Signature Terrace",
+                "URL": "https://getveloce.com/landingpage/categories/terraces/the-courtyard-signature-terrace",
                 "SubTitle": "Terrace Residence 4",
                 "Bedrooms": 2,
                 "Bathrooms": 2,
@@ -709,6 +730,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-101",
                 "LotNumber": "Lot 101",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-101",
                 "Address": "14 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12m",
@@ -721,6 +743,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-102",
                 "LotNumber": "Lot 102",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-102",
                 "Address": "16 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12m",
@@ -733,6 +756,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-103",
                 "LotNumber": "Lot 103",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-103",
                 "Address": "18 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "10.5m",
@@ -748,6 +772,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-104",
                 "LotNumber": "Lot 104",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-104",
                 "Address": "1 Jacaranda Lane, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "15m",
@@ -763,6 +788,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-105",
                 "LotNumber": "Lot 105",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-105",
                 "Address": "20 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12.5m",
@@ -775,6 +801,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-106",
                 "LotNumber": "Lot 106",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-106",
                 "Address": "22 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12m",
@@ -787,6 +814,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-107",
                 "LotNumber": "Lot 107",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-107",
                 "Address": "3 Jacaranda Lane, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "10m",
@@ -802,6 +830,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-108",
                 "LotNumber": "Lot 108",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-108",
                 "Address": "24 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "13m",
@@ -818,6 +847,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-109",
                 "LotNumber": "Lot 109",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-109",
                 "Address": "26 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12m",
@@ -830,6 +860,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-110",
                 "LotNumber": "Lot 110",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-110",
                 "Address": "5 Jacaranda Lane, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "11m",
@@ -842,6 +873,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-111",
                 "LotNumber": "Lot 111",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-111",
                 "Address": "7 Jacaranda Lane, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "12.5m",
@@ -857,6 +889,7 @@ veloce_portfolio = {
             {
                 "ListingID": "BGE-LOT-112",
                 "LotNumber": "Lot 112",
+                "URL": "https://getveloce.com/landingpage/categories/land-final-release/lot-112",
                 "Address": "28 Banksia Terrace, Ellenbrook",
                 "LandSize": "360m²",
                 "Frontage": "15m",
@@ -888,6 +921,14 @@ veloce_portfolio = {
     # PORTFOLIO GUIDANCE — FOR ARIA USE
     # ─────────────────────────────────────────────────────────────────────────
     "PortfolioGuidance": {
+        "LinkRule": (
+            "CRITICAL — Every time ARIA presents or mentions a specific property, she must include the "
+            "listing URL from that property's URL field inline in her message. Always use the full URL "
+            "including https:// so the platform renders a clickable link preview. "
+            "Never mention a property by name without including its URL. "
+            "Example: 'The Solara is the one — big kitchen, big alfresco, built for entertaining. "
+            "Have a look: https://getveloce.com/landingpage/categories/home-land-packages/the-solara'"
+        ),
         "BudgetMatching": {
             "Under_400K": (
                 "Banksia Grove Estate land lots start from $345,000 (Lot 107). "
@@ -985,6 +1026,8 @@ veloce_portfolio = {
         "ARIANotes": (
             "Always present 1–2 listings max — never a full list dump. "
             "Lead with the strongest match and explain in one sentence why it fits what the visitor told you. "
+            "ALWAYS include the listing URL when presenting any property — use the URL field from each listing. "
+            "Include the full https:// URL so the platform renders a preview. "
             "If budget is slightly short, pivot warmly: acknowledge it positively and show the closest fit. "
             "If a visitor's preferred type has no match, guide them to the most similar option and explain the lifestyle crossover. "
             "Penthouse enquiries: always offer a private consultation rather than stating price in chat. "

@@ -24,8 +24,7 @@ async def openai_call_conversation(messages: list, system_instructions: str) -> 
             ],
             **OPENAI_CALL_PARAMS
         )
-        cleaned_response = re.sub(
-            r"[—–-]", ",", response.choices[0].message.content)
+        cleaned_response = cleaned_response(response.choices[0].message.content)
         return cleaned_response
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
@@ -43,8 +42,8 @@ async def openai_call_conversation_analysis(messages: list, system_instructions:
             ],
             **OPENAI_CALL_PARAMS
         )
-        cleaned_response = re.sub(
-            r"[—–-]", ",", response.choices[0].message.content)
+       
+        cleaned_response =  cleaned_response(response.choices[0].message.content)
         return cleaned_response
 
     except Exception as e:
