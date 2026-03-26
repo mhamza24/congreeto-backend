@@ -24,9 +24,10 @@ from app.modules.open_ai import service as openai_service
 from app.modules.chat import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils.hashing_utils import hash_identity
+from app.utils.portfolio_collection_extractor import get_collection_detail
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
-from app.utils.system_prompt_portfolio import veloce_portfolio
+from app.utils.system_prompt_portfolio import veloce_portfolio,veloce_portfolio_summary
 from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.modules.chat.models import ConversationStatus, Message
@@ -96,7 +97,21 @@ async def create_or_continue_chat(
         system_prompt = json.dumps(aria_veloce_website_guide)
     else:
         system_prompt = json.dumps(aria_veloce_brand_representative)
-        system_prompt += "\n\nCompany portfolio: " + json.dumps(veloce_portfolio)
+
+        # Always attach the lightweight summary
+        system_prompt += "\n\nPortfolio summary: " + json.dumps(veloce_portfolio_summary)
+
+        # Dynamically attach full collection detail only if the message warrants it
+        collection_detail = get_collection_detail(payload.message)
+        if collection_detail:
+            system_prompt += (
+                f"\n\nVisitor is asking about the {collection_detail['matched_collection']} collection. "
+                f"Full detail: " + json.dumps(collection_detail["detail"])
+            )
+    # else:
+    #     system_prompt = json.dumps(aria_veloce_brand_representative)
+    #     system_prompt += "\n\nCompany portfolio: " + json.dumps(veloce_portfolio)
+    
 
     if returning_visitor_prompt:
         system_prompt += "\n\nIMMEDIATE ACTION REQUIRED — EXECUTE BEFORE ANYTHING ELSE: " + \

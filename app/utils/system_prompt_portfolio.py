@@ -15,6 +15,76 @@
 # the platform renders a clickable preview.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+veloce_portfolio_summary =  {
+    "note": "Full portfolio summary. Use this to make cross-collection recommendations. When a visitor shows interest in a specific collection, the full detail for that collection is also provided below.",
+    "apartments": {
+        "collection": "Vilara Park Residences — Boutique Apartments",
+        "availability": "Limited — over 50% sold",
+        "listings": [
+            {"id": "VIL-APT-102", "name": "Residence 102", "price": "From $915,000", "beds": 2, "type": "Ground floor garden apartment", "url": "https://getveloce.com/landingpage/categories/apartments/residence-102"},
+            {"id": "VIL-APT-201", "name": "Residence 201", "price": "From $932,000", "beds": 2, "type": "Park-facing balcony", "url": "https://getveloce.com/landingpage/categories/apartments/residence-201"},
+            {"id": "VIL-APT-302", "name": "Residence 302", "price": "From $968,000", "beds": 2, "type": "Corner apartment with study", "url": "https://getveloce.com/landingpage/categories/apartments/residence-302"},
+            {"id": "VIL-APT-401", "name": "Residence 401", "price": "From $1,125,000", "beds": 3, "type": "Elevated park outlook", "url": "https://getveloce.com/landingpage/categories/apartments/residence-401"},
+            {"id": "VIL-APT-502", "name": "Residence 502", "price": "From $1,185,000", "beds": 3, "type": "Executive with retreat", "url": "https://getveloce.com/landingpage/categories/apartments/residence-502"},
+            {"id": "VIL-APT-601", "name": "The Penthouse", "price": "Price on application", "beds": 4, "type": "Entire top floor", "url": "https://getveloce.com/landingpage/categories/apartments/residence-601"},
+        ]
+    },
+    "house_and_land": {
+        "collection": "Vilara Park Signature House and Land",
+        "listings": [
+            {"id": "VIL-HL-HAVEN", "name": "The Haven", "price": "From $699,000", "beds": 3, "storeys": 1, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-haven"},
+            {"id": "VIL-HL-SOLARA", "name": "The Solara", "price": "From $749,000", "beds": 4, "storeys": 1, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-solara"},
+            {"id": "VIL-HL-MARLOW", "name": "The Marlow", "price": "From $779,000", "beds": 4, "storeys": 1, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-marlow"},
+            {"id": "VIL-HL-ELLINGTON", "name": "The Ellington", "price": "From $815,000", "beds": 4, "storeys": 1, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-ellington"},
+            {"id": "VIL-HL-VALEN", "name": "The Valen", "price": "From $899,000", "beds": 4, "storeys": 2, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-valen"},
+            {"id": "VIL-HL-AURELIA", "name": "The Aurelia", "price": "From $949,000", "beds": 5, "storeys": 2, "url": "https://getveloce.com/landingpage/categories/home-land-packages/the-aurelia"},
+        ]
+    },
+    "terraces": {
+        "collection": "Vilara Park Terrace Collection",
+        "availability": "Only 4 remaining from 10",
+        "listings": [
+            {"id": "VIL-TER-01", "name": "The Greenway Terrace", "price": "From $599,000", "beds": 2, "url": "https://getveloce.com/landingpage/categories/terraces/the-greenway-terrace"},
+            {"id": "VIL-TER-02", "name": "The Parkfront Terrace", "price": "From $619,000", "beds": 2, "url": "https://getveloce.com/landingpage/categories/terraces/the-parkfront-terrace"},
+            {"id": "VIL-TER-03", "name": "The Corner Signature Terrace", "price": "From $639,000", "beds": 2, "url": "https://getveloce.com/landingpage/categories/terraces/the-corner-signature-terrace"},
+            {"id": "VIL-TER-04", "name": "The Courtyard Signature Terrace", "price": "From $649,000", "beds": 2, "url": "https://getveloce.com/landingpage/categories/terraces/the-courtyard-signature-terrace"},
+        ]
+    },
+    "land": {
+        "collection": "Banksia Grove Estate Final Land Release",
+        "availability": "12 lots remaining, all titled and ready to build",
+        "price_range": "$345,000 to $389,000",
+        "lot_size": "360m2 all lots",
+        "standout_lots": ["Lot 104 corner $379K", "Lot 108 wide frontage $365K", "Lot 111 park facing $372K", "Lot 112 premium $389K", "Lot 107 entry $345K"],
+        "all_lot_urls": {
+            "lot-101": "https://getveloce.com/landingpage/categories/land-final-release/lot-101",
+            "lot-102": "https://getveloce.com/landingpage/categories/land-final-release/lot-102",
+            "lot-103": "https://getveloce.com/landingpage/categories/land-final-release/lot-103",
+            "lot-104": "https://getveloce.com/landingpage/categories/land-final-release/lot-104",
+            "lot-105": "https://getveloce.com/landingpage/categories/land-final-release/lot-105",
+            "lot-106": "https://getveloce.com/landingpage/categories/land-final-release/lot-106",
+            "lot-107": "https://getveloce.com/landingpage/categories/land-final-release/lot-107",
+            "lot-108": "https://getveloce.com/landingpage/categories/land-final-release/lot-108",
+            "lot-109": "https://getveloce.com/landingpage/categories/land-final-release/lot-109",
+            "lot-110": "https://getveloce.com/landingpage/categories/land-final-release/lot-110",
+            "lot-111": "https://getveloce.com/landingpage/categories/land-final-release/lot-111",
+            "lot-112": "https://getveloce.com/landingpage/categories/land-final-release/lot-112",
+        }
+    },
+    "location_and_lifestyle": {
+        "suburb": "Ellenbrook, Perth, Western Australia",
+        "cbd_distance": "25 to 30 minutes via Tonkin Highway",
+        "swan_valley": "15 minutes",
+        "ellenbrook_central": "5 minutes — Coles, Woolworths, cafes, retail",
+        "schools": "Close to primary and secondary schools and childcare",
+        "train_station": "Ellenbrook Train Station nearby",
+        "parkland": "All Vilara Park properties directly opposite landscaped parkland and walking trails",
+        "beach": "No beach proximity — nearest beaches are approx 45 to 60 minutes. Be honest if asked.",
+    }
+}
+
+
 veloce_portfolio = {
     "Project": {
         "Name": "Vilara Park Residences",
@@ -969,6 +1039,36 @@ veloce_portfolio = {
                 "Residence 502 Executive Apartment from $1.185M. "
                 "The Penthouse (Residence 601) is price upon application — enquire for private consultation."
             ),
+        },
+        "ListingURLs": {
+            "VIL-APT-102": "https://getveloce.com/landingpage/categories/apartments/residence-102",
+            "VIL-APT-201": "https://getveloce.com/landingpage/categories/apartments/residence-201",
+            "VIL-APT-302": "https://getveloce.com/landingpage/categories/apartments/residence-302",
+            "VIL-APT-401": "https://getveloce.com/landingpage/categories/apartments/residence-401",
+            "VIL-APT-502": "https://getveloce.com/landingpage/categories/apartments/residence-502",
+            "VIL-APT-601": "https://getveloce.com/landingpage/categories/apartments/residence-601",
+            "VIL-HL-HAVEN": "https://getveloce.com/landingpage/categories/home-land-packages/the-haven",
+            "VIL-HL-SOLARA": "https://getveloce.com/landingpage/categories/home-land-packages/the-solara",
+            "VIL-HL-MARLOW": "https://getveloce.com/landingpage/categories/home-land-packages/the-marlow",
+            "VIL-HL-ELLINGTON": "https://getveloce.com/landingpage/categories/home-land-packages/the-ellington",
+            "VIL-HL-VALEN": "https://getveloce.com/landingpage/categories/home-land-packages/the-valen",
+            "VIL-HL-AURELIA": "https://getveloce.com/landingpage/categories/home-land-packages/the-aurelia",
+            "VIL-TER-01": "https://getveloce.com/landingpage/categories/terraces/the-greenway-terrace",
+            "VIL-TER-02": "https://getveloce.com/landingpage/categories/terraces/the-parkfront-terrace",
+            "VIL-TER-03": "https://getveloce.com/landingpage/categories/terraces/the-corner-signature-terrace",
+            "VIL-TER-04": "https://getveloce.com/landingpage/categories/terraces/the-courtyard-signature-terrace",
+            "BGE-LOT-101": "https://getveloce.com/landingpage/categories/land-final-release/lot-101",
+            "BGE-LOT-102": "https://getveloce.com/landingpage/categories/land-final-release/lot-102",
+            "BGE-LOT-103": "https://getveloce.com/landingpage/categories/land-final-release/lot-103",
+            "BGE-LOT-104": "https://getveloce.com/landingpage/categories/land-final-release/lot-104",
+            "BGE-LOT-105": "https://getveloce.com/landingpage/categories/land-final-release/lot-105",
+            "BGE-LOT-106": "https://getveloce.com/landingpage/categories/land-final-release/lot-106",
+            "BGE-LOT-107": "https://getveloce.com/landingpage/categories/land-final-release/lot-107",
+            "BGE-LOT-108": "https://getveloce.com/landingpage/categories/land-final-release/lot-108",
+            "BGE-LOT-109": "https://getveloce.com/landingpage/categories/land-final-release/lot-109",
+            "BGE-LOT-110": "https://getveloce.com/landingpage/categories/land-final-release/lot-110",
+            "BGE-LOT-111": "https://getveloce.com/landingpage/categories/land-final-release/lot-111",
+            "BGE-LOT-112": "https://getveloce.com/landingpage/categories/land-final-release/lot-112",
         },
         "BuyerTypeMatching": {
             "FirstHomeBuyer": [
