@@ -2,7 +2,7 @@ from app.core.database import get_db, get_task_db_session
 import asyncio
 import json
 from datetime import datetime, timezone, timedelta
-from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights
+from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights, system_prompt_odysseynleo_website_insights
 from app.config.settings import get_settings
 from app.modules.open_ai import service as ai_service
 from app.modules.chat import schemas as chat_schema
@@ -37,7 +37,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
         else:
             raw_response = await ai_service.openai_call_conversation_analysis(
                 formatted_messages,
-                json.dumps(system_prompt_extract_chat_insights)
+                json.dumps(system_prompt_odysseynleo_website_insights if tenant_id=="website_odysseynleo" else system_prompt_extract_chat_insights)
             )
 
         try:
