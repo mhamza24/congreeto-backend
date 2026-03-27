@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.config.sentry import init_sentry
 from app.core import exceptions
 from app.config.logging import setup_logging
+from app.config.rate_limit import RateLimitMiddleware
 from app.api.v1.router import router as v1_router
 from fastapi import APIRouter
 from app.config.settings import Settings
@@ -47,6 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RateLimitMiddleware)
 # Register exception handlers
 app.add_exception_handler(HTTPException, exceptions.http_exception_handler)
 app.add_exception_handler(RequestValidationError,

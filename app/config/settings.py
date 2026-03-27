@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     ALEMBIC_DATABASE_URL: str
     DATABASE_URL: str
     REDIS_URL: str
+    
+    RATE_LIMIT_REQUEST_COUNT:int=100 # max requests
+    RATE_LIMIT_WINDOW_SECONDS:int=60 # per 60 seconds
+    
 
     JWT_SECRET: str
     JWT_ALGORITHM: str
