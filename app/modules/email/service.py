@@ -722,7 +722,7 @@ def build_lead_email_html(
 
     return _render_email_shell(
         accent=accent,
-        header_label="New Property Lead",
+        header_label="New Lead",
         lead_name=lead_name,
         contact_block=contact_block,
         overview_rows=overview_rows,
