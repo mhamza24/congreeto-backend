@@ -1188,7 +1188,7 @@ async def send_website_lead_insight_email(
     await fm.send_message(MessageSchema(
         subject=subject,
         recipients=recipients,
-        body=build_website_lead_email_html(lead=lead, insights=insights, messages=messages),
+        body=build_website_lead_email_html(lead=lead, insights=insights, messages=messages,chatbot_name=chatbot_name),
         subtype=MessageType.html,
     ))
 
