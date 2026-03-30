@@ -46,7 +46,6 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             logger.error(
                 f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
             raise
-        print(f"Parsed insights for conversation {conversation__id}: {parsed}")
         if tenant_id == "veloce_website":
             saved = await repo.upsert_website_conversation_insights(
                 db,
@@ -60,7 +59,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                                                                 lead=parsed.get(
                                                                     "lead"),
                                                                 messages=formatted_messages,
-                                                                chatbot_name=parsed.get("chatbot_identity"),
+                                                                chatbot_name=parsed.insights.get("chatbot_identity","ARIA"),
                                                                 recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com",])
         else:
             saved = await repo.upsert_conversation_insights(
@@ -74,7 +73,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             await email_service.send_lead_insight_email(insights=parsed.get("insights", {}),
                                                     lead=parsed.get("lead"),
                                                     messages=formatted_messages,
-                                                    chatbot_name=parsed.get("chatbot_identity"),
+                                                    chatbot_name=parsed.insights.get("chatbot_identity","ARIA"),
                                                     recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com"])
 
         # Send follow-up email if lead exists and email is provided
@@ -96,7 +95,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 topics=topics,
                 messages=formatted_messages,   # ← formatted, not raw ORM
                 ai_summary=ai_summary,
-                chatbot_name=parsed.get("chatbot_identity"),
+                chatbot_name=parsed.insights.get("chatbot_identity","ARIA"),
             )
 
         await repo.update_conversation_status(
