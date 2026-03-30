@@ -615,13 +615,13 @@ def _budget_line(ins: dict) -> str | None:
     return None
 
 
-def _render_messages(messages: list[dict]) -> str:
+def _render_messages(messages: list[dict],chatbot_name:str="ARIA") -> str:
     rows = []
     for m in messages:
         role    = (m.get("role") or "").lower()
         content = m.get("content", "")
         is_lead = role in ("user", "lead", "customer")
-        label   = "Visitor" if is_lead else "ARIA"
+        label   = "Visitor" if is_lead else chatbot_name
         align   = "left"    if is_lead else "right"
         bg      = "#F4F6F9" if is_lead else "#FFFFFF"
         border  = "#D8DDE6" if is_lead else "#EAEDF0"
@@ -672,6 +672,7 @@ def build_lead_email_html(
     lead: dict,
     insights: dict,
     messages: list[dict],
+    chatbot_name:str
 ) -> str:
     """Builds the lead notification email for PROPERTY chatbot conversations."""
     tier   = (insights.get("lead_tier") or "cold").lower()
@@ -706,7 +707,7 @@ def build_lead_email_html(
 
     ai_summary   = insights.get("ai_summary")  or "No summary available."
     ai_insights  = insights.get("ai_insights") or "No insights available."
-    message_rows = _render_messages(messages)
+    message_rows = _render_messages(messages,chatbot_name)
 
     contact_block = f"""
     <tr><td style="padding:20px 36px 0;">
@@ -737,6 +738,7 @@ def build_website_lead_email_html(
     lead: dict,
     insights: dict,
     messages: list[dict],
+    chatbot_name:str
 ) -> str:
     """
     Builds the lead notification email for WEBSITE (B2B) conversations.
@@ -842,7 +844,7 @@ def build_website_lead_email_html(
 
     ai_summary   = insights.get("ai_summary")  or "No summary available."
     ai_insights  = insights.get("ai_insights") or "No insights available."
-    message_rows = _render_messages(messages)
+    message_rows = _render_messages(messages,chatbot_name)
 
     return _render_email_shell(
         accent=accent,
@@ -1144,6 +1146,7 @@ async def send_lead_insight_email(
     insights: dict[str, Any],
     lead: dict[str, Any],
     messages: list[dict],
+    chatbot_name:str,
     recipients: list[str],
 ) -> None:
     """Build and send the lead-insight email for PROPERTY chatbot conversations."""
@@ -1153,7 +1156,7 @@ async def send_lead_insight_email(
     await fm.send_message(MessageSchema(
         subject=f"[{tier}] New Lead: {lead_name}",
         recipients=recipients,
-        body=build_lead_email_html(lead=lead, insights=insights, messages=messages),
+        body=build_lead_email_html(lead=lead, insights=insights, messages=messages,chatbot_name=chatbot_name),
         subtype=MessageType.html,
     ))
 
@@ -1167,7 +1170,9 @@ async def send_website_lead_insight_email(
     insights: dict[str, Any],
     lead: dict[str, Any],
     messages: list[dict],
+    chatbot_name:str,
     recipients: list[str],
+    
 ) -> None:
     """Build and send the lead-insight email for WEBSITE (B2B) conversations."""
     tier      = (insights.get("lead_tier") or "lead").upper()
@@ -1203,6 +1208,7 @@ def build_conversation_followup_html(
     messages: list[dict],
     ai_summary: str,
     website_name: str = "Veloce",
+    chatbot_name:str
 ) -> str:
     """
     A personalised follow-up email sent to the visitor after their chatbot
@@ -1253,7 +1259,7 @@ def build_conversation_followup_html(
 
     transcript_block = ""
     if messages:
-        transcript_rows = _render_messages(messages)
+        transcript_rows = _render_messages(messages,chatbot_name)
         transcript_block = f"""
         <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
           <tr>
@@ -1325,6 +1331,7 @@ async def send_conversation_followup_email(
     topics: list[str],
     messages: list[dict],
     ai_summary: str = "",
+    chatbot_name:str
 ) -> None:
     """
     Sent directly to the visitor after their chatbot conversation ends,
@@ -1340,6 +1347,7 @@ async def send_conversation_followup_email(
             topics=topics,
             messages=messages,
             ai_summary=ai_summary,
+            chatbot_name=chatbot_name
         ),
         subtype=MessageType.html,
     ))

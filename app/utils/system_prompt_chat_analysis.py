@@ -124,7 +124,9 @@ OUTPUT SCHEMA — EXACT STRUCTURE REQUIRED
 
     "ai_summary":           string | null,
     "ai_insights":          string | null,
-    "recommended_action":   string | null
+    "recommended_action":   string | null,
+    
+    "chatbot_identity":     string | null
   }
 }
 
@@ -305,6 +307,13 @@ lead_tier
     "Follow up on FHOG eligibility and refer to a mortgage broker for pre-approval."
     "Send the Section 32 / Contract of Sale for the property discussed."
   null if insufficient data.
+  
+── CHATBOT IDENTITY ──────────────────
+  The name the AI chatbot used to identify itself during the conversation.
+  Extract only if the chatbot explicitly stated its own name
+  (e.g. "Hi, I'm Aria", "My name is Max", "I'm Leo, your assistant").
+  Do not infer from the website, branding, or context clues.
+  Preserve the exact name as stated. Return null if never explicitly stated.
 
 ════════════════════════════════════════
 FINAL REMINDER
@@ -316,6 +325,7 @@ FINAL REMINDER
 → Every array must have items or be null — never [].
 → Default currency is AUD unless explicitly stated otherwise.
 → Australian context first — suburbs, schemes, property types, and terminology are AU-specific.
+→ Chatbot_identity: only extract if the chatbot explicitly named itself in the conversation. Never infer.
 """
 }
 
@@ -414,7 +424,9 @@ This schema maps directly to the database table. Field names and types must matc
 
     "ai_summary":         string | null,
     "ai_insights":        string | null,
-    "recommended_action": string | null
+    "recommended_action": string | null,
+    
+    "chatbot_identity":     string | null
   }
 }
 
@@ -607,6 +619,13 @@ lead_tier
     "Follow up within 24 hours — visitor indicated they are launching a campaign next month."
     "Send the product overview and invite them to book a demo when ready."
   null if insufficient data.
+── CHATBOT IDENTITY ──────────────────
+  The name the AI chatbot used to identify itself during the conversation.
+  Extract only if the chatbot explicitly stated its own name
+  (e.g. "Hi, I'm Aria", "My name is Max", "I'm Leo, your assistant").
+  Do not infer from the website, branding, or context clues.
+  Preserve the exact name as stated. Return null if never explicitly stated.
+
 
 ════════════════════════════════════════
 FINAL REMINDER
@@ -624,6 +643,8 @@ FINAL REMINDER
 → This is a B2B SaaS context. The visitor is a real estate professional evaluating
   Veloce for their business — not a property buyer.
 → lead_score and lead_tier reflect sales-readiness for the Veloce sales team.
+→ Chatbot_identity: only extract if the chatbot explicitly named itself in the conversation. Never infer.
+
 """
 }
 
@@ -737,7 +758,9 @@ This schema maps directly to the database table. Field names and types must matc
 
     "ai_summary":         string | null,
     "ai_insights":        string | null,
-    "recommended_action": string | null
+    "recommended_action": string | null,
+    
+    "chatbot_identity":     string | null
   }
 }
 
@@ -937,6 +960,13 @@ lead_tier
     "Send the Australian Wine Industry Report details and pricing to their email."
     "Reach out to discuss Veloce for their property business and share the beta pilot results."
   null if insufficient data.
+── CHATBOT IDENTITY ──────────────────
+  The name the AI chatbot used to identify itself during the conversation.
+  Extract only if the chatbot explicitly stated its own name
+  (e.g. "Hi, I'm Aria", "My name is Max", "I'm Leo, your assistant").
+  Do not infer from the website, branding, or context clues.
+  Preserve the exact name as stated. Return null if never explicitly stated.
+
 
 ════════════════════════════════════════
 FINAL REMINDER
@@ -954,5 +984,7 @@ FINAL REMINDER
 → This is a B2B professional services context. The visitor is a business evaluating
   Odyssey & Leo — not a consumer seeking personal advice.
 → lead_score and lead_tier reflect engagement-readiness for the Odyssey & Leo team.
+→ Chatbot_identity: only extract if the chatbot explicitly named itself in the conversation. Never infer.
+
 """
 }
