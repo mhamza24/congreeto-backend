@@ -46,7 +46,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             logger.error(
                 f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
             raise
-
+        print(f"Parsed insights for conversation {conversation__id}: {parsed}")
         if tenant_id == "veloce_website":
             saved = await repo.upsert_website_conversation_insights(
                 db,
