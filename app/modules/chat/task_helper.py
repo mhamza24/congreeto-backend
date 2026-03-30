@@ -58,11 +58,11 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 db,
                 conversation__id=conversation__id,
                 tenant_id=tenant_id,
-                insights=parsed.get("insights", {}),
+                insights=insights,
                 # updates conversation.lead_* fields
                 lead_data=parsed.get("lead"),
             )
-            await email_service.send_website_lead_insight_email(insights=parsed.get("insights", {}),
+            await email_service.send_website_lead_insight_email(insights=insights,
                                                                 lead=parsed.get(
                                                                     "lead"),
                                                                 messages=formatted_messages,
@@ -73,11 +73,11 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 db,
                 conversation__id=conversation__id,
                 tenant_id=tenant_id,
-                insights=parsed.get("insights", {}),
+                insights=insights,
                 # updates conversation.lead_* fields
                 lead_data=parsed.get("lead"),
             )
-            await email_service.send_lead_insight_email(insights=parsed.get("insights", {}),
+            await email_service.send_lead_insight_email(insights=insights,
                                                     lead=parsed.get("lead"),
                                                     messages=formatted_messages,
                                                     chatbot_name=chatbot_name,
