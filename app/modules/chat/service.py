@@ -127,6 +127,7 @@ async def create_or_continue_chat(
 
     # ── 4. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
+    initial_greetings="Hi I'm Leo, how can I help you today?" if payload.chatbot_identity == schemas.ChatbotIdentityEnum.leo_odysseynleo else "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
 
     if not is_new:
         history = await repo.get_conversation_history(
@@ -139,8 +140,8 @@ async def create_or_continue_chat(
             for msg in history
         ]
     else:
-        greeting = "Hi I'm Leo, how can I help you today?"if payload.chatbot_identity == schemas.ChatbotIdentityEnum.leo_odysseynleo else "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
-        llm_messages.append({"role": "assistant", "content": greeting})
+        # greeting = "Hi I'm Leo, how can I help you today?" if payload.chatbot_identity == schemas.ChatbotIdentityEnum.leo_odysseynleo else "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
+        llm_messages.append({"role": "assistant", "content": initial_greetings})
 
     # If returning visitor — inject reminder immediately before current message
     # This sits closest to ARIA's next response, overriding conversation history pull
@@ -185,7 +186,7 @@ async def create_or_continue_chat(
             Message(
                 conversation_id=conversation.id,
                 role=MessageRole.assistant,
-                content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
+                content=initial_greetings,
             )
         )
 
