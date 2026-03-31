@@ -11,7 +11,7 @@ from app.core.exceptions import EmailAlreadyExistsError, http_exception_handler
 from app.modules.models.otp import OTPVerification
 from app.modules.onboarding.models import utcnow
 from app.modules.open_ai import service as openai_service
-from app.modules.chat import tasks as background_tasks
+from app.modules.auth import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
 from . import repository as repo, schemas, models
@@ -64,15 +64,13 @@ async def create_user(
     await db.commit()
 
     # ── 7. Enqueue — Celery dispatches to your worker ─────────────────────
-    # log for testing; remove in prod
-    logger.info(f"Generated OTP for {user.email}: {raw_otp}")
-    # send_verification_email_task.delay(
-    #     email     = user.email,
-    #     full_name = f"{user.first_name} {user.last_name}",
-    #     otp_code  = raw_otp,
-    # )
+    celery_task = background_tasks.send_otp_verification_email_task.delay(
+       email=payload.email, first_name=payload.first_name, otp_code=raw_otp)
+
+    logger.info(
+        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
 
     return schemas.SignupResponse(
-        message="Signup successful. Please check your email for the OTP code.",
-        user_id=user.public_id,
+        public_id=user.public_id,
+        message="Signup successful. Please check your email for the OTP code."
     )

@@ -37,7 +37,7 @@ celery_app.conf.beat_schedule = {
 
 }
 celery_app.autodiscover_tasks(
-    ['app.modules.onboarding.tasks', 'app.modules.chat.tasks',])
+    ['app.modules.onboarding.tasks', 'app.modules.chat.tasks','app.modules.auth.tasks'])
 
 celery_app.conf.broker_connection_retry_on_startup = True
 

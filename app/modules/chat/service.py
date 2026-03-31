@@ -227,7 +227,7 @@ async def create_or_continue_chat(
 
 
 # ---------------------------------------------------------------------------
-# 2. Chat — chatting continue
+# 2. Chat — Admin console (stateless, no DB interaction)
 # ---------------------------------------------------------------------------
 
 async def admin_console_chat(

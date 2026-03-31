@@ -1,6 +1,6 @@
 # app/modules/chat/schemas.py
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from typing import Optional, List, Union, TypeVar, Generic
 from datetime import datetime
 from enum import Enum
@@ -35,10 +35,10 @@ class SignupRequest(BaseModel):
     # status intentionally excluded — clients must never set their own status.
     # The service layer always forces UserStatus.INVITED on signup.
 
-    @field_validator("email")
-    @classmethod
-    def normalize_email(cls, v: str) -> str:
-        return v.strip().lower()
+    # @field_validator("email")
+    # @classmethod
+    # def normalize_email(cls, v: str) -> str:
+    #     return v.strip().lower()
 
     @field_validator("password")
     @classmethod
@@ -58,5 +58,5 @@ class SignupRequest(BaseModel):
 class SignupResponse(BaseModel):
     public_id: str
     message:   str = "Account created. Please verify your email."
-
+    
     model_config = ConfigDict(from_attributes=True)

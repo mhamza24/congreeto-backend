@@ -387,6 +387,65 @@ def build_affiliation_confirmation_html(first_name: str = "there") -> str:
     """
     return _render_shell(first_name=first_name, body_html=body)
 
+# ── OTP Verification Email ────────────────────────────────────────────────────
+
+def build_otp_verification_html(*, otp_code: str) -> str:
+    """
+    Body block for the OTP verification email.
+    Injected into _render_shell() as body_html.
+    """
+    digits = "".join(
+        f"""<td style="
+                width:48px;height:56px;
+                background:{BRAND['offWhite']};
+                border:1px solid {BRAND['border']};
+                border-radius:6px;
+                font-size:26px;
+                font-weight:700;
+                color:{BRAND['textDark']};
+                text-align:center;
+                vertical-align:middle;
+                font-family:'Georgia',serif;
+                padding:0;
+            ">{d}</td>
+        <td style="width:8px;font-size:0;">&nbsp;</td>"""
+        for d in otp_code
+    )
+
+    return f"""
+    <!-- Intro -->
+    <p style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};
+              line-height:1.6;font-family:'Georgia',serif;">
+      To complete your registration, please use the verification
+      code below. It expires in <strong>10 minutes</strong>.
+    </p>
+
+    <!-- OTP digit block -->
+    <table cellpadding="0" cellspacing="0" border="0"
+           style="margin:28px 0;border-collapse:separate;border-spacing:0;">
+      <tr>
+        {digits}
+      </tr>
+    </table>
+
+    <!-- Security note -->
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="background:{BRAND['offWhite']};
+                  border-left:3px solid {BRAND['teal']};
+                  border-radius:0 4px 4px 0;
+                  margin:24px 0 0;">
+      <tr>
+        <td style="padding:14px 16px;">
+          <p style="margin:0;font-size:12px;color:{BRAND['textMid']};line-height:1.6;">
+            <strong style="color:{BRAND['textDark']};">Security notice:</strong>
+            Never share this code with anyone. Veloce will never ask for
+            your OTP via phone, chat, or email. If you didn't request this,
+            you can safely ignore it.
+          </p>
+        </td>
+      </tr>
+    </table>
+    """
 
 # ══════════════════════════════════════════════════════════════
 # D. Internal notification HTML builders
@@ -1196,7 +1255,37 @@ async def send_website_lead_insight_email(
         f"Sent website lead email to {recipients} for lead {lead_name} with intent {raw_intent}"
     )
 
+async def send_otp_verification_email(
+    *,
+    email     : str,
+    first_name: str,
+    otp_code  : str,
+) -> None:
+    """
+    Triggered on signup.
+    Sends a single email combining welcome + OTP verification.
 
+    Called via Celery:
+        send_otp_verification_task.delay(
+            email      = user.email,
+            first_name = user.first_name,
+            otp_code   = raw_otp,
+        )
+    """
+    
+    await fm.send_message(MessageSchema(
+            subject    = f"{otp_code} is your Veloce verification code",
+            recipients = [email],
+            body       = _render_shell(
+                first_name = first_name,
+                body_html  = build_otp_verification_html(otp_code=otp_code),
+            ),
+            subtype    = MessageType.html,
+        ))
+    
+    logger.info(f"OTP verification email sent | recipient={email}")
+
+    
 # ══════════════════════════════════════════════════════════════
 # H. Conversation follow-up email  (sent directly to the visitor)
 # ══════════════════════════════════════════════════════════════

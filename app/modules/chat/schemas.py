@@ -1,6 +1,6 @@
 # app/modules/chat/schemas.py
 from fastapi import Query
-from pydantic import BaseModel,EmailStr,Field
+from pydantic import BaseModel, Field
 from typing import Optional, List, Union, TypeVar, Generic
 from datetime import datetime
 from enum import Enum
@@ -27,7 +27,6 @@ class ChatMessage(BaseModel):
 class ChatbotIdentityEnum(str, Enum):
     website = "website"
     veloce_demo = "veloce_demo"
-    leo_odysseynleo="leo_odysseynleo"
 
 
 class ChatMessagePair(BaseModel):
@@ -50,7 +49,7 @@ class ChatCreateRequest(BaseModel):
     - Omit `conversation_id` to start a new conversation.
     - Pass an existing `conversation_id` (public_id) to continue one.
     """
-    email: EmailStr = Field(
+    conversation_id: Optional[str] = Field(
         default=None,
         description="Public conversation ID (uuid7). Omit to start a new conversation.",
     )

@@ -49,9 +49,8 @@ async def signup_endpoint(
             db,
             payload=payload,
         )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except HTTPException:
+        raise                          
     except Exception:
         logger.exception("Unexpected error in user signup")
         sentry_sdk.capture_exception(Exception)
@@ -62,6 +61,6 @@ async def signup_endpoint(
 
     return ApiResponse(
         success=True,
-        message="Message processed successfully.",
+        message="Signup successful. Please check your email for the OTP code.",
         data=reply,
     )

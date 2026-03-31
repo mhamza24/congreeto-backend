@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
     IDENTITY_HASH_SALT: str
-    PASSWORD_HASH_SALT: str
+    PASSWORD_HASH_PEPPER: str
+    PASSWORD_HASH_ROUND:int
     OTP_HASH_SALT: str
     
     OTP_EXPIRES_IN_MINUTES:int=15
