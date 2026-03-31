@@ -1,7 +1,7 @@
 import time
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from core.redis import redis_client
+from core.redis import redis
 
 from app.config.settings import get_settings, Settings
 settings = get_settings()

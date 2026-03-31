@@ -190,7 +190,7 @@ class Conversation(Base):
     __table_args__ = (
         # Fast lookup by public_id (used in every API route)
         Index("ix_conversations_public_id",     "public_id"),
-
+        Index("ix_conversation_identity_hash", "identity_hash"),
         # Keyset pagination: tenant + time + public_id gives a stable cursor
         # that the DB can satisfy with an index range scan — no OFFSET needed
         Index("ix_conversations_tenant_cursor", "tenant_id", "created_at", "public_id"),
