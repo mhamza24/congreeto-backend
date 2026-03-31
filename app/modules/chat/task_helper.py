@@ -2,7 +2,7 @@ from app.core.database import get_db, get_task_db_session
 import asyncio
 import json
 from datetime import datetime, timezone, timedelta
-from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights
+from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights, system_prompt_odysseynleo_website_insights
 from app.config.settings import get_settings
 from app.modules.open_ai import service as ai_service
 from app.modules.chat import schemas as chat_schema
@@ -20,6 +20,7 @@ CHAT_IDLE_BATCH_SIZE = settings.CHAT_IDLE_BATCH_SIZE
 
 async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
     async with get_task_db_session() as db:
+        chatbot_name = "ARIA"  # default name if not extracted from insights
         messages = await repo.get_conversation_history(
             db,
             conversation__id=conversation__id,
@@ -37,43 +38,50 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
         else:
             raw_response = await ai_service.openai_call_conversation_analysis(
                 formatted_messages,
-                json.dumps(system_prompt_extract_chat_insights)
+                json.dumps(system_prompt_odysseynleo_website_insights if tenant_id=="website_odysseynleo" else system_prompt_extract_chat_insights)
             )
 
         try:
             parsed = json.loads(raw_response)
+            insights = parsed.get("insights") or {}
+
+            if not isinstance(insights, dict):
+                raise ValueError("Expected 'insights' to be a dict")
+
+            chatbot_name = insights.get("chatbot_identity", "ARIA")
         except json.JSONDecodeError:
             logger.error(
                 f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
             raise
-
         if tenant_id == "veloce_website":
             saved = await repo.upsert_website_conversation_insights(
                 db,
                 conversation__id=conversation__id,
                 tenant_id=tenant_id,
-                insights=parsed.get("insights", {}),
+                insights=insights,
                 # updates conversation.lead_* fields
                 lead_data=parsed.get("lead"),
             )
-            await email_service.send_website_lead_insight_email(insights=parsed.get("insights", {}),
+            await email_service.send_website_lead_insight_email(insights=insights,
                                                                 lead=parsed.get(
                                                                     "lead"),
                                                                 messages=formatted_messages,
-                                                                recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
+                                                                chatbot_name=chatbot_name,
+                                                                recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com",])
         else:
             saved = await repo.upsert_conversation_insights(
                 db,
                 conversation__id=conversation__id,
                 tenant_id=tenant_id,
-                insights=parsed.get("insights", {}),
+                insights=insights,
                 # updates conversation.lead_* fields
                 lead_data=parsed.get("lead"),
             )
-            await email_service.send_lead_insight_email(insights=parsed.get("insights", {}),
+            await email_service.send_lead_insight_email(insights=insights,
                                                     lead=parsed.get("lead"),
                                                     messages=formatted_messages,
-                                                    recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com", "khuzaima.ansari@odysseynleo.com.au"])
+                                                    chatbot_name=chatbot_name,
+                                                    recipients=["muhammadhamzakhalid24@gmail.com", "muhammadhamzakhalid248@gmail.com"])
 
         # Send follow-up email if lead exists and email is provided
         # Send follow-up email if lead email was captured
@@ -94,6 +102,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 topics=topics,
                 messages=formatted_messages,   # ← formatted, not raw ORM
                 ai_summary=ai_summary,
+                chatbot_name=chatbot_name,
             )
 
         await repo.update_conversation_status(

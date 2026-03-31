@@ -26,6 +26,7 @@ from app.utils.email_extractor import extract_and_validate_identity
 from app.utils.hashing_utils import hash_identity
 from app.utils.portfolio_collection_extractor import get_collection_detail
 from app.utils.system_prompt_aria import aria_veloce_website_guide
+from app.utils.system_prompt_odysseynleo_leo import system_prompt_odysseynleo_leo
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
 from app.utils.system_prompt_portfolio import veloce_portfolio,veloce_portfolio_summary
 from app.utils.system_prompt_admin_console import admin_console_system_prompt
@@ -92,35 +93,41 @@ async def create_or_continue_chat(
     time_aware_system_prompt = get_time_awareness_prompt(
         payload.user_local_timestamp
     )
+    # --- Determine base system prompt by identity ---
+    match payload.chatbot_identity:
+        case schemas.ChatbotIdentityEnum.leo_odysseynleo:
+            system_prompt = json.dumps(system_prompt_odysseynleo_leo)
 
-    if payload.chatbot_identity == schemas.ChatbotIdentityEnum.website:
-        system_prompt = json.dumps(aria_veloce_website_guide)
-    else:
-        system_prompt = json.dumps(aria_veloce_brand_representative)
+        case schemas.ChatbotIdentityEnum.website:
+            system_prompt = json.dumps(aria_veloce_website_guide)
 
-        # Always attach the lightweight summary
-        system_prompt += "\n\nPortfolio summary: " + json.dumps(veloce_portfolio_summary)
+        case _:
+            system_prompt = json.dumps(aria_veloce_brand_representative)
 
-        # Dynamically attach full collection detail only if the message warrants it
-        collection_detail = get_collection_detail(payload.message)
-        if collection_detail:
-            system_prompt += (
-                f"\n\nVisitor is asking about the {collection_detail['matched_collection']} collection. "
-                f"Full detail: " + json.dumps(collection_detail["detail"])
-            )
-    # else:
-    #     system_prompt = json.dumps(aria_veloce_brand_representative)
-    #     system_prompt += "\n\nCompany portfolio: " + json.dumps(veloce_portfolio)
-    
+            # Attach lightweight portfolio summary always
+            system_prompt += "\n\nPortfolio summary: " + \
+                json.dumps(veloce_portfolio_summary)
 
+            # Attach full collection detail only if the message is collection-specific
+            if collection_detail := get_collection_detail(payload.message):
+                system_prompt += (
+                    f"\n\nVisitor is asking about the '{collection_detail['matched_collection']}' collection."
+                    f"\n\nFull detail: {json.dumps(collection_detail['detail'])}"
+                )
+
+    # --- Inject returning visitor instructions (highest priority) ---
     if returning_visitor_prompt:
-        system_prompt += "\n\nIMMEDIATE ACTION REQUIRED — EXECUTE BEFORE ANYTHING ELSE: " + \
-            json.dumps(returning_visitor_prompt)
+        system_prompt += (
+            "\n\nIMMEDIATE ACTION REQUIRED — EXECUTE BEFORE ANYTHING ELSE: "
+            + json.dumps(returning_visitor_prompt)
+        )
 
+     # --- Append time context ---
     system_prompt += "\n\nTime awareness: " + json.dumps(time_aware_system_prompt)
 
     # ── 4. Build LLM context ────────────────────────────────────────────────
     llm_messages: list[dict] = []
+    initial_greetings="Hi I'm Leo, how can I help you today?" if payload.chatbot_identity == schemas.ChatbotIdentityEnum.leo_odysseynleo else "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
 
     if not is_new:
         history = await repo.get_conversation_history(
@@ -133,8 +140,8 @@ async def create_or_continue_chat(
             for msg in history
         ]
     else:
-        greeting = "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
-        llm_messages.append({"role": "assistant", "content": greeting})
+        # greeting = "Hi I'm Leo, how can I help you today?" if payload.chatbot_identity == schemas.ChatbotIdentityEnum.leo_odysseynleo else "Hi, I'm Aria your guide to everything Veloce. What can I help with?"
+        llm_messages.append({"role": "assistant", "content": initial_greetings})
 
     # If returning visitor — inject reminder immediately before current message
     # This sits closest to ARIA's next response, overriding conversation history pull
@@ -179,7 +186,7 @@ async def create_or_continue_chat(
             Message(
                 conversation_id=conversation.id,
                 role=MessageRole.assistant,
-                content="Hi, I'm Aria your guide to everything Veloce. What can I help with?",
+                content=initial_greetings,
             )
         )
 
@@ -377,7 +384,7 @@ async def complete_conversation(
 
 ) -> schemas.ChatCompleteResponse:
 
-    if payload.tenant_id not in ("veloce", "veloce_website"):
+    if payload.tenant_id not in ("veloce", "veloce_website", "website_odysseynleo"):
         raise ValueError(f"Tenant with ID {payload.tenant_id} not found.")
 
     conversation_exists = await repo.get_conversation_by_public_id(

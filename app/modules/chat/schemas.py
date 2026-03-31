@@ -27,6 +27,7 @@ class ChatMessage(BaseModel):
 class ChatbotIdentityEnum(str, Enum):
     website = "website"
     veloce_demo = "veloce_demo"
+    leo_odysseynleo="leo_odysseynleo"
 
 
 class ChatMessagePair(BaseModel):
