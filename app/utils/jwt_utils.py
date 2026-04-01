@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import jwt
-from pydantic import ValidationError
+from pydantic import ValidationError, json
 
 from app.config.settings import get_settings
 from app.modules.auth.schemas import TokenPayload
@@ -16,7 +16,6 @@ JWT_SECRET_KEY = settings.JWT_SECRET
 JWT_ALGORITHM = settings.JWT_ALGORITHM
 
 # ── Creators ─────────────────────────────────────────────────────────────────
-
 
 def _create_token(
     subject: dict[str, Any],
@@ -32,14 +31,12 @@ def _create_token(
 
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-
 def create_access_token(subject: dict[str, Any]) -> str:
     return _create_token(
         subject=subject,
         token_type="access",
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-
 
 def create_refresh_token(subject: dict[str, Any]) -> str:
     return _create_token(
@@ -50,37 +47,49 @@ def create_refresh_token(subject: dict[str, Any]) -> str:
 
 # ── Verifier ──────────────────────────────────────────────────────────────────
 
-
 def decode_token(token: str) -> TokenPayload:
     raw = jwt.decode(
         token,
         JWT_SECRET_KEY,
         algorithms=[JWT_ALGORITHM],
+        options={"verify_sub": False},
     )
-    print("raw", raw)
     try:
+        # sub might already be a dict if PyJWT auto-parsed it
+        if isinstance(raw["sub"], str):
+            raw["sub"] = json.loads(raw["sub"])
         return TokenPayload(**raw)
+    except json.JSONDecodeError as exc:
+        raise jwt.InvalidTokenError("Bad sub format.") from exc
     except ValidationError as exc:
-        print("Validation error while decoding token:", exc)
-        raise jwt.InvalidTokenError("Malformed token payload") from exc
-
+        raise jwt.InvalidTokenError("Malformed token payload.") from exc
 
 def get_subject_from_token(token: str) -> dict[str, Any]:
     """Convenience helper — returns just the subject dict."""
     return decode_token(token).sub
 
-
 def get_token_subject(user: User) -> dict[str, Any]:
     """Builds the JWT subject dict from a User model instance."""
-    return {
-        "id":             int(user.id),                    # ensure plain int
+    
+    is_verified = user.email_verified_at is not None  # ← correct check
+
+    base = {
+        "id":             int(user.id),
         "email":          user.email,
-        "public_id":      str(user.public_id),             # UUID → str
+        "public_id":      str(user.public_id),
         "first_name":     user.first_name,
         "last_name":      user.last_name,
-        # handle Enum
         "status":         user.status.value if hasattr(user.status, "value") else user.status,
         "avatar_url":     user.avatar_url,
-        "email_verified": user.email_verified_at is not None,          # bool, not isoformat
+        "email_verified": is_verified,
         "created_at":     user.created_at.isoformat(),
     }
+    return base
+    if is_verified:
+        # user is verified — include extra claims like roles/permissions
+        base.update({
+            "role":        user.role,          # add whatever verified-only fields you have
+            "permissions": user.permissions,
+        })
+
+    return base

@@ -37,7 +37,7 @@ async def get_current_user(
     # ── Pull whatever fields you stored in sub ────────────────────────────
     sub = payload.sub
 
-    user = await user_repo.get_user_by_id(db, user_id=sub["id"])
+    user = await user_repo.get_user_by_id(db, id=sub["id"])
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

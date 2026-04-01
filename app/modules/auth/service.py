@@ -4,11 +4,11 @@ from app.config.settings import get_settings
 from fastapi import status
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
-from app.core.exceptions import EmailAlreadyExistsError, InvalidCredentialsError, InvalidTokenError, http_exception_handler
+from app.core.exceptions import EmailAlreadyExistsError, InvalidCredentialsError, InvalidOTPError, InvalidTokenError, http_exception_handler
 from app.modules.models.otp import OTPVerification
 from app.modules.onboarding.models import utcnow
 from app.modules.open_ai import service as openai_service
@@ -116,7 +116,6 @@ async def refresh_access_token(
     # 1. Decode and validate
     try:
         payload = decode_token(refresh_token)
-        print(":::::::::::", payload)
     except Exception:
         raise InvalidTokenError("Invalid refresh token")
 
@@ -126,7 +125,7 @@ async def refresh_access_token(
 
     # 3. Check user still exists
     sub = payload.sub
-    existing_user = await user_repo.get_user_by_id(db, user_id=sub["id"])
+    existing_user = await user_repo.get_user_by_id(db, id=sub["id"])
     if existing_user is None:
         raise InvalidTokenError("User no longer exists")
 
@@ -136,3 +135,86 @@ async def refresh_access_token(
     return schemas.RefreshResponse(
         access_token=create_access_token(subject),
     )
+
+
+async def verify_email(
+    db: AsyncSession,
+    *,
+    payload: schemas.OTPVerifyRequest,
+    current_user: user_models.User,
+) -> schemas.OTPVerifyResponse:
+
+    # 1. Already verified?
+    if current_user.email_verified_at is not None:
+        return schemas.OTPVerifyResponse(message="Email already verified.")
+
+    # 2. Get active OTP — expiry is already checked inside get_active_otp
+    otp_record = await repo.get_active_otp(
+        db,
+        user_id=current_user.id,
+        purpose=OTPPurpose.EMAIL_VERIFICATION,
+    )
+
+    # 3. No valid OTP found (expired, consumed, or never issued)
+    if otp_record is None:
+        raise InvalidOTPError()
+
+    # 4. Verify the code using repo — handles attempts increment too
+    is_valid = await repo.verify_otp(
+        db,
+        user_id=current_user.id,
+        purpose=OTPPurpose.EMAIL_VERIFICATION,
+        raw_code=payload.otp,
+    )
+    if not is_valid:
+        remaining = await repo.get_remaining_attempts(
+            db,
+            user_id=current_user.id,
+            purpose=OTPPurpose.EMAIL_VERIFICATION,
+        )
+        raise InvalidOTPError(f"Invalid OTP. {remaining} attempts remaining.")
+
+    # 5. Mark email verified + invalidate all OTPs atomically
+    await user_repo.mark_email_verified(db, user_id=current_user.id)
+
+    return schemas.OTPVerifyResponse(
+        message="Email verified successfully.",
+        tokens=schemas.TokenPair(
+            access_token=create_access_token(get_token_subject(current_user)),
+            refresh_token=create_refresh_token(get_token_subject(current_user)),
+        ),
+    )
+
+
+async def resend_otp(
+    db: AsyncSession,
+    *,
+   # payload: None,
+    current_user: user_models.User,
+) -> str:
+
+    # # 1. Find user
+    # user = await user_repo.get_user_by_email(db, email=payload.email)
+    # if user is None:
+    #     return  # silently return — don't reveal if email exists
+
+    # 2. Already verified — nothing to do
+    if current_user.email_verified_at is not None:
+        return "Email already verified."
+
+    # 3. Issue new OTP — create_otp auto-invalidates old ones
+    raw_code = await repo.create_otp(
+        db,
+        user_id=current_user.id,
+        purpose=OTPPurpose.EMAIL_VERIFICATION,
+        expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
+    )
+
+    # 4. Send email
+    celery_task = background_tasks.send_otp_verification_email_task.delay(
+       email=current_user.email, first_name=current_user.first_name, otp_code=hashing_utils.hash_otp(hashing_utils.generate_otp()))
+
+    logger.info(
+        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
+    return "OTP resent successfully."
+

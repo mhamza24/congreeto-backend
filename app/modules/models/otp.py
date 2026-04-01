@@ -109,7 +109,7 @@ class OTPVerification(Base, PublicIdMixin):
     # ── The code (never stored plain) ─────────────────────────────────────────
     code_hash: Mapped[str] = mapped_column(
         String(64),
-        nullable=False,
+        nullable=True,
         comment=(
             "SHA-256 of the raw 6-digit code. "
             "Raw code is emailed; only the hash is persisted."

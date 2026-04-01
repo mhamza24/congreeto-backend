@@ -77,10 +77,10 @@ class AccountSuspendedError(AuthError):
         )
 
 class InvalidOTPError(AuthError):
-    def __init__(self):
+    def __init__(self, message: Optional[str] = None):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired OTP code.",
+            detail=message or "Invalid or expired OTP code.",
         )
 
 class OTPExpiredError(AuthError):

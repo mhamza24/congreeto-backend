@@ -24,7 +24,9 @@ import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.exceptions import InvalidOTPError
 from app.core.response import ApiResponse
+from app.dependencies.auth import get_current_user
 from . import schemas,service
 from app.modules.chat.models import ConversationStatus
 
@@ -107,14 +109,11 @@ async def login_endpoint(
 async def refresh_token_endpoint(
     payload: schemas.RefreshRequest,
     db: DBDep,
+    current_user=Depends(get_current_user),
+
 ) -> ApiResponse[schemas.RefreshResponse]:
     try:
         reply = await service.refresh_access_token(db, refresh_token=payload.refresh_token)
-    except InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token. Please login again.",
-        )
     except HTTPException:
         raise
     except Exception:
@@ -125,4 +124,62 @@ async def refresh_token_endpoint(
         success=True,
         message="Token refreshed.",
         data=reply,
+    )
+
+
+@router.post(
+    "/verify-email",
+    response_model=ApiResponse[schemas.OTPVerifyResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Verify email with OTP",
+)
+async def verify_email_endpoint(
+    payload: schemas.OTPVerifyRequest,
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.OTPVerifyResponse]:
+    try:
+        reply = await service.verify_email(db, payload=payload, current_user=current_user)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during email verification")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Email verified successfully.",
+        data=reply,
+    )
+
+
+@router.get(
+    "/resend-otp",
+    response_model=ApiResponse[str],
+    status_code=status.HTTP_200_OK,
+    summary="Resend OTP to email",
+)
+async def resend_otp_endpoint(
+    # payload: None,  # No body needed since we get user from token; kept for schema consistency
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[str]:
+    try:
+        await service.resend_otp(db, current_user=current_user)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during OTP resend")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="OTP sent. Please check your email.",
+        data=None,
     )

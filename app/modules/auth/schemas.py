@@ -74,10 +74,28 @@ class LoginRequest(BaseModel):
     
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class OTPVerifyRequest(BaseModel):
+    # email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6,
+                     description="6-digit OTP code.")
+
+    @field_validator("otp")
+    @classmethod
+    def otp_must_be_digits(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("OTP must contain only digits.")
+        return v
+
+
+class OTPResendRequest(BaseModel):
+    # email: EmailStr = Field(..., description="Email to resend OTP to.")
+    pass
+
 # ---------------------------------------------------------------------------
 # Response schemas — messages
 # ---------------------------------------------------------------------------
-
 class SignupResponse(BaseModel):
     public_id: str
     message:   str = "Account created. Please verify your email."
@@ -93,3 +111,8 @@ class LoginResponse(BaseModel):
 class RefreshResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class OTPVerifyResponse(BaseModel):
+    message: str = "Email verified successfully."
+    tokens: TokenPair

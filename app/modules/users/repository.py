@@ -9,6 +9,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.enums import UserStatus
+from app.modules.models.otp import OTPVerification
 from app.utils.hashing_utils import hash_identity
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -85,3 +87,33 @@ async def create_user(
     # populates server_default fields (public_id, created_at)
     await db.refresh(user)
     return user
+
+
+async def mark_email_verified(db: AsyncSession, *, user_id: int) -> None:
+    """
+    Marks email verified + upgrades status to ACTIVE + 
+    invalidates all OTPs — all in one transaction.
+    """
+    async with db.begin():
+        # 1. Verify user
+        await db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                email_verified_at=datetime.now(timezone.utc),
+                status=UserStatus.ACTIVE,
+            )
+        )
+
+        # 2. Invalidate all unconsumed OTPs
+        await db.execute(
+            update(OTPVerification)
+            .where(
+                and_(
+                    OTPVerification.user_id == user_id,
+                    OTPVerification.consumed_at == None,
+                )
+            )
+            .values(consumed_at=datetime.now(timezone.utc),
+                    code_hash=None)  # mark as consumed + remove code hash for extra safety
+        )
