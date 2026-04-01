@@ -23,7 +23,7 @@ async def send_otp_verification_email_helper(
         )
     """
     try:
-        email_service.send_otp_verification_email(email=email,first_name=first_name,otp_code=otp_code)
+        await email_service.send_otp_verification_email(email=email,first_name=first_name,otp_code=otp_code)
         logger.info(f"OTP verification email sent | recipient={email}")
 
     except Exception:

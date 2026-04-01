@@ -19,6 +19,7 @@ import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from passlib.exc import InvalidTokenError
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,5 +63,66 @@ async def signup_endpoint(
     return ApiResponse(
         success=True,
         message="Signup successful. Please check your email for the OTP code.",
+        data=reply,
+    )
+
+@router.post(
+    "/login",
+    response_model=ApiResponse[schemas.LoginResponse],
+    status_code=status.HTTP_200_OK,
+    summary="logged in a user",
+)
+async def login_endpoint(
+    payload: schemas.LoginRequest,
+    db: DBDep,
+) -> ApiResponse[schemas.LoginResponse]:
+    try:
+        reply = await service.login_user(
+            db,
+            payload=payload,
+        )
+    except HTTPException:
+        raise                          
+    except Exception:
+        logger.exception("Unexpected error in user login")
+        sentry_sdk.capture_exception(Exception)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Login successful.",
+        data=reply,
+    )
+
+
+@router.post(
+    "/refresh",
+    response_model=ApiResponse[schemas.RefreshResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get new access token using refresh token",
+)
+async def refresh_token_endpoint(
+    payload: schemas.RefreshRequest,
+    db: DBDep,
+) -> ApiResponse[schemas.RefreshResponse]:
+    try:
+        reply = await service.refresh_access_token(db, refresh_token=payload.refresh_token)
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token. Please login again.",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during token refresh")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return ApiResponse(
+        success=True,
+        message="Token refreshed.",
         data=reply,
     )

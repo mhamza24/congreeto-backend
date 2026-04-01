@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from app.config.settings import get_settings
 from fastapi import status
 import json
@@ -7,13 +8,14 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
-from app.core.exceptions import EmailAlreadyExistsError, http_exception_handler
+from app.core.exceptions import EmailAlreadyExistsError, InvalidCredentialsError, InvalidTokenError, http_exception_handler
 from app.modules.models.otp import OTPVerification
 from app.modules.onboarding.models import utcnow
 from app.modules.open_ai import service as openai_service
 from app.modules.auth import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
+from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject
 from . import repository as repo, schemas, models
 from app.modules.users import repository as user_repo, models as user_models
 
@@ -73,4 +75,64 @@ async def create_user(
     return schemas.SignupResponse(
         public_id=user.public_id,
         message="Signup successful. Please check your email for the OTP code."
+    )
+
+
+async def login_user(
+    db: AsyncSession,
+    *,
+    payload: schemas.LoginRequest,
+) -> schemas.LoginResponse:
+
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+
+    if existing_user is None:
+        raise InvalidCredentialsError()
+
+    is_password_valid = hashing_utils.verify_password(
+        payload.password, existing_user.password_hash
+    )
+    if not is_password_valid:
+        raise InvalidCredentialsError()
+
+    # ── Build whatever you need in the subject ────────────────────────────
+    subject = get_token_subject(existing_user)
+
+    return schemas.LoginResponse(
+        tokens=schemas.TokenPair(
+            access_token=create_access_token(subject),
+            refresh_token=create_refresh_token(subject),
+        ),
+
+    )
+
+
+async def refresh_access_token(
+    db: AsyncSession,
+    *,
+    refresh_token: str,
+) -> schemas.RefreshResponse:
+
+    # 1. Decode and validate
+    try:
+        payload = decode_token(refresh_token)
+        print(":::::::::::", payload)
+    except Exception:
+        raise InvalidTokenError("Invalid refresh token")
+
+    # 2. Must be a refresh token, not access
+    if payload.type != "refresh":
+        raise InvalidTokenError("Token is not a refresh token")
+
+    # 3. Check user still exists
+    sub = payload.sub
+    existing_user = await user_repo.get_user_by_id(db, user_id=sub["id"])
+    if existing_user is None:
+        raise InvalidTokenError("User no longer exists")
+
+    # 4. Issue new access token only (refresh token stays the same)
+    subject = get_token_subject(existing_user)
+
+    return schemas.RefreshResponse(
+        access_token=create_access_token(subject),
     )

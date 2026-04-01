@@ -19,6 +19,40 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 
+async def get_user_by_id(
+    db: AsyncSession,
+    *,
+    id: int,
+) -> User | None:
+    """
+    Returns the User object or None.
+    Caller decides what a missing/present user means — repo stays dumb.
+    """
+    result = await db.execute(
+        select(User).where(
+            User.id == id,
+            User.deleted_at.is_(None),
+        )
+    )
+    return result.scalar_one_or_none()
+
+async def get_user_by_public_id(
+    db: AsyncSession,
+    *,
+    public_id: str,
+) -> User | None:
+    """
+    Returns the User object or None.
+    Caller decides what a missing/present user means — repo stays dumb.
+    """
+    result = await db.execute(
+        select(User).where(
+            User.public_id == public_id,
+            User.deleted_at.is_(None),
+        )
+    )
+    return result.scalar_one_or_none()
+
 async def get_user_by_email(
     db: AsyncSession,
     *,
@@ -35,7 +69,6 @@ async def get_user_by_email(
         )
     )
     return result.scalar_one_or_none()
-
 
 async def create_user(
     db: AsyncSession,

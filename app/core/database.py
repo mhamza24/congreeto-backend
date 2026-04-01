@@ -62,7 +62,7 @@ async def get_task_db_session():
         max_overflow=3,
         pool_pre_ping=True,
         pool_recycle=60,
-        connect_args={"ssl": True},
+        connect_args={"ssl": False} if settings.ENV == "DEVELOPMENT" else {"ssl": True},
     )
     try:
         factory = async_sessionmaker(

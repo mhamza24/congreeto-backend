@@ -48,3 +48,5 @@ fastapi-mail==1.6.2
 
 sentry-sdk==2.54.0
 
+pyjwt==2.12.1
+

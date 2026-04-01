@@ -1,7 +1,7 @@
 # app/modules/chat/schemas.py
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
-from typing import Optional, List, Union, TypeVar, Generic
+from typing import Any, Optional, List, Union, TypeVar, Generic
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -14,6 +14,16 @@ DataT = TypeVar("DataT")
 # ---------------------------------------------------------------------------
 
 
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class TokenPayload(BaseModel):
+    sub: dict[str, Any]   # ← now a dict instead of plain str
+    type: str             # "access" | "refresh"
+    exp: int
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
@@ -51,6 +61,19 @@ class SignupRequest(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+
+class LoginRequest(BaseModel):
+    email: EmailStr = Field(
+        ...,                          # required — no default
+        description="Email associated with the user account.",
+    )
+    password: str = Field(
+        ...,
+        description="Plain-text. Will be verified against the stored password hash.",
+    )
+    
+class RefreshRequest(BaseModel):
+    refresh_token: str
 # ---------------------------------------------------------------------------
 # Response schemas — messages
 # ---------------------------------------------------------------------------
@@ -58,5 +81,15 @@ class SignupRequest(BaseModel):
 class SignupResponse(BaseModel):
     public_id: str
     message:   str = "Account created. Please verify your email."
-    
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoginResponse(BaseModel):
+    message: str = "Login successful."
+    tokens: TokenPair
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

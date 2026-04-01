@@ -143,7 +143,7 @@ class OTPVerification(Base, PublicIdMixin):
         Integer,
         nullable=False,
         default=5,
-        server_default=text("3"),
+        server_default=text("5"),
         comment="Maximum allowed wrong guesses before this OTP is invalidated.",
     )
 

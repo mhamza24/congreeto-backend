@@ -1,5 +1,7 @@
 # app/exceptions.py  — your existing file, just add AuthError classes here
 
+from typing import Optional
+
 from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -93,4 +95,12 @@ class InvitationInvalidError(AuthError):
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invitation link is invalid or has expired.",
+        )
+
+
+class InvalidTokenError(AuthError):
+    def __init__(self, message: Optional[str] = None):
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=message or "Invalid or expired token.",
         )

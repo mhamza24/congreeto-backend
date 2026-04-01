@@ -417,7 +417,7 @@ def build_otp_verification_html(*, otp_code: str) -> str:
     <p style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};
               line-height:1.6;font-family:'Georgia',serif;">
       To complete your registration, please use the verification
-      code below. It expires in <strong>10 minutes</strong>.
+      code below. It expires in <strong>{settings.OTP_EXPIRES_IN_MINUTES} minutes</strong>.
     </p>
 
     <!-- OTP digit block -->
