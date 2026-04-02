@@ -109,7 +109,6 @@ async def login_endpoint(
 async def refresh_token_endpoint(
     payload: schemas.RefreshRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
 
 ) -> ApiResponse[schemas.RefreshResponse]:
     try:

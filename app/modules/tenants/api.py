@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.response import ApiResponse
 from app.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.dependencies.user import get_verified_user
 from app.modules.tenants import schemas, service
 from app.core.enums import TenantRole
 
@@ -34,7 +35,7 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
 async def create_tenant(
     payload: schemas.TenantCreateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_verified_user),
 ) -> ApiResponse[schemas.TenantResponse]:
     """
     Creates a new tenant and assigns the calling user as primary owner.

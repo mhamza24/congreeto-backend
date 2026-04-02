@@ -53,6 +53,13 @@ class AuthError(HTTPException):
     """All auth exceptions inherit from this. FastAPI catches it via http_exception_handler."""
     pass
 
+class UserError(HTTPException):
+    """All auth exceptions inherit from this. FastAPI catches it via http_exception_handler."""
+    pass
+
+class TenantsError(HTTPException):
+    """All auth exceptions inherit from this. FastAPI catches it via http_exception_handler."""
+    pass
 
 
 # ── Auth exceptions ───────────────────────────────────────────────────────────
@@ -76,6 +83,13 @@ class EmailNotVerifiedError(AuthError):
         super().__init__(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified. Please check your inbox.",
+        )
+
+class EmailAlreadyVerifiedError(AuthError):
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email already verified. Please check your inbox.",
         )
 
 class AccountSuspendedError(AuthError):
@@ -114,10 +128,54 @@ class InvalidTokenError(AuthError):
             detail=message or "Invalid or expired token.",
         )
 
+class InvalidTokenTypeError(AuthError):
+    def __init__(self, message: Optional[str] = None):
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=message or "Token type mismatched.",
+        )
+
+
 
 class RateLimitError(AuthError):
     def __init__(self, message: str = "Too many requests."):
         super().__init__(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=message,
+        )
+        
+        
+
+
+# ── User exceptions ───────────────────────────────────────────────────────────
+
+class UserNotExistError(UserError):
+    def __init__(self, message: str = "User no longer exists"):
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=message,
+        )
+class UserNotFoundError(UserError):
+    def __init__(self, message: str = "User not found"):
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=message,
+        )
+        
+                
+class UserStatusError(UserError):
+    def __init__(self, message: str = "Account not active. Please contact support."):
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=message,
+        )
+
+
+# ── Tenants exceptions ───────────────────────────────────────────────────────────
+
+class SlugExistError(TenantsError):
+    def __init__(self, message: str = "Slug already exists. Please choose another."):
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
             detail=message,
         )

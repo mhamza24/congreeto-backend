@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
-from app.core.exceptions import EmailAlreadyExistsError, InvalidCredentialsError, InvalidOTPError, InvalidTokenError, http_exception_handler
+from app.core.exceptions import EmailAlreadyExistsError, EmailAlreadyVerifiedError, InvalidCredentialsError, InvalidOTPError, InvalidTokenError, InvalidTokenTypeError, UserNotExistError, http_exception_handler
 from app.modules.models.otp import OTPVerification
 from app.modules.onboarding.models import utcnow
 from app.modules.open_ai import service as openai_service
@@ -96,13 +96,16 @@ async def login_user(
     if not is_password_valid:
         raise InvalidCredentialsError()
 
+    # Update last login time
+    await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
+    
     # ── Build whatever you need in the subject ────────────────────────────
-    subject = get_token_subject(existing_user)
+    jwt_subject = get_token_subject(existing_user)
 
     return schemas.LoginResponse(
         tokens=schemas.TokenPair(
-            access_token=create_access_token(subject),
-            refresh_token=create_refresh_token(subject),
+            access_token=create_access_token(jwt_subject),
+            refresh_token=create_refresh_token(jwt_subject),
         ),
 
     )
@@ -122,13 +125,13 @@ async def refresh_access_token(
 
     # 2. Must be a refresh token, not access
     if payload.type != "refresh":
-        raise InvalidTokenError("Token is not a refresh token")
+        raise InvalidTokenTypeError()
 
     # 3. Check user still exists
     sub = payload.sub
     existing_user = await user_repo.get_user_by_id(db, id=sub["id"])
     if existing_user is None:
-        raise InvalidTokenError("User no longer exists")
+        raise UserNotExistError()
 
     # 4. Issue new access token only (refresh token stays the same)
     subject = get_token_subject(existing_user)
@@ -144,46 +147,52 @@ async def verify_email(
     payload: schemas.OTPVerifyRequest,
     current_user: user_models.User,
 ) -> schemas.OTPVerifyResponse:
+    """
+    Verifies the email OTP for the current user.
 
-    # 1. Already verified?
+    DB hits: 2
+      1. get_active_otp  — fetch OTP record
+      2. mark_email_verified — update user (returns updated user, no re-fetch)
+
+    No re-fetch of OTP record after verify_otp — attempts computed in-memory
+    from the already-loaded SQLAlchemy object.
+    """
+
+    # 1. Guard — already verified
     if current_user.email_verified_at is not None:
-        return schemas.OTPVerifyResponse(message="Email already verified.")
+        raise EmailAlreadyVerifiedError()
 
-    # 2. Get active OTP — expiry is already checked inside get_active_otp
+    # 2. DB hit 1 — fetch OTP record once, reuse throughout
     otp_record = await repo.get_active_otp(
         db,
         user_id=current_user.id,
         purpose=OTPPurpose.EMAIL_VERIFICATION,
     )
-
-    # 3. No valid OTP found (expired, consumed, or never issued)
     if otp_record is None:
-        raise InvalidOTPError()
+        raise InvalidOTPError()  # generic — don't leak expired/consumed/never-issued
 
-    # 4. Verify the code using repo — handles attempts increment too
+    # 3. Verify — constant-time compare inside, increments attempts on failure
+    #    No DB re-fetch — record already in memory
     is_valid = await repo.verify_otp(
         db,
-        user_id=current_user.id,
-        purpose=OTPPurpose.EMAIL_VERIFICATION,
+        record=otp_record,
         raw_code=payload.otp,
     )
     if not is_valid:
-        remaining = await repo.get_remaining_attempts(
-            db,
-            user_id=current_user.id,
-            purpose=OTPPurpose.EMAIL_VERIFICATION,
-        )
-        raise InvalidOTPError(f"Invalid OTP. {remaining} attempts remaining.")
+        # remaining_attempts uses already-incremented in-memory value — no DB call
+        remaining = repo.remaining_attempts(otp_record)
+        raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
 
-    # 5. Mark email verified + invalidate all OTPs atomically
-    await user_repo.mark_email_verified(db, user_id=current_user.id)
-    
-    updated_user=await user_repo.get_user_by_id(db,id=current_user.id)
+    # 4. DB hit 2 — mark verified, get updated user back (no extra fetch)
+    updated_user = await user_repo.mark_email_verified_and_update_status(db, user_id=current_user.id)
+
+    # 5. Issue fresh token pair with verified identity
+    token_subject = get_token_subject(updated_user)
     return schemas.OTPVerifyResponse(
         message="Email verified successfully.",
         tokens=schemas.TokenPair(
-            access_token=create_access_token(get_token_subject(updated_user)),
-            refresh_token=create_refresh_token(get_token_subject(updated_user)),
+            access_token=create_access_token(token_subject),
+            refresh_token=create_refresh_token(token_subject),
         ),
     )
 

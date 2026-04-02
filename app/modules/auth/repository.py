@@ -1,7 +1,6 @@
 # app/modules/auth/otp_repository.py
 
-import hashlib
-import random
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -12,10 +11,11 @@ from app.core.enums import OTPPurpose
 from app.modules.models.otp import OTPVerification
 from app.utils.hashing_utils import generate_otp, hash_otp
 from app.config.settings import get_settings
+
 settings = get_settings()
 
 
-# ── Write operations ─────────────────────────────────────────────────────────
+# ── Write operations ──────────────────────────────────────────────────────────
 
 async def create_otp(
     db: AsyncSession,
@@ -28,85 +28,73 @@ async def create_otp(
     """
     Issues a new OTP for the given user and purpose.
     Invalidates any previous unconsumed OTPs for the same (user, purpose).
-    Returns the raw OTP code — send this to the user via email.
+    Uses SELECT FOR UPDATE to prevent race conditions on concurrent requests.
+    Returns the raw OTP code — send this to the user via email/SMS.
     """
+    # 1. Lock existing unconsumed OTPs to prevent race condition
+    await db.execute(
+        select(OTPVerification)
+        .where(
+            and_(
+                OTPVerification.user_id == user_id,
+                OTPVerification.purpose == purpose,
+                OTPVerification.consumed_at.is_(None),
+            )
+        )
+        .with_for_update()  # row-level lock — prevents double issuance
+    )
 
-    # 1. Invalidate previous unconsumed OTPs for same user + purpose
+    # 2. Invalidate all previous unconsumed OTPs
     await db.execute(
         update(OTPVerification)
         .where(
             and_(
                 OTPVerification.user_id == user_id,
                 OTPVerification.purpose == purpose,
-                OTPVerification.consumed_at == None,
+                OTPVerification.consumed_at.is_(None),
             )
         )
-        .values(consumed_at=datetime.now(timezone.utc))  # mark as consumed
+        .values(consumed_at=datetime.now(timezone.utc))
     )
 
-    # 2. Generate new OTP
+    # 3. Generate and persist new hashed OTP
     raw_code = generate_otp()
-    code_hash = hash_otp(raw_code)
-
-    # 3. Persist hashed OTP
     otp = OTPVerification(
         user_id=user_id,
         purpose=purpose,
-        code_hash=code_hash,
-        expires_at=datetime.now(timezone.utc) +
-        timedelta(minutes=expires_in_minutes),
+        code_hash=hash_otp(raw_code),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=expires_in_minutes),
         ip_address=ip_address,
     )
     db.add(otp)
     await db.commit()
     await db.refresh(otp)
 
-    return raw_code   # ← only time raw code exists — pass to email service
+    return raw_code  # ← only moment raw code exists — caller passes to email service
 
 
 async def verify_otp(
     db: AsyncSession,
     *,
-    user_id: int,
-    purpose: OTPPurpose,
+    record: OTPVerification,  # already-fetched record — no re-query needed
     raw_code: str,
 ) -> bool:
     """
-    Verifies submitted OTP code.
-    - Increments attempts on every failure.
+    Verifies submitted OTP against the fetched record.
+    - Uses constant-time comparison to prevent timing attacks.
+    - Increments attempts on failure.
     - Marks consumed_at on success.
-    - Returns True if valid, False otherwise.
     """
+    expected = hash_otp(raw_code)
 
-    # 1. Find latest unconsumed, non-expired, non-exhausted OTP
-    result = await db.execute(
-        select(OTPVerification)
-        .where(
-            and_(
-                OTPVerification.user_id == user_id,
-                OTPVerification.purpose == purpose,
-                OTPVerification.consumed_at == None,
-                OTPVerification.expires_at > datetime.now(timezone.utc),
-                OTPVerification.attempts < OTPVerification.max_attempts,
-            )
-        )
-        .order_by(OTPVerification.created_at.desc())
-        .limit(1)
-    )
-    record = result.scalar_one_or_none()
-
-    # 2. No valid record found
-    if record is None:
-        return False
-
-    # 3. Hash mismatch — wrong code
-    if record.code_hash != hash_otp(raw_code):
-        record.attempts += 1    # increment attempts on failure
+    # Constant-time comparison — prevents timing attacks
+    if not hmac.compare_digest(record.code_hash, expected):
+        record.attempts += 1
         await db.commit()
         return False
 
-    # 4. Success — mark as consumed
     record.consumed_at = datetime.now(timezone.utc)
+    record.code_hash=None # clear hash on success — prevents reuse even if DB is compromised
     await db.commit()
     return True
 
@@ -120,8 +108,8 @@ async def get_active_otp(
     purpose: OTPPurpose,
 ) -> Optional[OTPVerification]:
     """
-    Returns the latest unconsumed, non-expired OTP for a (user, purpose) pair.
-    Useful for checking if a valid OTP already exists before issuing a new one.
+    Returns the latest unconsumed, non-expired, non-locked-out OTP
+    for a (user, purpose) pair.
     """
     result = await db.execute(
         select(OTPVerification)
@@ -129,7 +117,7 @@ async def get_active_otp(
             and_(
                 OTPVerification.user_id == user_id,
                 OTPVerification.purpose == purpose,
-                OTPVerification.consumed_at == None,
+                OTPVerification.consumed_at.is_(None),
                 OTPVerification.expires_at > datetime.now(timezone.utc),
                 OTPVerification.attempts < OTPVerification.max_attempts,
             )
@@ -140,17 +128,12 @@ async def get_active_otp(
     return result.scalar_one_or_none()
 
 
-async def get_remaining_attempts(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    purpose: OTPPurpose,
-) -> int:
-    """Returns how many attempts are left for the active OTP."""
-    record = await get_active_otp(db, user_id=user_id, purpose=purpose)
-    if record is None:
-        return 0
-    return record.max_attempts - record.attempts
+def remaining_attempts(record: OTPVerification) -> int:
+    """
+    Pure in-memory computation — no DB call.
+    Call after verify_otp so record.attempts is already incremented.
+    """
+    return max(0, record.max_attempts - record.attempts)
 
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -162,8 +145,8 @@ async def invalidate_all_otps(
     purpose: OTPPurpose,
 ) -> None:
     """
-    Force-invalidates all OTPs for a user+purpose.
-    Call this after successful email verification or password reset.
+    Force-invalidates all active OTPs for a user+purpose.
+    Call this after successful verification or password reset.
     """
     await db.execute(
         update(OTPVerification)
@@ -171,7 +154,7 @@ async def invalidate_all_otps(
             and_(
                 OTPVerification.user_id == user_id,
                 OTPVerification.purpose == purpose,
-                OTPVerification.consumed_at == None,
+                OTPVerification.consumed_at.is_(None),
             )
         )
         .values(consumed_at=datetime.now(timezone.utc))

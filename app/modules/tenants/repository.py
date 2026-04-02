@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.tenants.models import Tenant
-from app.modules.tenants.models import TenantUser
+from app.modules.models.tenant_user import TenantUser
 from app.core.enums import TenantStatus, TenantRole
 
 

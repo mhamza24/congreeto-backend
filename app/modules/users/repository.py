@@ -89,31 +89,31 @@ async def create_user(
     return user
 
 
-async def mark_email_verified(db: AsyncSession, *, user_id: int) -> None:
+async def mark_email_verified_and_update_status(
+    db: AsyncSession,
+    *,
+    user_id: int,
+) -> User:
     """
-    Marks email verified + upgrades status to ACTIVE + 
-    invalidates all OTPs — all in one transaction.
+    Marks email as verified and returns the updated user — no separate fetch needed.
     """
-    async with db.begin():
-        # 1. Verify user
-        await db.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(
-                email_verified_at=datetime.now(timezone.utc),
-                status=UserStatus.ACTIVE,
-            )
-        )
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(email_verified_at=datetime.now(timezone.utc),
+                status=UserStatus.ACTIVE)
+        .returning(User)  # ← eliminates the extra get_user_by_id call
+    )
+    await db.commit()
+    return result.scalar_one()
 
-        # 2. Invalidate all unconsumed OTPs
-        await db.execute(
-            update(OTPVerification)
-            .where(
-                and_(
-                    OTPVerification.user_id == user_id,
-                    OTPVerification.consumed_at == None,
-                )
-            )
-            .values(consumed_at=datetime.now(timezone.utc),
-                    code_hash=None)  # mark as consumed + remove code hash for extra safety
+async def update_login_time_by_id(db: AsyncSession, *, user_id: int) -> None:
+
+    # 1. Update user login time
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(
+            last_login_at=datetime.now(timezone.utc),
         )
+    )

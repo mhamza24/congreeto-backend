@@ -9,13 +9,15 @@ from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import SlugExistError
 from app.modules.tenants import repository as repo
 from app.modules.tenants import schemas
 from app.modules.users import repository as user_repo
-from app.modules.tenants.models import Tenant, TenantUser
+from app.modules.tenants.models import Tenant
+from app.modules.models.tenant_user import TenantUser
 from app.modules.users.models import User
 from app.core.enums import TenantStatus, TenantRole, UserStatus
-from app.utils.jwt_utils import create_invite_token, decode_invite_token
+#from app.utils.jwt_utils import create_invite_token, decode_invite_token
 from app.utils.hashing_utils import hash_password
 from app.config.settings import get_settings
 
@@ -46,10 +48,7 @@ async def create_tenant(
 
     # 1. Slug uniqueness
     if await repo.slug_exists(db, slug=payload.slug):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"The slug '{payload.slug}' is already taken.",
-        )
+        raise SlugExistError()
 
     # 2. from_schema maps all matching columns automatically.
     #    status override ensures the client can never set this themselves.
@@ -71,7 +70,7 @@ async def create_tenant(
     ))
 
     # 5. Single commit — Tenant + TenantUser land atomically
-    await db.commit()
+    # await db.commit()
     await db.refresh(tenant)
 
     return schemas.TenantResponse.model_validate(tenant)
@@ -218,13 +217,13 @@ async def invite_user(
 
     # 4. Sign invite token
     expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_TTL_HOURS)
-    token = create_invite_token(
-        tenant_public_id=tenant.public_id,
-        email=payload.email,
-        role=payload.role.value,
-        invited_by_id=current_user.id,
-        expires_at=expires_at,
-    )
+    # token = create_invite_token(
+    #     tenant_public_id=tenant.public_id,
+    #     email=payload.email,
+    #     role=payload.role.value,
+    #     invited_by_id=current_user.id,
+    #     expires_at=expires_at,
+    # )
 
     # 5. TODO: plug in your email service
     # await email_service.send_invite(
@@ -258,7 +257,8 @@ async def accept_invite(
 
     # 1. Decode token
     try:
-        token_data = decode_invite_token(payload.token)
+        # token_data = decode_invite_token(payload.token)
+        pass
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

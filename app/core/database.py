@@ -51,7 +51,12 @@ AsyncSessionLocal = async_sessionmaker(
 # ✅ For FastAPI routes — reuses module-level engine (correct)
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()  # commits all changes at end of request
+        except Exception:
+            await session.rollback()
+            raise
 
 # ✅ For Celery tasks — creates fresh engine per task (correct)
 @asynccontextmanager
