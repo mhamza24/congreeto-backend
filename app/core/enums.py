@@ -82,8 +82,8 @@ class OTPPurpose(str, enum.Enum):
     """
     Drives which template is sent and which expiry applies.
 
-    email_verification → 10-minute expiry, sent on signup / resend request
-    password_reset     → 10-minute expiry, sent on "forgot password"
+    email_verification → 15-minute expiry, sent on signup / resend request
+    password_reset     → 15-minute expiry, sent on "forgot password"
     login_otp          → 5-minute expiry, for passwordless / 2-FA flows (future)
     """
     EMAIL_VERIFICATION = "email_verification"
