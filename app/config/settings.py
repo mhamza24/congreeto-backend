@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUEST_COUNT:int=100 # max requests
     RATE_LIMIT_WINDOW_SECONDS:int=60 # per 60 seconds
     
+    DOCS_USERNAME:str
+    DOCS_PASSWORD:str
 
     JWT_SECRET: str
     JWT_ALGORITHM: str

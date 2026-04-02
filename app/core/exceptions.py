@@ -2,14 +2,24 @@
 
 from typing import Optional
 
-from fastapi import Request, HTTPException, status
+from fastapi import Request, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
+
 async def http_exception_handler(request: Request, exc: HTTPException):
+    
+    # ← pass Basic Auth challenge through untouched so browser shows popup
+    if exc.status_code == 401 and exc.headers and "WWW-Authenticate" in exc.headers:
+        return Response(
+            content=exc.detail,
+            status_code=401,
+            headers=dict(exc.headers),
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -18,8 +28,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             "data": None,
         },
     )
-
-
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = [
         {
