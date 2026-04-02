@@ -46,6 +46,7 @@ class AuthError(HTTPException):
     pass
 
 
+
 # ── Auth exceptions ───────────────────────────────────────────────────────────
 
 class EmailAlreadyExistsError(AuthError):
@@ -103,4 +104,12 @@ class InvalidTokenError(AuthError):
         super().__init__(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=message or "Invalid or expired token.",
+        )
+
+
+class RateLimitError(AuthError):
+    def __init__(self, message: str = "Too many requests."):
+        super().__init__(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=message,
         )

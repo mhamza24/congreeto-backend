@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     OTP_HASH_SALT: str
     
     OTP_EXPIRES_IN_MINUTES:int=15
+    OTP_MAX_ATTEMPTS:int=5
+    OTP_LOCKOUT_SECONDS:int=86400 # 24 hours after max attempts
 
     CELERY_RESULT_EXPIRES: int = 18000
     CELERY_TASK_TRACK_STARTED: bool = True

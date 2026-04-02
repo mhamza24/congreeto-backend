@@ -16,6 +16,7 @@ from app.modules.auth import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
 from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject
+from app.utils.rate_limit import check_otp_rate_limit, record_otp_request
 from . import repository as repo, schemas, models
 from app.modules.users import repository as user_repo, models as user_models
 
@@ -176,12 +177,13 @@ async def verify_email(
 
     # 5. Mark email verified + invalidate all OTPs atomically
     await user_repo.mark_email_verified(db, user_id=current_user.id)
-
+    
+    updated_user=await user_repo.get_user_by_id(db,id=current_user.id)
     return schemas.OTPVerifyResponse(
         message="Email verified successfully.",
         tokens=schemas.TokenPair(
-            access_token=create_access_token(get_token_subject(current_user)),
-            refresh_token=create_refresh_token(get_token_subject(current_user)),
+            access_token=create_access_token(get_token_subject(updated_user)),
+            refresh_token=create_refresh_token(get_token_subject(updated_user)),
         ),
     )
 
@@ -189,20 +191,21 @@ async def verify_email(
 async def resend_otp(
     db: AsyncSession,
     *,
-   # payload: None,
     current_user: user_models.User,
 ) -> str:
 
-    # # 1. Find user
-    # user = await user_repo.get_user_by_email(db, email=payload.email)
-    # if user is None:
-    #     return  # silently return — don't reveal if email exists
-
-    # 2. Already verified — nothing to do
+    # 1. Already verified — nothing to do
     if current_user.email_verified_at is not None:
         return "Email already verified."
 
-    # 3. Issue new OTP — create_otp auto-invalidates old ones
+    # 2. Check rate limit — raises RateLimitError if abusing
+    await check_otp_rate_limit(current_user.id)
+
+    # 3. Record this request + set cooldown
+    attempt = await record_otp_request(current_user.id)
+    logger.info(f"OTP resend attempt {attempt} for user {current_user.public_id}")
+
+    # 4. Issue new OTP — auto-invalidates old ones in DB
     raw_code = await repo.create_otp(
         db,
         user_id=current_user.id,
@@ -210,11 +213,13 @@ async def resend_otp(
         expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
     )
 
-    # 4. Send email
+    # 5. Send email via celery
     celery_task = background_tasks.send_otp_verification_email_task.delay(
-       email=current_user.email, first_name=current_user.first_name, otp_code=hashing_utils.hash_otp(hashing_utils.generate_otp()))
+        email=current_user.email,
+        first_name=current_user.first_name,
+        otp_code=raw_code,                   # ← send raw_code not a new hash
+    )
+    logger.info(f"OTP email enqueued: task={celery_task.id} attempt={attempt}")
 
-    logger.info(
-        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
     return "OTP resent successfully."
 
