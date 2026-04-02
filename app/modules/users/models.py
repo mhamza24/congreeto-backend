@@ -65,6 +65,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db_base import Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin
 from app.core.enums import UserStatus, user_status_enum
 from app.modules.models.otp import OTPVerification
+from app.modules.models.tenant_user import TenantUser
 
 
 class User(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
@@ -155,12 +156,12 @@ class User(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
-    # tenant_users: Mapped[list["TenantUser"]] = relationship(  # noqa: F821
-    #     "TenantUser",
-    #     back_populates="user",
-    #     lazy="noload",
-    #     foreign_keys="TenantUser.user_id",
-    # )
+    tenant_users: Mapped[list["TenantUser"]] = relationship(  # noqa: F821
+        "TenantUser",
+        back_populates="user",
+        lazy="noload",
+        foreign_keys="TenantUser.user_id",
+    )
 
     otp_verifications: Mapped[list["OTPVerification"]] = relationship(  # noqa: F821
         "OTPVerification",

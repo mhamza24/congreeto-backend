@@ -4,6 +4,8 @@ from app.modules.chat.models import  Conversation, Message, ConversationInsights
 from app.modules.inquiries.models import  GeneralInquiry, DemoInquiry, AffiliationInquiry
 from app.modules.users.models import User
 from app.modules.models.otp import OTPVerification
+from app.modules.models.tenant_user import TenantUser
+from app.modules.tenants.models import Tenant
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
