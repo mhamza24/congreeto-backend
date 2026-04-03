@@ -41,7 +41,7 @@ celery_app.autodiscover_tasks(
 
 celery_app.conf.broker_connection_retry_on_startup = True
 
-if settings.ENV in ["PRODUCTION"]:
+if settings.ENV in ["PRODUCTION", "STAGING"]:
     import ssl
     celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
     celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
