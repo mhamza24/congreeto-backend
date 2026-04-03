@@ -1,92 +1,65 @@
-from sqlalchemy.pool import QueuePool
+import os
+from sqlalchemy.pool import NullPool
+from sqlalchemy import create_engine
 from app.core.db_base import Base
-from app.modules.chat.models import  Conversation, Message, ConversationInsights
-from app.modules.inquiries.models import  GeneralInquiry, DemoInquiry, AffiliationInquiry
+from app.modules.chat.models import Conversation, Message, ConversationInsights
+from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, AffiliationInquiry
 from app.modules.users.models import User
 from app.modules.models.otp import OTPVerification
 from app.modules.models.tenant_user import TenantUser
 from app.modules.tenants.models import Tenant
 from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
 from alembic import context
-from app.config.settings import get_settings, Settings
-settings = get_settings()
-DATABASE_URL = settings.DATABASE_URL or settings.ALEMBIC_DATABASE_URL
-DATABASE_URL = settings.ALEMBIC_DATABASE_URL or settings.DATABASE_URL
-DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# ✅ Always use DATABASE_URL from environment directly
+def get_sync_db_url() -> str:
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
+    # Convert to sync psycopg2 driver for alembic (not asyncpg)
+    url = url.replace("postgres://", "postgresql://", 1)
+    url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return url
+
+DATABASE_URL = get_sync_db_url()
+
 config = context.config
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
 target_metadata = Base.metadata
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    # ✅ Use create_engine directly with ssl for Heroku
+    is_dev = os.environ.get("ENV", "").upper() == "DEVELOPMENT"
+    connect_args = {} if is_dev else {"sslmode": "require"}
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        # poolclass=pool.NullPool,
-        poolclass=QueuePool,
-        pool_size=20,      # max connections in the pool
-        max_overflow=10,   # extra connections beyond pool_size
-        pool_timeout=30,   # seconds to wait for a connection
-        pool_recycle=1800,
+    connectable = create_engine(
+        DATABASE_URL,
+        poolclass=NullPool,  # NullPool is best for migrations
+        connect_args=connect_args,
     )
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata
         )
-
         with context.begin_transaction():
             context.run_migrations()
 
