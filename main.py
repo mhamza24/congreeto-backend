@@ -25,7 +25,6 @@ setup_logging()
 
 ENVIRONMENT = Settings().ENV
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Application startup")
