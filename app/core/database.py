@@ -58,6 +58,7 @@ async def get_db() -> AsyncSession:
             await session.rollback()
             raise
 
+
 # ✅ For Celery tasks — creates fresh engine per task (correct)
 @asynccontextmanager
 async def get_task_db_session():
