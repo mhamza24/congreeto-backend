@@ -84,7 +84,7 @@ async def login_endpoint(
             payload=payload,
         )
     except HTTPException:
-        raise                          
+        raise                      
     except Exception:
         logger.exception("Unexpected error in user login")
         sentry_sdk.capture_exception(Exception)

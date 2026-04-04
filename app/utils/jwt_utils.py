@@ -82,6 +82,7 @@ def get_token_subject(user: User) -> dict[str, Any]:
         "status":         user.status.value if hasattr(user.status, "value") else user.status,
         "avatar_url":     user.avatar_url,
         "email_verified": is_verified,
+        "last_login":      user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at":     user.created_at.isoformat(),
     }
     return base

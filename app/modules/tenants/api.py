@@ -26,6 +26,7 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
 # TENANT ENDPOINTS
 # =============================================================================
 
+
 @router.post(
     "/",
     response_model=ApiResponse[schemas.TenantResponse],
@@ -88,7 +89,9 @@ async def get_my_tenant(
             detail="Could not fetch tenant. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Tenant fetched successfully.", data=result)
+    return ApiResponse(
+        success=True, message="Tenant fetched successfully.", data=result
+    )
 
 
 @router.patch(
@@ -119,7 +122,9 @@ async def update_tenant(
             detail="Could not update tenant. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Tenant updated successfully.", data=result)
+    return ApiResponse(
+        success=True, message="Tenant updated successfully.", data=result
+    )
 
 
 @router.patch(
@@ -156,6 +161,7 @@ async def update_tenant_status(
 # MEMBER ENDPOINTS
 # =============================================================================
 
+
 @router.get(
     "/{tenant_public_id}/members",
     response_model=ApiResponse[schemas.MemberListResponse],
@@ -188,7 +194,9 @@ async def list_members(
             detail="Could not fetch members. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Members fetched successfully.", data=result)
+    return ApiResponse(
+        success=True, message="Members fetched successfully.", data=result
+    )
 
 
 @router.post(
@@ -223,7 +231,9 @@ async def invite_user(
             detail="Could not send invite. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Invitation sent successfully.", data=result)
+    return ApiResponse(
+        success=True, message="Invitation sent successfully.", data=result
+    )
 
 
 @router.post(
@@ -252,7 +262,9 @@ async def accept_invite(
             detail="Could not process invite. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Invitation accepted. Welcome aboard.", data=result)
+    return ApiResponse(
+        success=True, message="Invitation accepted. Welcome aboard.", data=result
+    )
 
 
 @router.patch(
@@ -320,4 +332,6 @@ async def remove_member(
             detail="Could not remove member. Please try again later.",
         )
 
-    return ApiResponse(success=True, message="Member removed successfully.", data=result)
+    return ApiResponse(
+        success=True, message="Member removed successfully.", data=result
+    )

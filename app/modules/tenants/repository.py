@@ -1,4 +1,4 @@
-# app/modules/tenants/repository.py
+# app/modules/user/repository.py
 
 from __future__ import annotations
 

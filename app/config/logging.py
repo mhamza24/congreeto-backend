@@ -1,10 +1,9 @@
 import logging
-from app.config.settings import get_settings, Settings
+from app.config.settings import get_settings
 
 
 def setup_logging():
     settings = get_settings()
-
 
     log_format = (
         "%(asctime)s | %(levelname)s | %(name)s | "

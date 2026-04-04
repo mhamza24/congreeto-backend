@@ -17,7 +17,7 @@ from app.modules.tenants.models import Tenant
 from app.modules.models.tenant_user import TenantUser
 from app.modules.users.models import User
 from app.core.enums import TenantStatus, TenantRole, UserStatus
-#from app.utils.jwt_utils import create_invite_token, decode_invite_token
+# from app.utils.jwt_utils import create_invite_token, decode_invite_token
 from app.utils.hashing_utils import hash_password
 from app.config.settings import get_settings
 

@@ -22,26 +22,26 @@ class Settings(BaseSettings):
     ALEMBIC_DATABASE_URL: str
     DATABASE_URL: str
     REDIS_URL: str
-    
-    RATE_LIMIT_REQUEST_COUNT:int=100 # max requests
-    RATE_LIMIT_WINDOW_SECONDS:int=60 # per 60 seconds
-    
-    DOCS_USERNAME:str
-    DOCS_PASSWORD:str
+
+    RATE_LIMIT_REQUEST_COUNT: int = 100  # max requests
+    RATE_LIMIT_WINDOW_SECONDS: int = 60  # per 60 seconds
+
+    DOCS_USERNAME: str
+    DOCS_PASSWORD: str
 
     JWT_SECRET: str
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
-    REFRESH_TOKEN_EXPIRE_DAYS:int
+    REFRESH_TOKEN_EXPIRE_DAYS: int
 
     IDENTITY_HASH_SALT: str
     PASSWORD_HASH_PEPPER: str
-    PASSWORD_HASH_ROUND:int
+    PASSWORD_HASH_ROUND: int
     OTP_HASH_SALT: str
-    
-    OTP_EXPIRES_IN_MINUTES:int=15
-    OTP_MAX_ATTEMPTS:int=5
-    OTP_LOCKOUT_SECONDS:int=86400 # 24 hours after max attempts
+
+    OTP_EXPIRES_IN_MINUTES: int = 15
+    OTP_MAX_ATTEMPTS: int = 5
+    OTP_LOCKOUT_SECONDS: int = 86400  # 24 hours after max attempts
 
     CELERY_RESULT_EXPIRES: int = 18000
     CELERY_TASK_TRACK_STARTED: bool = True
@@ -77,12 +77,9 @@ class Settings(BaseSettings):
     CHAT_IDLE_THRESHOLD_MINUTES: int = 15
     CHAT_IDLE_BATCH_SIZE: int = 100
     CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT: int = 5
-    
-    
+
     class Config:
         env_file = ENV_FILES.get(ENV, ".env.development")
-
-
 
 
 @lru_cache

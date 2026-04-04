@@ -1,12 +1,21 @@
 from fastapi import Depends, HTTPException, status  # ← status from fastapi, not alembic
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials  # ← add HTTPBearer
+from fastapi.security import (
+    HTTPBearer,
+    HTTPAuthorizationCredentials,
+)  # ← add HTTPBearer
 import jwt
-from app.core.exceptions import InvalidCredentialsError, InvalidTokenError,InvalidTokenTypeError, UserNotFoundError
+from app.core.exceptions import (
+    InvalidCredentialsError,
+    InvalidTokenError,
+    InvalidTokenTypeError,
+    UserNotFoundError,
+)
 from app.modules.users import repository as user_repo
 from app.core.database import get_db
 from app.utils.jwt_utils import decode_token
 
-bearer_scheme = HTTPBearer()  
+bearer_scheme = HTTPBearer()
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
@@ -17,7 +26,7 @@ async def get_current_user(
     try:
         payload = decode_token(token)
     except Exception:
-         raise InvalidTokenError()
+        raise InvalidTokenError()
     except jwt.PyJWTError:
         raise InvalidCredentialsError()
 
