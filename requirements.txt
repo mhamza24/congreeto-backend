@@ -50,3 +50,5 @@ sentry-sdk==2.54.0
 
 pyjwt==2.12.1
 
+pgvector==0.4.2
+

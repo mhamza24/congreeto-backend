@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
 from app.core.exceptions import EmailAlreadyExistsError, EmailAlreadyVerifiedError, InvalidCredentialsError, InvalidOTPError, InvalidTokenError, InvalidTokenTypeError, UserNotExistError, http_exception_handler
 from app.modules.models.otp import OTPVerification
-from app.modules.onboarding.models import utcnow
+from app.modules.knowledge.models import utcnow
 from app.modules.open_ai import service as openai_service
 from app.modules.auth import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity

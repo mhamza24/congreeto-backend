@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.response import ApiResponse
-from app.modules.onboarding import schemas, service
+from app.modules.knowledge import schemas, service
 
 from typing import Optional
 
@@ -56,6 +56,7 @@ async def chat_endpoint(
         message="Message processed successfully.",
         data=reply,
     )
+
 
 @router.post(
     "/pdf",

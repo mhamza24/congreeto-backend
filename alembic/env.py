@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from app.core.db_base import Base
 from app.modules.chat.models import Conversation, Message, ConversationInsights
 from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, AffiliationInquiry
+from app.modules.knowledge.models import ChatbotConfig, WidgetTheme, KnowledgeSource, CrawlJob, Document, DocumentChunk,Listing
 from app.modules.users.models import User
 from app.modules.models.otp import OTPVerification
 from app.modules.models.tenant_user import TenantUser
@@ -11,10 +12,13 @@ from app.modules.tenants.models import Tenant
 from logging.config import fileConfig
 from sqlalchemy import pool
 from alembic import context
+from app.config.settings import get_settings
+settings = get_settings()
+
 
 # ✅ Always use DATABASE_URL from environment directly
 def get_sync_db_url() -> str:
-    url = os.environ.get("DATABASE_URL", "")
+    url = settings.DATABASE_URL
     if not url:
         raise RuntimeError("DATABASE_URL environment variable is not set")
     # Convert to sync psycopg2 driver for alembic (not asyncpg)
@@ -46,7 +50,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     # ✅ Use create_engine directly with ssl for Heroku
-    is_dev = os.environ.get("ENV", "").upper() == "DEVELOPMENT"
+    is_dev = settings.ENV == "DEVELOPMENT"
     connect_args = {} if is_dev else {"sslmode": "require"}
 
     connectable = create_engine(

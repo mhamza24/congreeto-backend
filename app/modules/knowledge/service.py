@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.open_ai import service as openai_service
 from app.utils.system_prompt_aria import aria_veloce_website_guide
 from app.utils.system_prompt_aria_veloce import aria_veloce_brand_representative
-from app.modules.onboarding import tasks as background_tasks
+from app.modules.knowledge import tasks as background_tasks
 from . import repository as repo
 from . import schemas
 

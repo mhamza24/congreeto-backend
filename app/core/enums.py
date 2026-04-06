@@ -104,6 +104,42 @@ class InvitationStatus(str, enum.Enum):
     REVOKED  = "revoked"
 
 
+class ChatbotStatus(str, enum.Enum):
+    DRAFT     = "draft"
+    ACTIVE    = "active"
+    INACTIVE  = "inactive"
+
+class SourceType(str, enum.Enum):
+    WEBSITE  = "website"
+    PDF      = "pdf"
+    TEXT     = "text"
+
+class CrawlStatus(str, enum.Enum):
+    QUEUED    = "queued"
+    RUNNING   = "running"
+    COMPLETED = "completed"
+    FAILED    = "failed"
+    CANCELLED = "cancelled"
+
+class DocStatus(str, enum.Enum):
+    UPLOADING  = "uploading"
+    PROCESSING = "processing"
+    READY      = "ready"
+    FAILED     = "failed"
+
+class ListingSource(str, enum.Enum):
+    MANUAL  = "manual"
+    CRAWLED = "crawled"
+
+class ListingStatus(str, enum.Enum):
+    ACTIVE   = "active"
+    INACTIVE = "inactive"
+    SOLD     = "sold"
+    LEASED   = "leased"
+
+class ListingType(str, enum.Enum):
+    SALE  = "sale"
+    RENT  = "rent"
 # ─────────────────────────────────────────────────────────────────────────────
 # SQLAlchemy / Postgres TYPE objects
 # Use these in mapped_column(type_=...) declarations.
@@ -155,6 +191,55 @@ otp_purpose_enum = PgEnum(
 invitation_status_enum = PgEnum(
     InvitationStatus,
     name="invitation_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+chatbot_status_enum = PgEnum(
+    ChatbotStatus,
+    name="chatbot_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+source_type_enum = PgEnum(
+    SourceType,
+    name="source_type",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+crawl_status_enum = PgEnum(
+    CrawlStatus,
+    name="crawl_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+doc_status_enum = PgEnum(
+    DocStatus,
+    name="doc_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+listing_source_enum = PgEnum(
+    ListingSource,
+    name="listing_source",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+listing_status_enum = PgEnum(
+    ListingStatus,
+    name="listing_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+listing_type_enum = PgEnum(
+    ListingType,
+    name="listing_type",
     create_type=True,
     values_callable=lambda x: [e.value for e in x],
 )

@@ -4,7 +4,7 @@ import asyncio
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.celery_worker import celery_app, QUEUEEnum
-from app.modules.onboarding.parsers import website_parser
+from app.modules.knowledge.parsers import website_parser
 import logging
 logger = logging.getLogger(__name__)
 from app.config.settings import get_settings
@@ -21,7 +21,7 @@ def background_analysis(conversation_id: str):
 
 @celery_app.task(
     bind=True,
-    name="app.modules.onboarding.tasks.live_link_scrapper",
+    name="app.modules.knowledge.tasks.live_link_scrapper",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.INGESTION.value,

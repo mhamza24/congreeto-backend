@@ -1,0 +1,497 @@
+# app/modules/knowledge/models.py
+
+from __future__ import annotations
+from pgvector.sqlalchemy import Vector
+from datetime import datetime
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import (
+    BigInteger, Boolean, DateTime, ForeignKey, Index,
+    Integer, LargeBinary, Numeric, String, Text,
+    UniqueConstraint, text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.db_base import Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin
+from app.core.enums import (
+    ChatbotIdentity, ChatbotStatus, chatbot_identity_enum, chatbot_status_enum,
+    SourceType, source_type_enum,
+    CrawlStatus, crawl_status_enum,
+    DocStatus, doc_status_enum,
+    ListingSource, ListingStatus, ListingType,
+    listing_source_enum, listing_status_enum, listing_type_enum,
+)
+
+if TYPE_CHECKING:
+    from app.modules.tenants.models import Tenant
+    from app.modules.users.models import User
+
+
+# =============================================================================
+# CHATBOT CONFIGS
+# =============================================================================
+
+class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
+    __tablename__ = "chatbot_configs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="My Chatbot", server_default=text("'My Chatbot'")
+    )
+    status: Mapped[ChatbotStatus] = mapped_column(
+        chatbot_status_enum, nullable=False,
+        default=ChatbotStatus.DRAFT, server_default=text("'draft'")
+    )
+    iframe_token: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True,
+        comment="Public embed key. Never expose tenant_id in widget URL."
+    )
+    identity: Mapped[ChatbotIdentity] = mapped_column(
+        chatbot_identity_enum, nullable=False,
+        default=ChatbotIdentity.WEBSITE, server_default=text("'website'")
+    )
+    system_prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    rag_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"),
+        comment="Flipped TRUE by worker after first DocumentChunk written. Never flip manually."
+    )
+    auto_close_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=15, server_default=text("15")
+    )
+    allowed_domains: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    branding: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    lead_capture_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    tenant: Mapped["Tenant"] = relationship("Tenant", lazy="noload")
+    themes: Mapped[list["WidgetTheme"]] = relationship(
+        "WidgetTheme", back_populates="chatbot_config",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+    knowledge_sources: Mapped[list["KnowledgeSource"]] = relationship(
+        "KnowledgeSource", back_populates="chatbot_config",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_chatbot_configs_tenant", "tenant_id"),
+        Index("ix_chatbot_configs_iframe_token", "iframe_token"),
+        Index("ix_chatbot_configs_status", "tenant_id", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ChatbotConfig id={self.id} tenant={self.tenant_id} status={self.status}>"
+
+
+# =============================================================================
+# WIDGET THEMES
+# =============================================================================
+
+class WidgetTheme(Base, PublicIdMixin, TimestampMixin):
+    __tablename__ = "widget_themes"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    chatbot_config_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chatbot_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        default="Default Theme", server_default=text("'Default Theme'")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"),
+        comment="One TRUE per chatbot. Enforced by partial unique index. Swap in transaction."
+    )
+    is_paid_theme: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    colors: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    typography: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    assets: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    layout: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    chatbot_config: Mapped["ChatbotConfig"] = relationship(
+        "ChatbotConfig", back_populates="themes", lazy="noload"
+    )
+
+    __table_args__ = (
+        Index("ix_widget_themes_chatbot", "chatbot_config_id"),
+        Index(
+            "ix_widget_themes_one_active", "chatbot_config_id",
+            unique=True, postgresql_where=text("is_active = TRUE")
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<WidgetTheme id={self.id} chatbot={self.chatbot_config_id} active={self.is_active}>"
+
+
+# =============================================================================
+# KNOWLEDGE SOURCES
+# =============================================================================
+
+class KnowledgeSource(Base, PublicIdMixin, TimestampMixin):
+    __tablename__ = "knowledge_sources"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    chatbot_config_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chatbot_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[SourceType] = mapped_column(source_type_enum, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="active", server_default=text("'active'")
+    )
+    config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    chatbot_config: Mapped["ChatbotConfig"] = relationship(
+        "ChatbotConfig", back_populates="knowledge_sources", lazy="noload"
+    )
+    crawl_jobs: Mapped[list["CrawlJob"]] = relationship(
+        "CrawlJob", back_populates="knowledge_source",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+    documents: Mapped[list["Document"]] = relationship(
+        "Document", back_populates="knowledge_source",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_knowledge_sources_tenant", "tenant_id"),
+        Index("ix_knowledge_sources_chatbot", "chatbot_config_id"),
+        Index("ix_knowledge_sources_type", "tenant_id", "type"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeSource id={self.id} type={self.type} chatbot={self.chatbot_config_id}>"
+
+
+# =============================================================================
+# CRAWL JOBS
+# =============================================================================
+
+class CrawlJob(Base, PublicIdMixin):
+    __tablename__ = "crawl_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    knowledge_source_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False,
+        comment="Denormalized for direct tenant-scoped queries."
+    )
+    base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    status: Mapped[CrawlStatus] = mapped_column(
+        crawl_status_enum, nullable=False,
+        default=CrawlStatus.QUEUED, server_default=text("'queued'")
+    )
+    pages_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    pages_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    pages_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    triggered_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None,
+        comment="NULL = scheduled. Populated = manually triggered."
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+    knowledge_source: Mapped["KnowledgeSource"] = relationship(
+        "KnowledgeSource", back_populates="crawl_jobs", lazy="noload"
+    )
+    triggered_by_user: Mapped["User | None"] = relationship(
+        "User", lazy="noload", foreign_keys=[triggered_by]
+    )
+
+    __table_args__ = (
+        Index("ix_crawl_jobs_source", "knowledge_source_id"),
+        Index("ix_crawl_jobs_tenant", "tenant_id"),
+        Index(
+            "ix_crawl_jobs_queued", "status", "created_at",
+            postgresql_where=text("status IN ('queued', 'running')")
+        ),
+    )
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status in (CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.CANCELLED)
+
+    def __repr__(self) -> str:
+        return f"<CrawlJob id={self.id} status={self.status} url={self.base_url!r}>"
+
+
+# =============================================================================
+# DOCUMENTS
+# =============================================================================
+
+class Document(Base, PublicIdMixin, TimestampMixin):
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    knowledge_source_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False,
+        comment="Denormalized — avoids joining knowledge_sources for tenant-scoped queries."
+    )
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="'pdf' for now. 'docx', 'xlsx' in future."
+    )
+    file_size_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+
+    # Blob now, S3 later
+    file_data: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True, default=None,
+        comment="Raw bytes. NULL after migrating to S3. Can clear after chunking."
+    )
+    storage_path: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True, default=None,
+        comment="S3/GCS object key. NULL while using file_data."
+    )
+
+    status: Mapped[DocStatus] = mapped_column(
+        doc_status_enum, nullable=False,
+        default=DocStatus.UPLOADING, server_default=text("'uploading'")
+    )
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    uploaded_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None,
+        comment="NULL for crawled pages. Populated for manual uploads."
+    )
+
+    knowledge_source: Mapped["KnowledgeSource"] = relationship(
+        "KnowledgeSource", back_populates="documents", lazy="noload"
+    )
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        "DocumentChunk", back_populates="document",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+    uploader: Mapped["User | None"] = relationship(
+        "User", lazy="noload", foreign_keys=[uploaded_by]
+    )
+
+    __table_args__ = (
+        Index("ix_documents_source", "knowledge_source_id"),
+        Index("ix_documents_tenant", "tenant_id"),
+        Index(
+            "ix_documents_status", "status",
+            postgresql_where=text("status IN ('uploading', 'processing')")
+        ),
+    )
+
+    @property
+    def is_ready(self) -> bool:
+        return self.status == DocStatus.READY
+
+    @property
+    def using_blob_storage(self) -> bool:
+        return self.file_data is not None and self.storage_path is None
+
+    def __repr__(self) -> str:
+        return f"<Document id={self.id} name={self.file_name!r} status={self.status}>"
+
+
+# =============================================================================
+# DOCUMENT CHUNKS
+# =============================================================================
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    document_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False,
+        comment="Denormalized. Always include in RAG WHERE clause to prevent cross-tenant leakage."
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Uncomment after: CREATE EXTENSION IF NOT EXISTS vector;
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(1536), nullable=True, default=None,
+        comment="pgvector embedding. Tenant-scoped cosine search."
+    )
+
+    chunk_metadata: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment='{"page": 3, "source_url": "...", "token_count": 312}'
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+    document: Mapped["Document"] = relationship(
+        "Document", back_populates="chunks", lazy="noload"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_chunk_document_index"),
+        Index("ix_chunks_document", "document_id"),
+        Index("ix_chunks_tenant", "tenant_id"),
+        # Uncomment after populating embeddings:
+        Index(
+            "ix_chunks_embedding", "embedding",
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DocumentChunk doc={self.document_id} idx={self.chunk_index} len={len(self.content)}>"
+
+
+# =============================================================================
+# LISTINGS
+# =============================================================================
+
+class Listing(Base, PublicIdMixin, SoftDeleteMixin):
+    __tablename__ = "listings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[ListingSource] = mapped_column(
+        listing_source_enum, nullable=False,
+        default=ListingSource.MANUAL, server_default=text("'manual'")
+    )
+    external_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None,
+        comment="Dedup key for crawled listings. NULL for manual entries."
+    )
+    crawl_job_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("crawl_jobs.id", ondelete="SET NULL"),
+        nullable=True, default=None
+    )
+    status: Mapped[ListingStatus] = mapped_column(
+        listing_status_enum, nullable=False,
+        default=ListingStatus.ACTIVE, server_default=text("'active'")
+    )
+    listing_type: Mapped[ListingType] = mapped_column(
+        listing_type_enum, nullable=False,
+        default=ListingType.SALE, server_default=text("'sale'")
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
+    price_display: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="AUD", server_default=text("'AUD'")
+    )
+    street: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    suburb: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    postcode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    country: Mapped[str] = mapped_column(
+        String(5), nullable=False, default="AU", server_default=text("'AU'")
+    )
+    latitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+    bedrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bathrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    garages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    land_sqm: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    house_sqm: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    has_pool: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
+    media: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    raw_data: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    # Uncomment after: CREATE EXTENSION IF NOT EXISTS vector;
+    # embedding: Mapped[list[float]] = mapped_column(
+    #     Vector(1536), nullable=True, default=None,
+    #     comment=(
+    #         "Embedding of title + description + suburb + listing_type. "
+    #         "Semantic fallback when SQL filters return no results."
+    #     ),
+    # )
+
+    listed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+    tenant: Mapped["Tenant"] = relationship("Tenant", lazy="noload")
+    crawl_job: Mapped["CrawlJob | None"] = relationship(
+        "CrawlJob", lazy="noload", foreign_keys=[crawl_job_id]
+    )
+
+    __table_args__ = (
+        Index("ix_listings_tenant", "tenant_id", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_bedrooms", "tenant_id", "bedrooms", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_suburb", "tenant_id", "suburb", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_price", "tenant_id", "price", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_type", "tenant_id", "listing_type", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_state", "tenant_id", "state", "status",
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_listings_external", "tenant_id", "external_id",
+              postgresql_where=text("external_id IS NOT NULL")),
+        # Uncomment after populating embeddings:
+        # Index(
+        #     "ix_listings_embedding", "embedding",
+        #     postgresql_using="ivfflat",
+        #     postgresql_with={"lists": 100},
+        #     postgresql_ops={"embedding": "vector_cosine_ops"},
+        # ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Listing id={self.id} title={self.title!r} status={self.status}>"

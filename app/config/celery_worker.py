@@ -34,7 +34,7 @@ celery_app.conf.update(
     task_serializer=settings.CELERY_TASK_SERIALIZER,
     result_expires=settings.CELERY_RESULT_EXPIRES,
     task_routes={
-        "app.modules.onboarding.tasks": {"queue": "ingestion"},
+        "app.modules.knowledge.tasks": {"queue": "ingestion"},
         "app.modules.chat.tasks": {"queue": "analysis"},
     },
 )
@@ -51,7 +51,7 @@ celery_app.conf.beat_schedule = {
 }
 
 celery_app.autodiscover_tasks([
-    'app.modules.onboarding.tasks',
+    'app.modules.knowledge.tasks',
     'app.modules.chat.tasks',
     'app.modules.auth.tasks',
 ])

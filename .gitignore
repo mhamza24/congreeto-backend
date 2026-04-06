@@ -99,6 +99,7 @@ migration.txt
 to_do.txt
 questions.txt
 celerybeat-schedule
+test.py
 
 # ----------------------
 # docker files
