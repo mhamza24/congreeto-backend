@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
 from app.core.exceptions import EmailAlreadyExistsError, EmailAlreadyVerifiedError, InvalidCredentialsError, InvalidOTPError, InvalidTokenError, InvalidTokenTypeError, UserNotExistError, http_exception_handler
 from app.modules.models.otp import OTPVerification
-from app.modules.knowledge.models import utcnow
 from app.modules.open_ai import service as openai_service
 from app.modules.auth import tasks as background_tasks
 from app.utils.email_extractor import extract_and_validate_identity
@@ -58,7 +57,7 @@ async def create_user(
         user_id=user.id,
         purpose=OTPPurpose.EMAIL_VERIFICATION,
         code_hash=hashing_utils.hash_otp(raw_otp),
-        expires_at=utcnow() + timedelta(minutes=settings.OTP_EXPIRES_IN_MINUTES),
+        expires_at=datetime.utcnow() + timedelta(minutes=settings.OTP_EXPIRES_IN_MINUTES),
     )
     db.add(otp_record)
     await db.flush()

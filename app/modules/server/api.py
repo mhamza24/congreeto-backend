@@ -1,6 +1,8 @@
 from fastapi import APIRouter, status
 from typing import Dict, Any
 from app.core.response import ApiResponse
+from app.config.settings import get_settings
+settings=get_settings()
 import logging
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,9 @@ async def health_check():
         success=True,
         message="Veloce Server is healthy and running",
         data={
-            "status": "healthy"
+            "status": "healthy",
+            "enviroment":settings.ENV
+            
         }
     )
     
