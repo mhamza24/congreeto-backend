@@ -196,6 +196,44 @@ async def verify_email(
     )
 
 
+async def get_resend_otp_status(
+    *,
+    current_user: user_models.User,
+) -> schemas.ResendOTPStatusResponse:
+    """
+    Returns whether the resend button should be shown.
+    If not, includes remaining wait time in seconds, minutes, and hours.
+    """
+    from app.utils.rate_limit import _otp_lockout_key, _otp_cooldown_key
+    from app.core.redis import redis_client
+
+    # Check hard lockout first
+    locked = await redis_client.get(_otp_lockout_key(current_user.id))
+    if locked:
+        ttl = await redis_client.ttl(_otp_lockout_key(current_user.id))
+        ttl = max(ttl, 0)
+        return schemas.ResendOTPStatusResponse(
+            can_resend=False,
+            remaining_seconds=ttl,
+            remaining_minutes=round(ttl / 60, 2),
+            remaining_hours=round(ttl / 3600, 2),
+        )
+
+    # Check cooldown
+    cooldown = await redis_client.get(_otp_cooldown_key(current_user.id))
+    if cooldown:
+        ttl = await redis_client.ttl(_otp_cooldown_key(current_user.id))
+        ttl = max(ttl, 0)
+        return schemas.ResendOTPStatusResponse(
+            can_resend=False,
+            remaining_seconds=ttl,
+            remaining_minutes=round(ttl / 60, 2),
+            remaining_hours=round(ttl / 3600, 2),
+        )
+
+    return schemas.ResendOTPStatusResponse(can_resend=True)
+
+
 async def resend_otp(
     db: AsyncSession,
     *,

@@ -116,3 +116,10 @@ class RefreshResponse(BaseModel):
 class OTPVerifyResponse(BaseModel):
     message: str = "Email verified successfully."
     tokens: TokenPair
+
+
+class ResendOTPStatusResponse(BaseModel):
+    can_resend: bool
+    remaining_seconds: Optional[int] = None
+    remaining_minutes: Optional[float] = None
+    remaining_hours: Optional[float] = None

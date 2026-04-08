@@ -156,6 +156,33 @@ async def verify_email_endpoint(
 
 
 @router.get(
+    "/resend-otp/status",
+    response_model=ApiResponse[schemas.ResendOTPStatusResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Check if resend OTP button should be shown",
+)
+async def resend_otp_status_endpoint(
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.ResendOTPStatusResponse]:
+    try:
+        result = await service.get_resend_otp_status(current_user=current_user)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error checking OTP resend status")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="OTP resend status retrieved.",
+        data=result,
+    )
+
+
+@router.get(
     "/resend-otp",
     response_model=ApiResponse[str],
     status_code=status.HTTP_200_OK,
@@ -182,3 +209,5 @@ async def resend_otp_endpoint(
         message="OTP sent. Please check your email.",
         data=None,
     )
+
+
