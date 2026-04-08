@@ -73,7 +73,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db_base import Base, PublicIdMixin
-from app.core.enums import TenantRole, tenant_role_enum
+from app.core.enums import TenantRole, TenantUserStatus, tenant_role_enum,tenant_user_status_enum
 
 if TYPE_CHECKING:
     from app.modules.tenants.models import Tenant
@@ -181,6 +181,17 @@ class TenantUser(Base, PublicIdMixin):
         ),
     )
 
+    status: Mapped[TenantUserStatus] = mapped_column(
+    tenant_user_status_enum,
+    nullable=False,
+    default=TenantUserStatus.INVITED,
+    server_default=text("'invited'"),
+    comment=(
+        "invited=pending | active=joined | "
+        "suspended=blocked this tenant only | deactivated=removed"
+    ),
+)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -226,6 +237,9 @@ class TenantUser(Base, PublicIdMixin):
 
         # Permission checks within a tenant: filter by role.
         Index("ix_tenant_users_role", "tenant_id", "role"),
+        
+        # add this index to __table_args__
+        Index("ix_tenant_users_status", "tenant_id", "status"),
     )
 
     # ── Computed helpers ──────────────────────────────────────────────────────
@@ -248,3 +262,12 @@ class TenantUser(Base, PublicIdMixin):
             f"<TenantUser tenant={self.tenant_id} "
             f"user={self.user_id} role={self.role}>"
         )
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == TenantUserStatus.ACTIVE
+
+    @property
+    def is_accessible(self) -> bool:
+        """Use in middleware for tenant-scoped access checks."""
+        return self.status == TenantUserStatus.ACTIVE

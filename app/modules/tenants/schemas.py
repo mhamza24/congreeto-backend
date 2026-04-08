@@ -1,5 +1,3 @@
-# app/modules/tenants/schemas.py
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,12 +5,8 @@ from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import re
 
-from app.core.enums import TenantStatus, TenantRole
+from app.core.enums import TenantStatus, TenantRole, TenantUserStatus
 
-
-# =============================================================================
-# SHARED PRIMITIVES
-# =============================================================================
 
 class TenantBase(BaseModel):
     name:     str = Field(..., min_length=1, max_length=255)
@@ -37,20 +31,10 @@ class TenantBase(BaseModel):
 # =============================================================================
 
 class TenantCreateRequest(TenantBase):
-    """
-    Used by the owner registration flow.
-    status is always forced to 'pending_plan' by the service layer via
-    Tenant.from_schema(payload, status=TenantStatus.PENDING_PLAN).
-    Clients must never set status.
-    """
     settings: dict = Field(default_factory=dict)
 
 
 class TenantUpdateRequest(BaseModel):
-    """
-    Partial update — all fields optional.
-    Service uses model_dump(exclude_unset=True) so only sent fields are applied.
-    """
     name:     Optional[str]  = Field(None, min_length=1, max_length=255)
     industry: Optional[str]  = Field(None, max_length=100)
     settings: Optional[dict] = None
@@ -59,7 +43,6 @@ class TenantUpdateRequest(BaseModel):
 
 
 class TenantStatusUpdateRequest(BaseModel):
-    """Super-admin only — manually change tenant status."""
     status: TenantStatus
     reason: Optional[str] = Field(None, max_length=500)
 
@@ -83,7 +66,6 @@ class TenantResponse(BaseModel):
 
 
 class TenantSummary(BaseModel):
-    """Lightweight — used inside list responses and JWT claims."""
     public_id: str
     name:      str
     slug:      str
@@ -98,10 +80,6 @@ class TenantSummary(BaseModel):
 # =============================================================================
 
 class InviteUserRequest(BaseModel):
-    """
-    Sent by an admin/owner to invite a new member.
-    Role defaults to 'agent'. Cannot invite as 'owner'.
-    """
     email: str = Field(..., description="Email of the person to invite.")
     role:  TenantRole = Field(
         default=TenantRole.AGENT,
@@ -122,7 +100,6 @@ class InviteUserRequest(BaseModel):
 
 
 class UpdateMemberRoleRequest(BaseModel):
-    """Change an existing member's role within the tenant."""
     role: TenantRole
 
     @field_validator("role")
@@ -133,12 +110,19 @@ class UpdateMemberRoleRequest(BaseModel):
         return v
 
 
+class UpdateMemberStatusRequest(BaseModel):
+    """Admin/owner can suspend, reactivate, or deactivate a member within this tenant."""
+    status: TenantUserStatus
+
+    @field_validator("status")
+    @classmethod
+    def cannot_set_invited(cls, v: TenantUserStatus) -> TenantUserStatus:
+        if v == TenantUserStatus.INVITED:
+            raise ValueError("Cannot manually set status to 'invited'.")
+        return v
+
+
 class AcceptInviteRequest(BaseModel):
-    """
-    Submitted by the invitee when they click the invite link.
-    from_schema maps first_name, last_name onto the User model.
-    password and token are handled via overrides in the service.
-    """
     token:      str = Field(..., description="Signed invite token from the email link.")
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name:  str = Field(..., min_length=1, max_length=100)
@@ -161,17 +145,13 @@ class AcceptInviteRequest(BaseModel):
 # =============================================================================
 
 class TenantMemberResponse(BaseModel):
-    """
-    A user's membership record within a tenant.
-    User profile fields are flattened for frontend convenience.
-    """
     public_id:        str
     role:             TenantRole
+    status:           TenantUserStatus
     is_primary_owner: bool
     joined_at:        Optional[datetime]
     created_at:       datetime
 
-    # User fields embedded
     user_public_id: str
     email:          str
     first_name:     Optional[str]
@@ -182,23 +162,26 @@ class TenantMemberResponse(BaseModel):
 
 
 class InviteResponse(BaseModel):
-    """Returned after a successful invite is dispatched."""
-    message:    str = "Invitation sent successfully."
-    email:      str
-    role:       TenantRole
-    expires_at: datetime
+    message:        str = "Invitation sent successfully."
+    email:          str
+    role:           TenantRole
+    expires_at:     datetime
+    seats_used:     int
+    seats_total:    int
+    seats_remaining: int
 
 
 class AcceptInviteResponse(BaseModel):
-    """Returned after the invitee successfully accepts."""
     message:   str = "Invitation accepted. Welcome aboard."
     public_id: str
 
 
 class MemberListResponse(BaseModel):
-    """Paginated member list."""
-    total:   int
-    members: List[TenantMemberResponse]
+    total:           int
+    seats_used:      int
+    seats_total:     int
+    seats_remaining: int
+    members:         List[TenantMemberResponse]
 
 
 class RemoveMemberResponse(BaseModel):
@@ -210,13 +193,13 @@ class RemoveMemberResponse(BaseModel):
 # =============================================================================
 
 class MyTenantContext(BaseModel):
-    """
-    Returned to the authenticated user — shows their role inside a tenant.
-    Used to build the dashboard sidebar and permission gates.
-    """
-    tenant:    TenantSummary
-    role:      TenantRole
-    is_owner:  bool
-    joined_at: Optional[datetime]
+    tenant:          TenantSummary
+    role:            TenantRole
+    status:          TenantUserStatus
+    is_owner:        bool
+    joined_at:       Optional[datetime]
+    seats_used:      int
+    seats_total:     int
+    seats_remaining: int
 
     model_config = ConfigDict(from_attributes=True)

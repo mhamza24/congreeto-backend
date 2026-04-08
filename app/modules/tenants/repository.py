@@ -1,5 +1,3 @@
-# app/modules/user/repository.py
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -11,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.tenants.models import Tenant
 from app.modules.models.tenant_user import TenantUser
-from app.core.enums import TenantStatus, TenantRole
+from app.core.enums import TenantStatus, TenantRole, TenantUserStatus
 
 
 # =============================================================================
@@ -19,9 +17,7 @@ from app.core.enums import TenantStatus, TenantRole
 # =============================================================================
 
 async def get_tenant_by_id(
-    db: AsyncSession,
-    *,
-    id: int,
+    db: AsyncSession, *, id: int
 ) -> Optional[Tenant]:
     result = await db.execute(
         select(Tenant).where(Tenant.id == id, Tenant.deleted_at.is_(None))
@@ -30,9 +26,7 @@ async def get_tenant_by_id(
 
 
 async def get_tenant_by_public_id(
-    db: AsyncSession,
-    *,
-    public_id: str,
+    db: AsyncSession, *, public_id: str
 ) -> Optional[Tenant]:
     result = await db.execute(
         select(Tenant).where(Tenant.public_id == public_id, Tenant.deleted_at.is_(None))
@@ -41,9 +35,7 @@ async def get_tenant_by_public_id(
 
 
 async def get_tenant_by_slug(
-    db: AsyncSession,
-    *,
-    slug: str,
+    db: AsyncSession, *, slug: str
 ) -> Optional[Tenant]:
     result = await db.execute(
         select(Tenant).where(Tenant.slug == slug, Tenant.deleted_at.is_(None))
@@ -58,17 +50,13 @@ async def list_tenants(
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[List[Tenant], int]:
-    """Returns (tenants, total_count). Super-admin use only."""
     query = select(Tenant).where(Tenant.deleted_at.is_(None))
-
     if status:
         query = query.where(Tenant.status == status)
-
     total_result = await db.execute(
         select(func.count()).select_from(query.subquery())
     )
     total = total_result.scalar_one()
-
     result = await db.execute(
         query.order_by(Tenant.created_at.desc()).offset(skip).limit(limit)
     )
@@ -76,15 +64,10 @@ async def list_tenants(
 
 
 async def slug_exists(
-    db: AsyncSession,
-    *,
-    slug: str,
-    exclude_id: Optional[int] = None,
+    db: AsyncSession, *, slug: str, exclude_id: Optional[int] = None
 ) -> bool:
-    """Check if a slug is already taken — used for uniqueness validation."""
     query = select(Tenant.id).where(
-        Tenant.slug == slug,
-        Tenant.deleted_at.is_(None),
+        Tenant.slug == slug, Tenant.deleted_at.is_(None)
     )
     if exclude_id:
         query = query.where(Tenant.id != exclude_id)
@@ -96,27 +79,14 @@ async def slug_exists(
 # TENANT WRITES
 # =============================================================================
 
-async def create_tenant(
-    db: AsyncSession,
-    *,
-    tenant: Tenant,   # already built by service via Tenant.from_schema(...)
-) -> Tenant:
-    """
-    Persists a Tenant instance built by the service layer.
-    The service calls Tenant.from_schema(payload, status=...) before passing here.
-    We only flush — the service controls when commit fires.
-    """
+async def create_tenant(db: AsyncSession, *, tenant: Tenant) -> Tenant:
     db.add(tenant)
     await db.flush()
     await db.refresh(tenant)
     return tenant
 
 
-async def soft_delete_tenant(
-    db: AsyncSession,
-    *,
-    tenant: Tenant,
-) -> None:
+async def soft_delete_tenant(db: AsyncSession, *, tenant: Tenant) -> None:
     tenant.deleted_at = datetime.now(timezone.utc)
     await db.flush()
 
@@ -126,12 +96,8 @@ async def soft_delete_tenant(
 # =============================================================================
 
 async def get_tenant_user(
-    db: AsyncSession,
-    *,
-    tenant_id: int,
-    user_id: int,
+    db: AsyncSession, *, tenant_id: int, user_id: int
 ) -> Optional[TenantUser]:
-    """Fetch a specific membership record."""
     result = await db.execute(
         select(TenantUser).where(
             TenantUser.tenant_id == tenant_id,
@@ -142,9 +108,7 @@ async def get_tenant_user(
 
 
 async def get_tenant_user_by_public_id(
-    db: AsyncSession,
-    *,
-    public_id: str,
+    db: AsyncSession, *, public_id: str
 ) -> Optional[TenantUser]:
     result = await db.execute(
         select(TenantUser).where(TenantUser.public_id == public_id)
@@ -160,12 +124,7 @@ async def list_tenant_members(
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[List[TenantUser], int]:
-    """
-    Returns (members, total_count) for a tenant.
-    Eager-loads the user relationship so _build_member_response works without
-    triggering lazy loads.
-    """
-    from app.modules.users.models import User  # avoid circular import at module level
+    from app.modules.users.models import User  # avoid circular import
 
     query = (
         select(TenantUser)
@@ -173,7 +132,6 @@ async def list_tenant_members(
         .join(User, User.id == TenantUser.user_id)
         .where(TenantUser.tenant_id == tenant_id)
     )
-
     if role:
         query = query.where(TenantUser.role == role)
 
@@ -193,11 +151,8 @@ async def list_tenant_members(
 
 
 async def get_user_tenants(
-    db: AsyncSession,
-    *,
-    user_id: int,
+    db: AsyncSession, *, user_id: int
 ) -> List[TenantUser]:
-    """All tenant memberships for a user — used at login to build JWT claims."""
     result = await db.execute(
         select(TenantUser)
         .options(selectinload(TenantUser.tenant))
@@ -207,24 +162,25 @@ async def get_user_tenants(
     return result.scalars().all()
 
 
-async def count_tenant_members(
-    db: AsyncSession,
-    *,
-    tenant_id: int,
+async def count_active_members(
+    db: AsyncSession, *, tenant_id: int
 ) -> int:
-    """Current seat count — used for Gate 3 limit enforcement."""
+    """
+    Active seat count for Gate 3 seat limit enforcement.
+    Only ACTIVE members consume a seat.
+    invited / suspended / deactivated do NOT consume seats.
+    """
     result = await db.execute(
-        select(func.count(TenantUser.id))
-        .where(TenantUser.tenant_id == tenant_id)
+        select(func.count(TenantUser.id)).where(
+            TenantUser.tenant_id == tenant_id,
+            TenantUser.status == TenantUserStatus.ACTIVE,
+        )
     )
     return result.scalar_one()
 
 
 async def is_member(
-    db: AsyncSession,
-    *,
-    tenant_id: int,
-    user_id: int,
+    db: AsyncSession, *, tenant_id: int, user_id: int
 ) -> bool:
     result = await db.execute(
         select(TenantUser.id).where(

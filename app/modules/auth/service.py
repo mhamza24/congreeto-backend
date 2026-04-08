@@ -57,7 +57,8 @@ async def create_user(
         user_id=user.id,
         purpose=OTPPurpose.EMAIL_VERIFICATION,
         code_hash=hashing_utils.hash_otp(raw_otp),
-        expires_at=datetime.utcnow() + timedelta(minutes=settings.OTP_EXPIRES_IN_MINUTES),
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(minutes=settings.OTP_EXPIRES_IN_MINUTES),
     )
     db.add(otp_record)
     await db.flush()

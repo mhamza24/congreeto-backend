@@ -35,6 +35,20 @@ class TenantStatus(str, enum.Enum):
     SUSPENDED    = "suspended"
     CANCELLED    = "cancelled"
 
+class TenantUserStatus(str, enum.Enum):
+    """
+    Tenant-scoped user status — independent of global users.status.
+
+    invited     → invite sent, user has not yet accepted
+    active      → accepted and can access this tenant
+    suspended   → blocked from this tenant only (global account unaffected)
+    deactivated → manually removed but row kept for audit trail
+    """
+    INVITED     = "invited"
+    ACTIVE      = "active"
+    SUSPENDED   = "suspended"
+    DEACTIVATED = "deactivated"
+
 
 class UserStatus(str, enum.Enum):
     """
@@ -149,6 +163,13 @@ class ListingType(str, enum.Enum):
 tenant_status_enum = PgEnum(
     TenantStatus,
     name="tenant_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+tenant_user_status_enum = PgEnum(
+    TenantUserStatus,
+    name="tenant_user_status",
     create_type=True,
     values_callable=lambda x: [e.value for e in x],
 )

@@ -56,17 +56,18 @@ def _new_public_id() -> str:
 class TimestampMixin:
     """
     Adds created_at / updated_at columns managed at the Python layer.
- 
+
     Use server_default for created_at so it is also correct when rows are
     inserted via raw SQL (e.g., Alembic data migrations).
     onupdate fires on every ORM flush; set explicitly when doing bulk updates.
+    For UTC: server_default=text("NOW() AT TIME ZONE 'UTC'"),
     """
  
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=_utcnow,
-        server_default=text("NOW()"),
+        server_default=text("NOW() AT TIME ZONE 'UTC'"),
         index=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
@@ -74,7 +75,7 @@ class TimestampMixin:
         nullable=False,
         default=_utcnow,
         onupdate=_utcnow,
-        server_default=text("NOW()"),
+        server_default=text("NOW() AT TIME ZONE 'UTC'"),
     )
  
  
