@@ -120,6 +120,25 @@ async def get_my_tenant(
     )
 
 
+async def get_my_tenants(
+    db: AsyncSession,
+    *,
+    current_user: User,
+) -> schemas.UserTenantsResponse:
+    memberships = await repo.get_user_tenants(db, user_id=current_user.id)
+    items = [
+        schemas.UserTenantItem(
+            tenant=schemas.TenantSummary.model_validate(tu.tenant),
+            role=tu.role,
+            status=tu.status,
+            is_primary_owner=tu.is_primary_owner,
+            joined_at=tu.joined_at,
+        )
+        for tu in memberships
+    ]
+    return schemas.UserTenantsResponse(total=len(items), tenants=items)
+
+
 async def update_tenant(
     db: AsyncSession,
     *,

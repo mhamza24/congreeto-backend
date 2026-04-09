@@ -49,6 +49,29 @@ async def create_tenant(
 
 
 @router.get(
+    "/me",
+    response_model=ApiResponse[schemas.UserTenantsResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get all tenants the current user belongs to",
+)
+async def get_my_tenants(
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.UserTenantsResponse]:
+    try:
+        result = await service.get_my_tenants(db, current_user=current_user)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error fetching user tenants")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not fetch tenants. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenants fetched successfully.", data=result)
+
+
+@router.get(
     "/{tenant_public_id}",
     response_model=ApiResponse[schemas.MyTenantContext],
     status_code=status.HTTP_200_OK,

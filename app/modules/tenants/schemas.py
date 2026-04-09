@@ -203,3 +203,18 @@ class MyTenantContext(BaseModel):
     seats_remaining: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserTenantItem(BaseModel):
+    tenant:           TenantSummary
+    role:             TenantRole
+    status:           TenantUserStatus
+    is_primary_owner: bool
+    joined_at:        Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserTenantsResponse(BaseModel):
+    total:   int
+    tenants: List[UserTenantItem]
