@@ -156,6 +156,42 @@ class ListingStatus(str, enum.Enum):
 class ListingType(str, enum.Enum):
     SALE  = "sale"
     RENT  = "rent"
+    
+class BillingInterval(str, enum.Enum):
+    MONTHLY = "monthly"
+    ANNUAL  = "annual"
+
+
+class SubscriptionStatus(str, enum.Enum):
+    TRIALING  = "trialing"
+    ACTIVE    = "active"
+    PAST_DUE  = "past_due"
+    CANCELLED = "cancelled"
+    PAUSED    = "paused"
+
+
+class AddonType(str, enum.Enum):
+    EXTRA_USERS         = "extra_users"
+    EXTRA_CONVERSATIONS = "extra_conversations"
+    EXTRA_STORAGE       = "extra_storage"
+    PREMIUM_WIDGET      = "premium_widget"
+
+
+class UsageMetric(str, enum.Enum):
+    CONVERSATIONS      = "conversations"
+    MESSAGES           = "messages"
+    TOKENS_USED        = "tokens_used"
+    PAGES_CRAWLED      = "pages_crawled"
+    DOCUMENTS_UPLOADED = "documents_uploaded"
+    ACTIVE_USERS       = "active_users"
+
+
+class LimitStatus(str, enum.Enum):
+    """Computed — never stored in DB. Used only in API responses."""
+    OK       = "ok"        # < 80%
+    WARNING  = "warning"   # 80–89%
+    CRITICAL = "critical"  # 90–99%
+    EXCEEDED = "exceeded"  # 100%+
 # ─────────────────────────────────────────────────────────────────────────────
 # SQLAlchemy / Postgres TYPE objects
 # Use these in mapped_column(type_=...) declarations.
@@ -263,6 +299,35 @@ listing_status_enum = PgEnum(
 listing_type_enum = PgEnum(
     ListingType,
     name="listing_type",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+
+billing_interval_enum = PgEnum(
+    BillingInterval,
+    name="billing_interval",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+subscription_status_enum = PgEnum(
+    SubscriptionStatus,
+    name="subscription_status",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+addon_type_enum = PgEnum(
+    AddonType,
+    name="addon_type",
+    create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+usage_metric_enum = PgEnum(
+    UsageMetric,
+    name="usage_metric",
     create_type=True,
     values_callable=lambda x: [e.value for e in x],
 )
