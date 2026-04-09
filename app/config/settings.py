@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     SCRAPPER_WEB_TIMEOUT: int = 30_000
     SCRAPPER_PDF_TIMEOUT: int = 30
 
+    # Knowledge / document upload limits
+    MAX_UPLOAD_MB: int = 50  # hard per-file cap regardless of plan
+
     MAIL_USERNAME: str
     MAIL_PASSWORD: str
     MAIL_FROM: str

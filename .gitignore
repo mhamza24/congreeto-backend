@@ -108,3 +108,8 @@ test.py
 docker-compose.yml
 Dockerfile
 entrypoint.sh
+
+# ----------------------
+# tool files
+# ----------------------
+.claude

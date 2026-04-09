@@ -126,9 +126,9 @@ class ChatbotStatus(str, enum.Enum):
     INACTIVE  = "inactive"
 
 class SourceType(str, enum.Enum):
-    WEBSITE  = "website"
-    PDF      = "pdf"
-    TEXT     = "text"
+    WEBSITE   = "website"
+    DOCUMENT  = "document"
+    MANUAL_QA = "manual_qa"
 
 class CrawlStatus(str, enum.Enum):
     QUEUED    = "queued"

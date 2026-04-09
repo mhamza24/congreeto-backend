@@ -1,8 +1,34 @@
 import logging
 import re
+from typing import List
+
 from app.utils.llm_response_cleaner import clean_response_helper
 from app.config.open_ai import async_client, OPENAI_MODEL, OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPEN_AI_FREQUENCY_PENALTY, OPEN_AI_PRESENCE_PENALTY, OPEN_AI_TOP_P
+
 logger = logging.getLogger(__name__)
+
+EMBEDDING_MODEL = "text-embedding-3-small"  # 1536-dim, matches Vector(1536) in models
+
+
+async def embed_text(text: str) -> List[float]:
+    """Embed a single string. Used by rag_search for query embedding."""
+    response = await async_client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=text,
+    )
+    return response.data[0].embedding
+
+
+async def embed_texts(texts: List[str]) -> List[List[float]]:
+    """Batch embed multiple strings. Used by embed_chunks in task_helpers."""
+    if not texts:
+        return []
+    response = await async_client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=texts,
+    )
+    # API returns results in the same order as input
+    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
  
 # Define common OpenAI call parameters once
 OPENAI_CALL_PARAMS = {

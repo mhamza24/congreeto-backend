@@ -25,16 +25,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.celery_worker import celery_app, QUEUEEnum
 from app.config.settings import get_settings
 from app.core.database import AsyncSessionLocal
-from app.modules.knowledge import repository as repo
-from app.modules.knowledge.models import DocumentChunk
-from app.modules.knowledge.parsers import website_parser
-from app.modules.knowledge.parsers.pdf_parser import _parse_pdf
-from app.modules.knowledge.task_helpers import (
+from app.core.enums import CrawlStatus, DocStatus, UsageMetric
+from app.modules.billing import repository as billing_repo
+from app.modules.chatbot import repository as repo
+from app.modules.chatbot.models import DocumentChunk
+from app.modules.chatbot.parsers import website_parser
+from app.modules.chatbot.parsers.pdf_parser import _parse_pdf
+from app.modules.chatbot.parsers.docx_parser import _parse_docx, _parse_txt
+from app.modules.chatbot.task_helpers import (
+    build_listing_embed_text,
     chunk_pages,
     chunk_plain_text,
     embed_chunks,
 )
-from app.core.enums import CrawlStatus, DocStatus
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -55,6 +58,22 @@ async def _flip_rag_if_needed(
     """Flip rag_enabled on the chatbot once the first chunks exist."""
     await repo.flip_rag_enabled(
         db, tenant_id=tenant_id, chatbot_id=chatbot_config_id
+    )
+    await db.commit()
+
+
+async def _increment_usage(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    metric: UsageMetric,
+    amount: int = 1,
+) -> None:
+    """Increment a usage counter for the current billing month."""
+    period_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    await billing_repo.increment_usage(
+        db, tenant_id=tenant_id, metric=metric,
+        period_month=period_month, amount=amount,
     )
     await db.commit()
 
@@ -234,6 +253,12 @@ async def _crawl_and_embed_async(
             await _flip_rag_if_needed(
                 db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id
             )
+            # Track pages_crawled usage
+            await _increment_usage(
+                db, tenant_id=tenant_id,
+                metric=UsageMetric.PAGES_CRAWLED,
+                amount=pages_processed,
+            )
 
         logger.info(
             f"CrawlJob {crawl_job_id} done. "
@@ -304,9 +329,9 @@ async def _process_document_async(
         await repo.update_document(db, doc=doc, status=DocStatus.PROCESSING)
         await db.commit()
 
-        # ── Step 2: Get PDF bytes ─────────────────────────────────────────
+        # ── Step 2: Get file bytes ────────────────────────────────────────
         try:
-            pdf_bytes = await _get_pdf_bytes(doc)
+            file_bytes = await _get_pdf_bytes(doc)
         except Exception as exc:
             await repo.update_document(
                 db, doc=doc,
@@ -316,14 +341,19 @@ async def _process_document_async(
             await db.commit()
             raise
 
-        # ── Step 3: Parse PDF ─────────────────────────────────────────────
+        # ── Step 3: Parse by file type ────────────────────────────────────
         try:
-            parsed = _parse_pdf(pdf_bytes, extract_tables=True, password=None)
+            if doc.file_type == "docx":
+                parsed = _parse_docx(file_bytes)
+            elif doc.file_type == "txt":
+                parsed = _parse_txt(file_bytes)
+            else:
+                parsed = _parse_pdf(file_bytes, extract_tables=True, password=None)
         except Exception as exc:
             await repo.update_document(
                 db, doc=doc,
                 status=DocStatus.FAILED,
-                error_message=f"PDF parse error: {exc}",
+                error_message=f"Parse error ({doc.file_type}): {exc}",
             )
             await db.commit()
             raise
@@ -389,6 +419,12 @@ async def _process_document_async(
             db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id
         )
 
+        # Track documents_uploaded usage
+        await _increment_usage(
+            db, tenant_id=tenant_id,
+            metric=UsageMetric.DOCUMENTS_UPLOADED,
+        )
+
         logger.info(
             f"Document {document_id} processed. "
             f"pages={page_count} chunks={len(chunk_rows)}"
@@ -412,6 +448,213 @@ async def _get_pdf_bytes(doc: Any) -> bytes:
     raise ValueError(
         f"Document {doc.id} has neither file_data nor storage_path."
     )
+
+
+# =============================================================================
+# TASK C — PROCESS MANUAL Q&A ENTRY + EMBED
+# =============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.knowledge.tasks.process_manual_entry",
+    max_retries=settings.CELERY_MAX_TRIES,
+    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
+    queue=QUEUEEnum.INGESTION.value,
+)
+def process_manual_entry(
+    self,
+    *,
+    document_id: int,
+    tenant_id: int,
+    chatbot_config_id: int,
+) -> str:
+    """
+    Chunk and embed a manually entered text document.
+    Same pipeline as process_document but decodes file_data as UTF-8 directly.
+    """
+    try:
+        _run(
+            _process_manual_entry_async(
+                document_id=document_id,
+                tenant_id=tenant_id,
+                chatbot_config_id=chatbot_config_id,
+            )
+        )
+        return f"process_manual_entry completed for document_id={document_id}"
+
+    except Exception as exc:
+        countdown = 2 ** self.request.retries
+        logger.error(
+            f"process_manual_entry failed for doc_id={document_id}: {exc}. "
+            f"Retrying in {countdown}s."
+        )
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+async def _process_manual_entry_async(
+    *,
+    document_id: int,
+    tenant_id: int,
+    chatbot_config_id: int,
+) -> None:
+    from app.modules.open_ai import service as openai_service
+
+    async with AsyncSessionLocal() as db:
+        doc = await repo.get_document(db, tenant_id=tenant_id, document_id=document_id)
+        if not doc:
+            logger.error(f"Manual entry document {document_id} not found.")
+            return
+
+        await repo.update_document(db, doc=doc, status=DocStatus.PROCESSING)
+        await db.commit()
+
+        try:
+            text = bytes(doc.file_data).decode("utf-8")
+        except Exception as exc:
+            await repo.update_document(
+                db, doc=doc,
+                status=DocStatus.FAILED,
+                error_message=f"Could not decode text content: {exc}",
+            )
+            await db.commit()
+            raise
+
+        raw_chunks = chunk_plain_text(text, source_url=None)
+
+        if not raw_chunks:
+            await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
+            await db.commit()
+            return
+
+        try:
+            embedded_chunks = await embed_chunks(raw_chunks, openai_service)
+        except Exception as exc:
+            await repo.update_document(
+                db, doc=doc,
+                status=DocStatus.FAILED,
+                error_message=f"Embedding error: {exc}",
+            )
+            await db.commit()
+            raise
+
+        await repo.delete_chunks_for_document(db, document_id=doc.id)
+
+        chunk_rows = [
+            DocumentChunk(
+                document_id=doc.id,
+                tenant_id=tenant_id,
+                chunk_index=c["chunk_index"],
+                content=c["content"],
+                embedding=c["embedding"],
+                chunk_metadata=c["metadata"],
+            )
+            for c in embedded_chunks
+        ]
+        await repo.bulk_create_chunks(db, chunks=chunk_rows)
+
+        await repo.update_document(
+            db, doc=doc,
+            status=DocStatus.READY,
+            chunk_count=len(chunk_rows),
+        )
+        await db.commit()
+
+        await _flip_rag_if_needed(
+            db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id
+        )
+        await _increment_usage(
+            db, tenant_id=tenant_id,
+            metric=UsageMetric.DOCUMENTS_UPLOADED,
+        )
+
+        logger.info(f"Manual entry {document_id} processed. chunks={len(chunk_rows)}")
+
+
+# =============================================================================
+# TASK D — EMBED LISTING  (called on create / update)
+# =============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.knowledge.tasks.embed_listing",
+    max_retries=settings.CELERY_MAX_TRIES,
+    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
+    queue=QUEUEEnum.INGESTION.value,
+)
+def embed_listing(self, *, listing_id: int, tenant_id: int) -> str:
+    """
+    Compute and store the embedding for a single listing row.
+    Call this whenever a listing is created or any indexed field is updated
+    (title, description, suburb, state, price, listing_type, status).
+
+    Enqueue from listing service:
+        embed_listing.delay(listing_id=listing.id, tenant_id=listing.tenant_id)
+    """
+    try:
+        _run(_embed_listing_async(listing_id=listing_id, tenant_id=tenant_id))
+        return f"embed_listing completed for listing_id={listing_id}"
+    except Exception as exc:
+        countdown = 2 ** self.request.retries
+        logger.error(f"embed_listing failed for listing_id={listing_id}: {exc}. Retrying in {countdown}s.")
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+async def _embed_listing_async(*, listing_id: int, tenant_id: int) -> None:
+    from app.modules.open_ai import service as openai_service
+
+    async with AsyncSessionLocal() as db:
+        listing = await repo.get_listing_by_id(
+            db, tenant_id=tenant_id, listing_id=listing_id
+        )
+        if not listing:
+            logger.warning(f"Listing {listing_id} not found or soft-deleted — skipping embed.")
+            return
+
+        embed_text = build_listing_embed_text(listing)
+        if not embed_text.strip():
+            logger.warning(f"Listing {listing_id} produced empty embed text — skipping.")
+            return
+
+        embedding = await openai_service.embed_text(embed_text)
+
+        await repo.update_listing_embedding(
+            db, tenant_id=tenant_id, listing_id=listing_id, embedding=embedding
+        )
+        await db.commit()
+        logger.info(f"Listing {listing_id} embedded ({len(embed_text)} chars).")
+
+
+# =============================================================================
+# TASK E — CLEAR LISTING EMBEDDING  (called on soft-delete / archive)
+# =============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.knowledge.tasks.clear_listing_embedding",
+    max_retries=2,
+    default_retry_delay=5,
+    queue=QUEUEEnum.INGESTION.value,
+)
+def clear_listing_embedding(self, *, listing_id: int, tenant_id: int) -> str:
+    """
+    NULL-out the embedding when a listing is soft-deleted or archived.
+    Removes it from HNSW index scans immediately — no migration needed.
+
+    Enqueue from listing service after soft-delete / status → archived:
+        clear_listing_embedding.delay(listing_id=listing.id, tenant_id=listing.tenant_id)
+    """
+    try:
+        _run(_clear_listing_embedding_async(listing_id=listing_id, tenant_id=tenant_id))
+        return f"clear_listing_embedding completed for listing_id={listing_id}"
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+
+
+async def _clear_listing_embedding_async(*, listing_id: int, tenant_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        await repo.clear_listing_embedding(db, tenant_id=tenant_id, listing_id=listing_id)
+        await db.commit()
+        logger.info(f"Listing {listing_id} embedding cleared.")
 
 
 # =============================================================================

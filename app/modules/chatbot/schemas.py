@@ -51,9 +51,7 @@ class ChatbotActivateRequest(BaseModel):
 
 
 class ChatbotResponse(BaseModel):
-    id: int
     public_id: str
-    tenant_id: int
     name: str
     status: str
     iframe_token: str
@@ -83,10 +81,16 @@ class ThemeCreateRequest(BaseModel):
     layout: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ThemeUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=100)
+    colors: Optional[Dict[str, Any]] = None
+    typography: Optional[Dict[str, Any]] = None
+    assets: Optional[Dict[str, Any]] = None
+    layout: Optional[Dict[str, Any]] = None
+
+
 class ThemeResponse(BaseModel):
-    id: int
     public_id: str
-    chatbot_config_id: int
     name: str
     is_active: bool
     is_paid_theme: bool
@@ -101,20 +105,48 @@ class ThemeResponse(BaseModel):
 
 
 # =============================================================================
+# ASSET UPLOAD
+# =============================================================================
+
+class AssetUploadResponse(BaseModel):
+    public_id: str
+    asset_type: str
+    file_name: str
+    content_type: str
+    file_size_bytes: int
+    serve_url: str  # e.g. /knowledge/assets/{public_id}
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# =============================================================================
+# MANUAL Q&A ENTRY
+# =============================================================================
+
+class ManualEntryCreateRequest(BaseModel):
+    title: str = Field(max_length=500, description="Label for this entry (e.g. question text)")
+    content: str = Field(min_length=1, description="The knowledge content / answer text")
+
+
+# =============================================================================
 # KNOWLEDGE SOURCE
 # =============================================================================
 
 class KnowledgeSourceCreateRequest(BaseModel):
     type: str = Field(pattern="^(website|document|manual_qa)$")
-    name: str = Field(max_length=255)
+    name: str = Field(min_length=1, max_length=255)
     config: Dict[str, Any] = Field(default_factory=dict)
 
 
+class KnowledgeSourceUpdateRequest(BaseModel):
+    type: Optional[str] = Field(default=None, pattern="^(website|document|manual_qa)$")
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    config: Optional[Dict[str, Any]] = None
+
+
 class KnowledgeSourceResponse(BaseModel):
-    id: int
     public_id: str
-    tenant_id: int
-    chatbot_config_id: int
     type: str
     name: str
     status: str
@@ -137,10 +169,7 @@ class CrawlJobCreateRequest(BaseModel):
 
 
 class CrawlJobResponse(BaseModel):
-    id: int
     public_id: str
-    knowledge_source_id: int
-    tenant_id: int
     base_url: str
     status: str
     pages_found: int
@@ -163,10 +192,7 @@ class CrawlJobListResponse(BaseModel):
 # =============================================================================
 
 class DocumentResponse(BaseModel):
-    id: int
     public_id: str
-    knowledge_source_id: int
-    tenant_id: int
     file_name: str
     file_type: str
     file_size_bytes: int
@@ -190,9 +216,6 @@ class DocumentListResponse(BaseModel):
 # =============================================================================
 
 class ChunkResponse(BaseModel):
-    id: int
-    document_id: int
-    tenant_id: int
     chunk_index: int
     content: str
     chunk_metadata: Dict[str, Any]
@@ -214,7 +237,6 @@ class RAGQueryRequest(BaseModel):
 class RAGChunkResult(BaseModel):
     content: str
     chunk_metadata: Dict[str, Any]
-    document_id: int
     chunk_index: int
 
 
@@ -236,3 +258,10 @@ class liveLinkScrapperRequest(BaseModel):
 class liveLinkScrapperResponse(BaseModel):
     id: str = Field(description="Celery task ID")
     status: str = Field(description="pending | started | success | failure")
+
+# =============================================================================
+# ADMIN
+# =============================================================================
+
+class AdminChatbotStatusRequest(BaseModel):
+    status: str = Field(pattern="^(draft|active|inactive)$")

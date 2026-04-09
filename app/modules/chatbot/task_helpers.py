@@ -201,6 +201,61 @@ async def embed_chunks(
 # =============================================================================
 
 
+def build_listing_embed_text(listing: Any) -> str:
+    """
+    Build a single string that captures all queryable listing attributes.
+    Embedded as a single vector on the listings table for semantic fallback.
+
+    Format keeps it human-readable so the model can use it well:
+    "For sale | 3 bed | 2 bath | Paddington NSW | $1.2M–$1.4M | ..."
+    """
+    parts: List[str] = []
+
+    # Type + status
+    if hasattr(listing, "listing_type") and listing.listing_type:
+        parts.append(str(listing.listing_type.value).replace("_", " "))
+    if hasattr(listing, "status") and listing.status:
+        parts.append(str(listing.status.value).replace("_", " "))
+
+    # Bedrooms / bathrooms / garages
+    features: List[str] = []
+    if listing.bedrooms:
+        features.append(f"{listing.bedrooms} bed")
+    if listing.bathrooms:
+        features.append(f"{listing.bathrooms} bath")
+    if listing.garages:
+        features.append(f"{listing.garages} garage")
+    if listing.has_pool:
+        features.append("pool")
+    if features:
+        parts.append(" / ".join(features))
+
+    # Location
+    location: List[str] = []
+    if listing.suburb:
+        location.append(listing.suburb)
+    if listing.state:
+        location.append(listing.state)
+    if listing.postcode:
+        location.append(listing.postcode)
+    if location:
+        parts.append(", ".join(location))
+
+    # Price
+    if listing.price_display:
+        parts.append(listing.price_display)
+    elif listing.price:
+        parts.append(f"{listing.currency} {listing.price:,.0f}")
+
+    # Title and description (capped to avoid token bloat)
+    if listing.title:
+        parts.append(listing.title)
+    if listing.description:
+        parts.append(listing.description[:600])
+
+    return " | ".join(p for p in parts if p)
+
+
 def clean_html_text(raw: str) -> str:
     """
     Remove excess whitespace and noise lines from scraped HTML text.

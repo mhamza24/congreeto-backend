@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, ForeignKey, Index,
+    BigInteger, Boolean, Computed, DateTime, ForeignKey, Index,
     Integer, LargeBinary, Numeric, String, Text,
     UniqueConstraint, text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db_base import Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin
@@ -49,8 +49,8 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         default=ChatbotStatus.DRAFT, server_default=text("'draft'")
     )
     iframe_token: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True,
-        comment="Public embed key. Never expose tenant_id in widget URL."
+        String(36), nullable=False, unique=True,
+        comment="Public embed key (uuid7). Never expose tenant_id in widget URL."
     )
     identity: Mapped[ChatbotIdentity] = mapped_column(
         chatbot_identity_enum, nullable=False,
@@ -75,7 +75,7 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
-    tenant: Mapped["Tenant"] = relationship("Tenant", lazy="noload")
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="chatbots", lazy="noload")
     themes: Mapped[list["WidgetTheme"]] = relationship(
         "WidgetTheme", back_populates="chatbot_config",
         lazy="noload", cascade="all, delete-orphan"
@@ -352,10 +352,20 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Uncomment after: CREATE EXTENSION IF NOT EXISTS vector;
+    # pgvector embedding — HNSW index for O(log n) ANN queries
     embedding: Mapped[list[float]] = mapped_column(
         Vector(1536), nullable=True, default=None,
-        comment="pgvector embedding. Tenant-scoped cosine search."
+        comment="pgvector embedding. Tenant-scoped cosine search via HNSW index."
+    )
+
+    # PostgreSQL GENERATED tsvector for hybrid BM25-like full-text search.
+    # Auto-populated from content by Postgres — never set manually.
+    # Queried via plainto_tsquery / ts_rank_cd. GIN-indexed for fast lookup.
+    ts_content = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', coalesce(content, ''))", persisted=True),
+        nullable=True,
+        comment="GENERATED tsvector for FTS. Auto-computed from content by Postgres.",
     )
 
     chunk_metadata: Mapped[dict] = mapped_column(
@@ -374,13 +384,16 @@ class DocumentChunk(Base):
         UniqueConstraint("document_id", "chunk_index", name="uq_chunk_document_index"),
         Index("ix_chunks_document", "document_id"),
         Index("ix_chunks_tenant", "tenant_id"),
-        # Uncomment after populating embeddings:
+        # HNSW: O(log n) ANN, auto-updates on insert (no VACUUM needed unlike IVFFlat).
+        # m=16 ef_construction=64 — good balance of recall vs build time.
         Index(
-            "ix_chunks_embedding", "embedding",
-            postgresql_using="ivfflat",
-            postgresql_with={"lists": 100},
+            "ix_chunks_embedding_hnsw", "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # GIN index on tsvector for sub-millisecond full-text search.
+        Index("ix_chunks_ts_content", "ts_content", postgresql_using="gin"),
     )
 
     def __repr__(self) -> str:
@@ -450,14 +463,14 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
-    # Uncomment after: CREATE EXTENSION IF NOT EXISTS vector;
-    # embedding: Mapped[list[float]] = mapped_column(
-    #     Vector(1536), nullable=True, default=None,
-    #     comment=(
-    #         "Embedding of title + description + suburb + listing_type. "
-    #         "Semantic fallback when SQL filters return no results."
-    #     ),
-    # )
+    # Semantic fallback when SQL filters return no results.
+    # Embedding of: listing_type | suburb | state | bedrooms | title | description
+    # Updated by embed_listing Celery task on create/update.
+    # Excluded from search when deleted_at IS NOT NULL (soft-deleted).
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(1536), nullable=True, default=None,
+        comment="pgvector embedding for semantic listing search. HNSW-indexed."
+    )
 
     listed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -484,14 +497,59 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
               postgresql_where=text("deleted_at IS NULL")),
         Index("ix_listings_external", "tenant_id", "external_id",
               postgresql_where=text("external_id IS NOT NULL")),
-        # Uncomment after populating embeddings:
-        # Index(
-        #     "ix_listings_embedding", "embedding",
-        #     postgresql_using="ivfflat",
-        #     postgresql_with={"lists": 100},
-        #     postgresql_ops={"embedding": "vector_cosine_ops"},
-        # ),
+        # HNSW for semantic fallback on listing search.
+        # Partial index: only index non-deleted rows with an embedding set.
+        Index(
+            "ix_listings_embedding_hnsw", "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_where=text("deleted_at IS NULL AND embedding IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
         return f"<Listing id={self.id} title={self.title!r} status={self.status}>"
+
+
+# =============================================================================
+# CHATBOT ASSETS  (images stored as blob — swap to S3 later)
+# =============================================================================
+
+class ChatbotAsset(Base, PublicIdMixin):
+    __tablename__ = "chatbot_assets"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    chatbot_config_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chatbot_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    # 'logo' | 'avatar' | 'banner' | 'gif' | 'ribbon_icon'
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        comment="MIME type e.g. image/png — returned as Content-Type when serving."
+    )
+    file_size_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    # Raw bytes now; set storage_path + clear file_data when migrating to S3
+    file_data: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False,
+        comment="Raw image bytes. Clear after migrating to S3."
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+    __table_args__ = (
+        Index("ix_chatbot_assets_chatbot", "chatbot_config_id"),
+        Index("ix_chatbot_assets_tenant", "tenant_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ChatbotAsset id={self.id} type={self.asset_type} chatbot={self.chatbot_config_id}>"
