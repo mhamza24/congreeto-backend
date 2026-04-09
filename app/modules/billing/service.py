@@ -16,7 +16,7 @@ from app.modules.billing.task_helpers import (
     can_start_new_conversation,
     can_continue_conversation,
 )
-from app.core.enums import UsageMetric, LimitStatus
+from app.core.enums import UsageMetric, LimitStatus, SubscriptionStatus
 from app.modules.tenants.models import Tenant
 from app.modules.tenants import repository as tenant_repo
 from app.modules.tenants.repository import count_active_members
@@ -170,12 +170,18 @@ async def mark_past_due(
     db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
 ) -> schemas.SubscriptionResponse:
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    sub = await contracts.mark_past_due(db, tenant=tenant, notes=notes)
+    sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active subscription found.",
         )
+    if sub.status == SubscriptionStatus.PAST_DUE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Subscription is already past_due.",
+        )
+    sub = await contracts.mark_past_due(db, tenant=tenant, notes=notes)
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
     return _build_subscription_response(sub, plan=plan)
@@ -185,12 +191,18 @@ async def mark_active(
     db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
 ) -> schemas.SubscriptionResponse:
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    sub = await contracts.mark_active(db, tenant=tenant, notes=notes)
+    sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active subscription found.",
+            detail="No subscription found.",
         )
+    if sub.status != SubscriptionStatus.PAST_DUE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot mark active — subscription is currently '{sub.status.value}', not past_due.",
+        )
+    sub = await contracts.mark_active(db, tenant=tenant, notes=notes)
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
     return _build_subscription_response(sub, plan=plan)
@@ -204,6 +216,11 @@ async def add_addon(
     addon  = await repo.get_addon_by_public_id(db, public_id=payload.addon_public_id)
     if not addon:
         raise HTTPException(status_code=404, detail="Addon not found.")
+    if not addon.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This addon is no longer available.",
+        )
     sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
         raise HTTPException(
@@ -216,8 +233,7 @@ async def add_addon(
         currency=payload.currency, notes=payload.notes,
     )
     await db.commit()
-    await db.refresh(addon_sub)
-    return _build_addon_response(addon_sub)
+    return _build_addon_response(addon_sub, addon=addon)
 
 
 async def remove_addon(
@@ -228,8 +244,25 @@ async def remove_addon(
     addon  = await repo.get_addon_by_public_id(db, public_id=payload.addon_public_id)
     if not addon:
         raise HTTPException(status_code=404, detail="Addon not found.")
+    existing = await repo.get_tenant_addon(db, tenant_id=tenant.id, addon_id=addon.id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This addon is not assigned to the tenant.",
+        )
+    if existing.status == SubscriptionStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This addon is already cancelled.",
+        )
+    if payload.quantity is not None and payload.quantity > existing.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot remove {payload.quantity} units — tenant only has {existing.quantity}.",
+        )
     await contracts.remove_addon(
-        db, tenant_id=tenant.id, addon_id=addon.id, notes=payload.notes,
+        db, tenant_id=tenant.id, addon_id=addon.id,
+        quantity=payload.quantity, notes=payload.notes,
     )
     await db.commit()
     return {"message": "Addon removed successfully."}
@@ -351,10 +384,10 @@ def _build_subscription_response(sub, plan: Plan | None = None) -> schemas.Subsc
     )
 
 
-def _build_addon_response(addon_sub) -> schemas.TenantAddonResponse:
+def _build_addon_response(addon_sub, addon=None) -> schemas.TenantAddonResponse:
     return schemas.TenantAddonResponse(
         public_id = addon_sub.public_id,
-        addon     = schemas.AddonResponse.from_addon(addon_sub.addon),
+        addon     = schemas.AddonResponse.from_addon(addon or addon_sub.addon),
         quantity  = addon_sub.quantity,
         status    = addon_sub.status,
         currency  = addon_sub.currency,

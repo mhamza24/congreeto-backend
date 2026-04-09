@@ -202,6 +202,10 @@ class AddAddonRequest(BaseModel):
 
 class RemoveAddonRequest(BaseModel):
     addon_public_id: str
+    quantity:        Optional[int] = Field(
+        None, ge=1,
+        description="Units to remove. Omit to cancel the addon entirely."
+    )
     notes:           Optional[str] = Field(None, max_length=1000)
 
 

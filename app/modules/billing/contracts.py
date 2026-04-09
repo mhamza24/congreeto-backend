@@ -223,13 +223,21 @@ async def remove_addon(
     *,
     tenant_id: int,
     addon_id: int,
+    quantity: int | None = None,
     notes: str | None = None,
     # STRIPE_HOOK: cancel_on_stripe: bool = True,
 ) -> None:
     existing = await repo.get_tenant_addon(db, tenant_id=tenant_id, addon_id=addon_id)
     if existing:
-        existing.status = SubscriptionStatus.CANCELLED
+        if quantity is None or quantity >= existing.quantity:
+            # Remove all — cancel the addon entirely
+            existing.status = SubscriptionStatus.CANCELLED
+            existing.quantity = 0
+            # STRIPE_HOOK: await stripe.cancel_subscription_item(existing.stripe_subscription_item_id)
+        else:
+            # Partial removal — decrement quantity
+            existing.quantity -= quantity
+            # STRIPE_HOOK: await stripe.update_subscription_item(existing.stripe_subscription_item_id, quantity=existing.quantity)
         if notes:
             existing.notes = notes
-        # STRIPE_HOOK: await stripe.cancel_subscription_item(existing.stripe_subscription_item_id)
         await db.flush()
