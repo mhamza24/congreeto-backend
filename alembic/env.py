@@ -9,6 +9,7 @@ from app.modules.users.models import User
 from app.modules.models.otp import OTPVerification
 from app.modules.models.tenant_user import TenantUser
 from app.modules.tenants.models import Tenant
+from app.modules.billing.models import Plan, Addon, TenantSubscription, TenantAddonSubscription, UsageRecord
 from logging.config import fileConfig
 from sqlalchemy import pool
 from alembic import context
