@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.response import ApiResponse
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.core.enums import UsageMetric
 from app.modules.billing import schemas, service
@@ -106,7 +106,7 @@ async def check_limit(
 )
 async def admin_list_plans(
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
     # TODO: swap → get_super_admin
 ) -> ApiResponse[list[schemas.PlanResponse]]:
     result = await service.list_all_plans(db)
@@ -122,7 +122,7 @@ async def admin_list_plans(
 async def create_plan(
     payload: schemas.PlanCreateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.PlanResponse]:
     try:
         result = await service.create_plan(db, payload=payload)
@@ -143,7 +143,7 @@ async def update_plan(
     plan_public_id: str,
     payload: schemas.PlanUpdateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.PlanResponse]:
     try:
         result = await service.update_plan(
@@ -170,7 +170,7 @@ async def update_plan(
 async def create_addon(
     payload: schemas.AddonCreateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.AddonResponse]:
     try:
         result = await service.create_addon(db, payload=payload)
@@ -195,7 +195,7 @@ async def activate_subscription(
     tenant_public_id: str,
     payload: schemas.ActivateSubscriptionRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.SubscriptionResponse]:
     """
     Admin calls this after receiving manual payment.
@@ -222,7 +222,7 @@ async def change_plan(
     tenant_public_id: str,
     payload: schemas.ChangePlanRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.SubscriptionResponse]:
     try:
         result = await service.change_plan(
@@ -245,7 +245,7 @@ async def cancel_subscription(
     tenant_public_id: str,
     payload: schemas.CancelSubscriptionRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.SubscriptionResponse]:
     try:
         result = await service.cancel_subscription(
@@ -268,7 +268,7 @@ async def mark_past_due(
     tenant_public_id: str,
     payload: schemas.StatusNoteRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.SubscriptionResponse]:
     """
     Called manually by admin or by the Stripe webhook handler
@@ -296,7 +296,7 @@ async def mark_active(
     tenant_public_id: str,
     payload: schemas.StatusNoteRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.SubscriptionResponse]:
     """
     Called manually by admin or by the Stripe webhook handler
@@ -324,7 +324,7 @@ async def add_addon(
     tenant_public_id: str,
     payload: schemas.AddAddonRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[schemas.TenantAddonResponse]:
     try:
         result = await service.add_addon(
@@ -347,7 +347,7 @@ async def remove_addon(
     tenant_public_id: str,
     payload: schemas.RemoveAddonRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_superadmin),
 ) -> ApiResponse[dict]:
     try:
         result = await service.remove_addon(

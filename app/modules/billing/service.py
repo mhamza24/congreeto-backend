@@ -131,8 +131,7 @@ async def activate_subscription(
         notes=payload.notes,
     )
     await db.commit()
-    await db.refresh(sub)
-    return _build_subscription_response(sub)
+    return _build_subscription_response(sub, plan=plan)
 
 
 async def change_plan(
@@ -146,8 +145,7 @@ async def change_plan(
         currency=payload.currency, notes=payload.notes,
     )
     await db.commit()
-    await db.refresh(sub)
-    return _build_subscription_response(sub)
+    return _build_subscription_response(sub, plan=plan)
 
 
 async def cancel_subscription(
@@ -164,8 +162,8 @@ async def cancel_subscription(
             detail="No active subscription found.",
         )
     await db.commit()
-    await db.refresh(sub)
-    return _build_subscription_response(sub)
+    plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    return _build_subscription_response(sub, plan=plan)
 
 
 async def mark_past_due(
@@ -179,8 +177,8 @@ async def mark_past_due(
             detail="No active subscription found.",
         )
     await db.commit()
-    await db.refresh(sub)
-    return _build_subscription_response(sub)
+    plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    return _build_subscription_response(sub, plan=plan)
 
 
 async def mark_active(
@@ -194,8 +192,8 @@ async def mark_active(
             detail="No active subscription found.",
         )
     await db.commit()
-    await db.refresh(sub)
-    return _build_subscription_response(sub)
+    plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    return _build_subscription_response(sub, plan=plan)
 
 
 async def add_addon(
@@ -337,12 +335,12 @@ async def _get_plan_or_404(db: AsyncSession, *, public_id: str) -> Plan:
     return plan
 
 
-def _build_subscription_response(sub) -> schemas.SubscriptionResponse:
+def _build_subscription_response(sub, plan: Plan | None = None) -> schemas.SubscriptionResponse:
     return schemas.SubscriptionResponse(
         public_id            = sub.public_id,
         status               = sub.status,
         currency             = sub.currency,
-        plan                 = schemas.PlanResponse.from_plan(sub.plan),
+        plan                 = schemas.PlanResponse.from_plan(plan or sub.plan),
         current_period_start = sub.current_period_start,
         current_period_end   = sub.current_period_end,
         trial_ends_at        = sub.trial_ends_at,

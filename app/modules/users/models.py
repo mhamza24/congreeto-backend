@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, String, Index, text, DateTime
+from sqlalchemy import BigInteger, Boolean, String, Index, text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db_base import Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin
@@ -123,6 +123,15 @@ class User(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
         String(500),
         nullable=True,
         comment="Absolute URL to avatar image in S3/CDN.",
+    )
+
+    # ── Platform access ───────────────────────────────────────────────────────
+    is_superadmin: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=text("false"),
+        nullable=False,
+        comment="True for internal Veloce team members who can access the superadmin panel.",
     )
 
     # ── Status & verification ─────────────────────────────────────────────────

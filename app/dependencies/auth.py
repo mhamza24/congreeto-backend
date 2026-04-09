@@ -41,3 +41,14 @@ async def get_current_user(
         raise UserNotFoundError()
 
     return user
+
+
+async def require_superadmin(
+    current_user=Depends(get_current_user),
+):
+    if not current_user.is_superadmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Superadmin access required.",
+        )
+    return current_user
