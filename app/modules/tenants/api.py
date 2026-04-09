@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import ApiResponse
 from app.dependencies.auth import get_current_user
+from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.core.database import get_db
 from app.dependencies.user import get_verified_user
 from app.modules.tenants import schemas, service
@@ -78,13 +79,14 @@ async def get_my_tenants(
     summary="Get your context within a tenant",
 )
 async def get_my_tenant(
-    tenant_public_id: str,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.MyTenantContext]:
     try:
         result = await service.get_my_tenant(
-            db, current_user=current_user, tenant_public_id=tenant_public_id
+            db, current_user=ctx.membership.user_id, tenant_public_id=ctx.tenant.public_id,
+            preloaded_tenant=ctx.tenant, preloaded_tu=ctx.membership,
+            preloaded_sub=ctx.subscription,
         )
     except HTTPException:
         raise
@@ -104,15 +106,14 @@ async def get_my_tenant(
     summary="Update tenant profile (admin/owner only)",
 )
 async def update_tenant(
-    tenant_public_id: str,
     payload: schemas.TenantUpdateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.TenantResponse]:
+    require_write(ctx)
     try:
         result = await service.update_tenant(
-            db, payload=payload, current_user=current_user,
-            tenant_public_id=tenant_public_id,
+            db, payload=payload, tenant=ctx.tenant, caller_tu=ctx.membership,
         )
     except HTTPException:
         raise
@@ -163,17 +164,15 @@ async def update_tenant_status(
     summary="List all members of a tenant",
 )
 async def list_members(
-    tenant_public_id: str,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
     role: Optional[TenantRole] = Query(None, description="Filter by role"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ) -> ApiResponse[schemas.MemberListResponse]:
     try:
         result = await service.list_members(
-            db, current_user=current_user, tenant_public_id=tenant_public_id,
-            role=role, skip=skip, limit=limit,
+            db, tenant=ctx.tenant, role=role, skip=skip, limit=limit,
         )
     except HTTPException:
         raise
@@ -193,15 +192,14 @@ async def list_members(
     summary="Invite a user to the tenant (admin/owner only)",
 )
 async def invite_user(
-    tenant_public_id: str,
     payload: schemas.InviteUserRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.InviteResponse]:
+    require_write(ctx)
     try:
         result = await service.invite_user(
-            db, payload=payload, current_user=current_user,
-            tenant_public_id=tenant_public_id,
+            db, payload=payload, tenant=ctx.tenant, caller_tu=ctx.membership,
         )
     except HTTPException:
         raise
@@ -244,16 +242,16 @@ async def accept_invite(
     summary="Change a member's role (admin/owner only)",
 )
 async def update_member_role(
-    tenant_public_id: str,
     member_public_id: str,
     payload: schemas.UpdateMemberRoleRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.TenantMemberResponse]:
+    require_write(ctx)
     try:
         result = await service.update_member_role(
-            db, payload=payload, current_user=current_user,
-            tenant_public_id=tenant_public_id, member_public_id=member_public_id,
+            db, payload=payload, caller_tu=ctx.membership,
+            tenant=ctx.tenant, member_public_id=member_public_id,
         )
     except HTTPException:
         raise
@@ -273,16 +271,16 @@ async def update_member_role(
     summary="Suspend or reactivate a member (admin/owner only)",
 )
 async def update_member_status(
-    tenant_public_id: str,
     member_public_id: str,
     payload: schemas.UpdateMemberStatusRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.TenantMemberResponse]:
+    require_write(ctx)
     try:
         result = await service.update_member_status(
-            db, payload=payload, current_user=current_user,
-            tenant_public_id=tenant_public_id, member_public_id=member_public_id,
+            db, payload=payload, caller_tu=ctx.membership, current_user_id=ctx.membership.user_id,
+            tenant=ctx.tenant, member_public_id=member_public_id,
         )
     except HTTPException:
         raise
@@ -302,15 +300,14 @@ async def update_member_status(
     summary="Remove a member from the tenant",
 )
 async def remove_member(
-    tenant_public_id: str,
     member_public_id: str,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.RemoveMemberResponse]:
     try:
         result = await service.remove_member(
-            db, current_user=current_user,
-            tenant_public_id=tenant_public_id, member_public_id=member_public_id,
+            db, caller_tu=ctx.membership, current_user_id=ctx.membership.user_id,
+            tenant=ctx.tenant, member_public_id=member_public_id,
         )
     except HTTPException:
         raise

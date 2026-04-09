@@ -10,12 +10,17 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from typing import TYPE_CHECKING
+
 from app.core.db_base import Base, PublicIdMixin, TimestampMixin
 from app.core.enums import (
     BillingInterval, SubscriptionStatus, AddonType, UsageMetric,
     billing_interval_enum, subscription_status_enum,
     addon_type_enum, usage_metric_enum,
 )
+
+if TYPE_CHECKING:
+    from app.modules.tenants.models import Tenant
 
 
 class Plan(Base, PublicIdMixin, TimestampMixin):
@@ -321,6 +326,9 @@ class TenantSubscription(Base, PublicIdMixin, TimestampMixin):
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
+    tenant: Mapped["Tenant"] = relationship(
+        "Tenant", back_populates="subscriptions", lazy="noload"
+    )
     plan: Mapped["Plan"] = relationship(
         "Plan", back_populates="subscriptions", lazy="noload"
     )

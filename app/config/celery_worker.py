@@ -48,6 +48,28 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.daily_insight_sweep",
         "schedule": crontab(hour=8, minute=0),
     },
+    # Billing
+    "billing-reconcile-usage": {
+        "task": "billing.reconcile_usage",
+        "schedule": crontab(minute=0),           # every hour
+    },
+    "billing-check-usage-limits": {
+        "task": "billing.check_usage_limits",
+        "schedule": crontab(minute=10),          # 10 min after reconcile
+    },
+    "billing-reset-monthly-usage": {
+        "task": "billing.reset_monthly_usage",
+        "schedule": crontab(day_of_month=1, hour=0, minute=5),  # 1st of month 00:05 UTC
+    },
+    # Tenant lifecycle
+    "tenants-expire-trials": {
+        "task": "tenants.expire_trials",
+        "schedule": crontab(minute=0),           # every hour
+    },
+    "tenants-sync-past-due": {
+        "task": "tenants.sync_past_due_tenants",
+        "schedule": crontab(minute=30),          # every hour at :30
+    },
 }
 
 celery_app.autodiscover_tasks([
@@ -55,4 +77,6 @@ celery_app.autodiscover_tasks([
     'app.modules.chat.tasks',
     'app.modules.auth.tasks',
     'app.modules.tenants.tasks',
+    'app.modules.tenants.corn_tasks',
+    'app.modules.billing.tasks',
 ])

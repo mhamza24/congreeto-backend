@@ -19,6 +19,7 @@ from app.modules.billing.task_helpers import (
 from app.core.enums import UsageMetric, LimitStatus
 from app.modules.tenants.models import Tenant
 from app.modules.tenants import repository as tenant_repo
+from app.modules.tenants.repository import count_active_members
 from app.config.settings import get_settings
 
 settings = get_settings()
@@ -167,6 +168,36 @@ async def cancel_subscription(
     return _build_subscription_response(sub)
 
 
+async def mark_past_due(
+    db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
+) -> schemas.SubscriptionResponse:
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    sub = await contracts.mark_past_due(db, tenant=tenant, notes=notes)
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active subscription found.",
+        )
+    await db.commit()
+    await db.refresh(sub)
+    return _build_subscription_response(sub)
+
+
+async def mark_active(
+    db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
+) -> schemas.SubscriptionResponse:
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    sub = await contracts.mark_active(db, tenant=tenant, notes=notes)
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active subscription found.",
+        )
+    await db.commit()
+    await db.refresh(sub)
+    return _build_subscription_response(sub)
+
+
 async def add_addon(
     db: AsyncSession, *, tenant_public_id: str,
     payload: schemas.AddAddonRequest,
@@ -267,7 +298,6 @@ async def get_tenant_billing_overview(
         ))
 
     # Seat info
-    from app.modules.tenants.repository import count_active_members
     seats_used  = await count_active_members(db, tenant_id=tenant.id)
     addon_seats = await repo.get_addon_grant_total(
         db, tenant_id=tenant.id, metric="max_users"
@@ -281,7 +311,7 @@ async def get_tenant_billing_overview(
         subscription    = _build_subscription_response(sub) if sub else None,
         addons          = [_build_addon_response(a) for a in addon_subs],
         usage           = schemas.TenantUsageSummary(
-            tenant_id=tenant.id, period_month=period, metrics=metrics
+            period_month=period, metrics=metrics
         ),
         seats_used      = seats_used,
         seats_total     = seats_total,

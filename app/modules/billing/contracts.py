@@ -86,7 +86,7 @@ async def cancel_subscription(
     if immediately:
         sub.status       = SubscriptionStatus.CANCELLED
         sub.cancelled_at = now
-        tenant.status    = TenantStatus.SUSPENDED
+        tenant.status    = TenantStatus.CANCELLED
         # STRIPE_HOOK: await stripe.cancel_subscription(sub.stripe_subscription_id, immediately=True)
     else:
         sub.cancel_at_period_end = True
@@ -160,6 +160,62 @@ async def add_addon(
     await db.flush()
     await db.refresh(addon_sub)
     return addon_sub
+
+
+async def mark_past_due(
+    db: AsyncSession,
+    *,
+    tenant: Tenant,
+    notes: str | None = None,
+    # STRIPE_HOOK: stripe_invoice_id: str | None = None,
+) -> Optional[TenantSubscription]:
+    """
+    Called when a payment attempt fails (Stripe invoice.payment_failed webhook).
+
+    - Transitions subscription status → past_due (read-only mode).
+    - Does NOT change tenant.status — Gate 1 stays green so the tenant
+      can still log in and view their data. Gate 2 (is_read_only=True) is
+      what blocks writes via the TenantContext dependency.
+    - A follow-up job or Stripe webhook calls cancel_subscription() if
+      payment is still overdue after the grace period.
+    """
+    sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
+    if not sub:
+        return None
+
+    sub.status = SubscriptionStatus.PAST_DUE
+    if notes:
+        sub.notes = notes
+    # STRIPE_HOOK: log stripe_invoice_id for retry tracking
+
+    await db.flush()
+    return sub
+
+
+async def mark_active(
+    db: AsyncSession,
+    *,
+    tenant: Tenant,
+    notes: str | None = None,
+    # STRIPE_HOOK: stripe_invoice_id: str | None = None,
+) -> Optional[TenantSubscription]:
+    """
+    Called when a previously failed payment succeeds (Stripe invoice.paid webhook).
+
+    - Transitions subscription status past_due → active.
+    - Restores tenant.status → active so Gate 1 passes cleanly.
+    """
+    sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
+    if not sub:
+        return None
+
+    sub.status    = SubscriptionStatus.ACTIVE
+    tenant.status = TenantStatus.ACTIVE
+    if notes:
+        sub.notes = notes
+
+    await db.flush()
+    return sub
 
 
 async def remove_addon(

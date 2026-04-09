@@ -168,6 +168,11 @@ class CancelSubscriptionRequest(BaseModel):
     notes:       Optional[str]  = Field(None, max_length=1000)
 
 
+class StatusNoteRequest(BaseModel):
+    """Generic request body for status-only transitions that carry an optional note."""
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
 class SubscriptionResponse(BaseModel):
     public_id:            str
     status:               SubscriptionStatus
@@ -226,7 +231,6 @@ class UsageMetricDetail(BaseModel):
 
 
 class TenantUsageSummary(BaseModel):
-    tenant_id:    int
     period_month: str
     metrics:      List[UsageMetricDetail]
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.response import ApiResponse
 from app.dependencies.auth import get_current_user
+from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.core.enums import UsageMetric
 from app.modules.billing import schemas, service
 
@@ -55,13 +56,12 @@ async def list_addons(db: DBDep) -> ApiResponse[list[schemas.AddonResponse]]:
     summary="Get full billing overview for a tenant",
 )
 async def get_billing_overview(
-    tenant_public_id: str,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.TenantBillingOverview]:
     try:
         result = await service.get_tenant_billing_overview(
-            db, tenant_public_id=tenant_public_id
+            db, tenant_public_id=ctx.tenant.public_id
         )
     except HTTPException:
         raise
@@ -77,22 +77,16 @@ async def get_billing_overview(
     summary="Check a specific usage limit for a tenant",
 )
 async def check_limit(
-    tenant_public_id: str,
     metric: UsageMetric,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> ApiResponse[schemas.LimitCheckResponse]:
     """
     Called by frontend before creating a conversation or uploading a document.
     allowed=False means the action should be blocked.
     """
     try:
-        # resolve tenant_id from public_id
-        from app.modules.tenants import repository as tenant_repo
-        tenant = await tenant_repo.get_tenant_by_public_id(db, public_id=tenant_public_id)
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found.")
-        result = await service.check_limit(db, tenant_id=tenant.id, metric=metric)
+        result = await service.check_limit(db, tenant_id=ctx.tenant.id, metric=metric)
     except HTTPException:
         raise
     except Exception:
@@ -263,6 +257,62 @@ async def cancel_subscription(
         logger.exception("Error cancelling subscription")
         raise HTTPException(status_code=500, detail="Could not cancel subscription.")
     return ApiResponse(success=True, message="Subscription cancelled.", data=result)
+
+
+@router.post(
+    "/admin/tenants/{tenant_public_id}/billing/past-due",
+    response_model=ApiResponse[schemas.SubscriptionResponse],
+    summary="Mark a tenant's subscription as past_due (admin / Stripe webhook)",
+)
+async def mark_past_due(
+    tenant_public_id: str,
+    payload: schemas.StatusNoteRequest,
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.SubscriptionResponse]:
+    """
+    Called manually by admin or by the Stripe webhook handler
+    when invoice.payment_failed fires.
+    Puts the subscription into read-only mode (Gate 2).
+    """
+    try:
+        result = await service.mark_past_due(
+            db, tenant_public_id=tenant_public_id, notes=payload.notes
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error marking subscription past_due")
+        raise HTTPException(status_code=500, detail="Could not update subscription.")
+    return ApiResponse(success=True, message="Subscription marked past_due.", data=result)
+
+
+@router.post(
+    "/admin/tenants/{tenant_public_id}/billing/mark-active",
+    response_model=ApiResponse[schemas.SubscriptionResponse],
+    summary="Restore a past_due subscription to active (admin / Stripe webhook)",
+)
+async def mark_active(
+    tenant_public_id: str,
+    payload: schemas.StatusNoteRequest,
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.SubscriptionResponse]:
+    """
+    Called manually by admin or by the Stripe webhook handler
+    when invoice.paid fires after a previously failed payment.
+    Lifts the read-only restriction.
+    """
+    try:
+        result = await service.mark_active(
+            db, tenant_public_id=tenant_public_id, notes=payload.notes
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error marking subscription active")
+        raise HTTPException(status_code=500, detail="Could not update subscription.")
+    return ApiResponse(success=True, message="Subscription restored to active.", data=result)
 
 
 @router.post(

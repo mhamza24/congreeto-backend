@@ -20,6 +20,7 @@ from app.modules.users.models import User
 from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, UserStatus, OTPPurpose
 from app.utils.hashing_utils import hash_password, hash_identity, hash_otp
 from app.config.settings import get_settings
+from app.modules.billing import repository as billing_repo
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,16 +37,20 @@ INVITE_TTL_HOURS = 72
 
 async def _get_seat_info(db: AsyncSession, tenant_id: int) -> dict:
     """
-    Returns seat usage info.
-    DEFAULT_SEAT_LIMIT from settings = 3 (owner + 2 members).
-    When billing is live: replace with plan.limits['max_users'] + addon_qty.
+    Returns seat usage info driven by the active plan + addon grants.
+    Falls back to DEFAULT_SEAT_LIMIT when the tenant has no active subscription
+    (e.g. still in pending_plan state).
     """
     seats_used = await repo.count_active_members(db, tenant_id=tenant_id)
-    seats_total = settings.DEFAULT_SEAT_LIMIT
-    # TODO: when billing is live replace above with:
-    # plan        = await repo.get_tenant_active_plan(db, tenant_id=tenant_id)
-    # addon_seats = await repo.get_addon_seat_count(db, tenant_id=tenant_id)
-    # seats_total = plan.limits['max_users'] + addon_seats
+
+    sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
+    if sub:
+        addon_seats = await billing_repo.get_addon_grant_total(
+            db, tenant_id=tenant_id, metric="max_users"
+        )
+        seats_total = sub.plan.get_limit("max_users", settings.DEFAULT_SEAT_LIMIT) + addon_seats
+    else:
+        seats_total = settings.DEFAULT_SEAT_LIMIT
 
     return {
         "seats_used": seats_used,
@@ -87,6 +92,7 @@ async def create_tenant(
         )
     )
 
+    await db.commit()
     await db.refresh(tenant)
     return schemas.TenantResponse.model_validate(tenant)
 
@@ -94,11 +100,14 @@ async def create_tenant(
 async def get_my_tenant(
     db: AsyncSession,
     *,
-    current_user: User,
+    current_user: int,
     tenant_public_id: str,
+    preloaded_tenant: Optional["Tenant"] = None,
+    preloaded_tu: Optional["TenantUser"] = None,
+    preloaded_sub=None,
 ) -> schemas.MyTenantContext:
-    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    tu = await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
+    tenant = preloaded_tenant or await _get_tenant_or_404(db, public_id=tenant_public_id)
+    tu     = preloaded_tu    or await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user)
 
     if not tu.is_accessible:
         raise HTTPException(
@@ -108,15 +117,19 @@ async def get_my_tenant(
 
     seat_info = await _get_seat_info(db, tenant_id=tenant.id)
 
+    sub = preloaded_sub if preloaded_sub is not None else await billing_repo.get_active_subscription(db, tenant_id=tenant.id)
+    is_read_only = bool(sub and sub.is_past_due)
+
     return schemas.MyTenantContext(
         tenant=schemas.TenantSummary.model_validate(tenant),
         role=tu.role,
-        status=tu.status,  # ← was missing
+        status=tu.status,
         is_owner=tu.is_primary_owner,
         joined_at=tu.joined_at,
-        seats_used=seat_info["seats_used"],  # ← was missing
-        seats_total=seat_info["seats_total"],  # ← was missing
-        seats_remaining=seat_info["seats_remaining"],  # ← was missing
+        seats_used=seat_info["seats_used"],
+        seats_total=seat_info["seats_total"],
+        seats_remaining=seat_info["seats_remaining"],
+        is_read_only=is_read_only,
     )
 
 
@@ -143,13 +156,10 @@ async def update_tenant(
     db: AsyncSession,
     *,
     payload: schemas.TenantUpdateRequest,
-    current_user: User,
-    tenant_public_id: str,
+    tenant: Tenant,
+    caller_tu: TenantUser,
 ) -> schemas.TenantResponse:
-    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    tu = await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
-
-    if not tu.is_owner_or_admin:
+    if not caller_tu.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins and owners can update tenant details.",
@@ -185,15 +195,11 @@ async def update_tenant_status(
 async def list_members(
     db: AsyncSession,
     *,
-    current_user: User,
-    tenant_public_id: str,
+    tenant: Tenant,
     role: Optional[TenantRole] = None,
     skip: int = 0,
     limit: int = 50,
 ) -> schemas.MemberListResponse:
-    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
-
     members, total = await repo.list_tenant_members(
         db, tenant_id=tenant.id, role=role, skip=skip, limit=limit
     )
@@ -210,18 +216,15 @@ async def invite_user(
     db: AsyncSession,
     *,
     payload: schemas.InviteUserRequest,
-    current_user: User,
-    tenant_public_id: str,
+    tenant: Tenant,
+    caller_tu: TenantUser,
 ) -> schemas.InviteResponse:
     """
     Admin/owner invites a new user.
-    Gate 3: max DEFAULT_SEAT_LIMIT active members.
-    Owner already consumes seat 1, so by default only 2 more can be invited.
-    To add more: purchase extra_users addon (billing — coming soon).
+    Gate 3: seat limit enforced from active plan + addon grants.
+    Purchase extra_users addon to raise the limit.
     """
-    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    tu = await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
-
+    tu = caller_tu
     if not tu.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -278,7 +281,7 @@ async def invite_user(
             "user_id":          invitee.id,
             "tenant_public_id": tenant.public_id,
             "role":             payload.role.value,
-            "invited_by_id":    current_user.id,
+            "invited_by_id":    caller_tu.user_id,
         }),
         ex=INVITE_TTL_HOURS * 3600,
     )
@@ -287,7 +290,7 @@ async def invite_user(
     celery_task = background_tasks.send_invite_email_task.delay(
         to           = payload.email,
         first_name   = invitee.first_name or payload.email.split("@")[0],
-        inviter_name = current_user.full_name,
+        inviter_name = caller_tu.user.full_name if hasattr(caller_tu, "user") and caller_tu.user else "Team",
         tenant_name  = tenant.name,
         invite_link  = invite_link,
         role         = payload.role.value,
@@ -341,8 +344,13 @@ async def accept_invite(
     # 3. Consume Redis key — single use
     await redis_client.delete(f"invite_otp:{otp_hash}")
 
-    # 4. Load tenant and re-check seat limit at acceptance time
+    # 4. Load tenant, verify it's still active, and re-check seat limit at acceptance time
     tenant = await _get_tenant_or_404(db, public_id=invite_data["tenant_public_id"])
+    if tenant.status in (TenantStatus.SUSPENDED, TenantStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This tenant account is no longer active.",
+        )
     seat_info = await _get_seat_info(db, tenant_id=tenant.id)
     if seat_info["seats_remaining"] <= 0:
         raise HTTPException(
@@ -391,13 +399,10 @@ async def update_member_role(
     db: AsyncSession,
     *,
     payload: schemas.UpdateMemberRoleRequest,
-    current_user: User,
-    tenant_public_id: str,
+    caller_tu: TenantUser,
+    tenant: Tenant,
     member_public_id: str,
 ) -> schemas.TenantMemberResponse:
-    tenant    = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    caller_tu = await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
-
     if not caller_tu.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -424,8 +429,9 @@ async def update_member_status(
     db: AsyncSession,
     *,
     payload: schemas.UpdateMemberStatusRequest,
-    current_user: User,
-    tenant_public_id: str,
+    caller_tu: TenantUser,
+    current_user_id: int,
+    tenant: Tenant,
     member_public_id: str,
 ) -> schemas.TenantMemberResponse:
     """
@@ -433,11 +439,6 @@ async def update_member_status(
     Suspended/deactivated members free up their seat immediately.
     Reactivating checks seat limit again before allowing.
     """
-    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    caller_tu = await _get_membership_or_403(
-        db, tenant_id=tenant.id, user_id=current_user.id
-    )
-
     if not caller_tu.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -456,7 +457,7 @@ async def update_member_status(
             detail="Cannot change the primary owner's status.",
         )
 
-    if target_tu.user_id == current_user.id:
+    if target_tu.user_id == current_user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You cannot change your own status.",
@@ -484,18 +485,16 @@ async def update_member_status(
 async def remove_member(
     db: AsyncSession,
     *,
-    current_user: User,
-    tenant_public_id: str,
+    caller_tu: TenantUser,
+    current_user_id: int,
+    tenant: Tenant,
     member_public_id: str,
 ) -> schemas.RemoveMemberResponse:
-    tenant    = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    caller_tu = await _get_membership_or_403(db, tenant_id=tenant.id, user_id=current_user.id)
-
     target_tu = await repo.get_tenant_user_by_public_id(db, public_id=member_public_id)
     if not target_tu or target_tu.tenant_id != tenant.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
 
-    is_self = target_tu.user_id == current_user.id
+    is_self = target_tu.user_id == current_user_id
     if not is_self and not caller_tu.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

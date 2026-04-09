@@ -152,11 +152,12 @@ class TenantMemberResponse(BaseModel):
     joined_at:        Optional[datetime]
     created_at:       datetime
 
-    user_public_id: str
-    email:          str
-    first_name:     Optional[str]
-    last_name:      Optional[str]
-    avatar_url:     Optional[str]
+    user_public_id:  str
+    email:           str
+    first_name:      Optional[str]
+    last_name:       Optional[str]
+    avatar_url:      Optional[str]
+    user_last_login: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -201,6 +202,9 @@ class MyTenantContext(BaseModel):
     seats_used:      int
     seats_total:     int
     seats_remaining: int
+    # Gate 2 signal: True when subscription is past_due.
+    # Frontend should surface a billing banner and block write UI.
+    is_read_only:    bool
 
     model_config = ConfigDict(from_attributes=True)
 

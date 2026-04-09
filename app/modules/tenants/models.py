@@ -64,6 +64,7 @@ from app.core.enums import TenantStatus, tenant_status_enum
 
 if TYPE_CHECKING:
     from app.modules.models.tenant_user import TenantUser
+    from app.modules.billing.models import TenantSubscription
 
 
 class Tenant(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
@@ -165,6 +166,14 @@ class Tenant(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
         back_populates="tenant",
         lazy="noload",
         cascade="all, delete-orphan",
+    )
+
+    subscriptions: Mapped[list["TenantSubscription"]] = relationship(
+        "TenantSubscription",
+        back_populates="tenant",
+        lazy="noload",
+        cascade="all, delete-orphan",
+        order_by="TenantSubscription.created_at.desc()",
     )
 
     # ── Indexes ───────────────────────────────────────────────────────────────
