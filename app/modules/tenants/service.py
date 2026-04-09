@@ -479,6 +479,7 @@ def _build_member_response(tu: TenantUser) -> schemas.TenantMemberResponse:
         joined_at=tu.joined_at,
         created_at=tu.created_at,
         user_public_id=user.public_id,
+        user_last_login=user.last_login_at,
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
