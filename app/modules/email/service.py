@@ -1285,7 +1285,128 @@ async def send_otp_verification_email(
     
     logger.info(f"OTP verification email sent | recipient={email}")
 
-    
+
+# ══════════════════════════════════════════════════════════════
+# H-1. Tenant invite email
+# ══════════════════════════════════════════════════════════════
+
+def build_invite_html(
+    *,
+    inviter_name: str,
+    tenant_name: str,
+    invite_link: str,
+    role: str,
+    expires_hours: int = 72,
+) -> str:
+    """
+    Body block for the tenant invitation email.
+    Injected into _render_shell() as body_html.
+    """
+    return f"""
+    <p style="margin:0 0 16px;font-size:15px;color:{BRAND['textDark']};
+              line-height:1.75;font-family:'Georgia',serif;">
+      <strong>{inviter_name}</strong> has invited you to join
+      <strong>{tenant_name}</strong> on Veloce as a <strong>{role}</strong>.
+    </p>
+
+    <p style="margin:0 0 24px;font-size:14px;color:{BRAND['textMid']};line-height:1.65;">
+      Click the button below to accept the invitation. Your invite link contains
+      a one-time code that expires in <strong>{expires_hours} hours</strong>.
+    </p>
+
+    <!-- CTA button -->
+    <table cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
+      <tr>
+        <td style="
+            background:{BRAND['teal']};
+            border-radius:6px;
+            padding:14px 28px;
+            text-align:center;
+        ">
+          <a href="{invite_link}"
+             target="_blank"
+             style="
+                color:{BRAND['white']};
+                font-size:15px;
+                font-weight:700;
+                font-family:'Georgia',serif;
+                text-decoration:none;
+                display:inline-block;
+             ">
+            Accept Invitation
+          </a>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Fallback link -->
+    <p style="margin:0 0 8px;font-size:12px;color:{BRAND['textLight']};line-height:1.6;">
+      If the button doesn't work, copy and paste this link into your browser:
+    </p>
+    <p style="margin:0 0 24px;font-size:12px;word-break:break-all;">
+      <a href="{invite_link}" style="color:{BRAND['teal']};text-decoration:none;">
+        {invite_link}
+      </a>
+    </p>
+
+    <!-- Security note -->
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="background:{BRAND['offWhite']};
+                  border-left:3px solid {BRAND['teal']};
+                  border-radius:0 4px 4px 0;
+                  margin:24px 0 0;">
+      <tr>
+        <td style="padding:14px 16px;">
+          <p style="margin:0;font-size:12px;color:{BRAND['textMid']};line-height:1.6;">
+            <strong style="color:{BRAND['textDark']};">Security notice:</strong>
+            This invitation is single-use and expires in {expires_hours} hours.
+            If you did not expect this invitation, you can safely ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+    """
+
+
+async def send_invite_email(
+    *,
+    to: str,
+    first_name: str,
+    inviter_name: str,
+    tenant_name: str,
+    invite_link: str,
+    role: str,
+) -> None:
+    """
+    Sends a tenant invitation email with an OTP-based invite link.
+
+    Called via Celery:
+        send_invite_email_task.delay(
+            to           = payload.email,
+            first_name   = invitee_first_name,
+            inviter_name = current_user.full_name,
+            tenant_name  = tenant.name,
+            invite_link  = invite_link,
+            role         = payload.role.value,
+        )
+    """
+    await fm.send_message(MessageSchema(
+        subject    = f"You're invited to join {tenant_name} on Veloce",
+        recipients = [to],
+        body       = _render_shell(
+            first_name = first_name,
+            body_html  = build_invite_html(
+                inviter_name  = inviter_name,
+                tenant_name   = tenant_name,
+                invite_link   = invite_link,
+                role          = role,
+            ),
+        ),
+        subtype    = MessageType.html,
+    ))
+    logger.info(f"Invite email sent | recipient={to} tenant={tenant_name}")
+
+
 # ══════════════════════════════════════════════════════════════
 # H. Conversation follow-up email  (sent directly to the visitor)
 # ══════════════════════════════════════════════════════════════

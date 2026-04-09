@@ -123,7 +123,7 @@ class UpdateMemberStatusRequest(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
-    token:      str = Field(..., description="Signed invite token from the email link.")
+    code:      str = Field(..., description="One-time OTP code from the invite email link.")
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name:  str = Field(..., min_length=1, max_length=100)
     password:   str = Field(..., min_length=8, max_length=100)

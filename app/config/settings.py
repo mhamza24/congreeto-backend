@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     
     DEFAULT_SEAT_LIMIT: int = 3
 
+    FRONTEND_URL: str = "http://localhost:3000"
+
     class Config:
         env_file = ENV_FILES.get(ENV, ".env.development")
 

@@ -54,4 +54,5 @@ celery_app.autodiscover_tasks([
     'app.modules.knowledge.tasks',
     'app.modules.chat.tasks',
     'app.modules.auth.tasks',
+    'app.modules.tenants.tasks',
 ])

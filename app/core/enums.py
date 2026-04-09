@@ -99,10 +99,12 @@ class OTPPurpose(str, enum.Enum):
     email_verification → 15-minute expiry, sent on signup / resend request
     password_reset     → 15-minute expiry, sent on "forgot password"
     login_otp          → 5-minute expiry, for passwordless / 2-FA flows (future)
+    tenant_invite      → 72-hour expiry, sent when admin invites a new member
     """
     EMAIL_VERIFICATION = "email_verification"
     PASSWORD_RESET     = "password_reset"
     LOGIN_OTP          = "login_otp"
+    TENANT_INVITE      = "tenant_invite"
 
 
 class InvitationStatus(str, enum.Enum):

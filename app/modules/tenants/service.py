@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -8,15 +8,21 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import SlugExistError
+from app.core.redis import redis_client
+from app.modules.auth import repository as auth_repo
 from app.modules.tenants import repository as repo
 from app.modules.tenants import schemas
+from app.modules.tenants import tasks as background_tasks
 from app.modules.users import repository as user_repo
 from app.modules.tenants.models import Tenant
 from app.modules.models.tenant_user import TenantUser
 from app.modules.users.models import User
-from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, UserStatus
-from app.utils.hashing_utils import hash_password
+from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, UserStatus, OTPPurpose
+from app.utils.hashing_utils import hash_password, hash_identity, hash_otp
 from app.config.settings import get_settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -226,20 +232,48 @@ async def invite_user(
 
     expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_TTL_HOURS)
 
-    # TODO: sign invite token and send email
-    # token = create_invite_token(
-    #     tenant_public_id=tenant.public_id,
-    #     email=payload.email,
-    #     role=payload.role.value,
-    #     invited_by_id=current_user.id,
-    #     expires_at=expires_at,
-    # )
-    # await email_service.send_invite(
-    #     to=payload.email,
-    #     inviter_name=current_user.full_name,
-    #     tenant_name=tenant.name,
-    #     invite_link=f"{settings.FRONTEND_URL}/invite/accept?token={token}",
-    # )
+    # Pre-create user with status=INVITED if they don't have an account yet
+    invitee = existing_user
+    if not invitee:
+        invitee = User(
+            email      = payload.email.lower(),
+            email_hash = hash_identity(payload.email),
+            status     = UserStatus.INVITED,
+        )
+        invitee = await user_repo.create_user(db, user=invitee)
+
+    # Create OTP record in DB (same table used by email verification)
+    # expires_in_minutes = 72h * 60 = 4320 min
+    raw_otp = await auth_repo.create_otp(
+        db,
+        user_id            = invitee.id,
+        purpose            = OTPPurpose.TENANT_INVITE,
+        expires_in_minutes = INVITE_TTL_HOURS * 60,
+    )
+
+    # Store invite metadata in Redis keyed by otp_hash for fast accept lookup
+    otp_hash = hash_otp(raw_otp)
+    await redis_client.set(
+        f"invite_otp:{otp_hash}",
+        json.dumps({
+            "user_id":          invitee.id,
+            "tenant_public_id": tenant.public_id,
+            "role":             payload.role.value,
+            "invited_by_id":    current_user.id,
+        }),
+        ex=INVITE_TTL_HOURS * 3600,
+    )
+
+    invite_link = f"{settings.FRONTEND_URL}/invite/accept?otp={raw_otp}"
+    celery_task = background_tasks.send_invite_email_task.delay(
+        to           = payload.email,
+        first_name   = invitee.first_name or payload.email.split("@")[0],
+        inviter_name = current_user.full_name,
+        tenant_name  = tenant.name,
+        invite_link  = invite_link,
+        role         = payload.role.value,
+    )
+    logger.info(f"Invite email enqueued: task={celery_task.id} recipient={payload.email}")
 
     return schemas.InviteResponse(
         email=payload.email,
@@ -254,22 +288,42 @@ async def accept_invite(
     *,
     payload: schemas.AcceptInviteRequest,
 ) -> schemas.AcceptInviteResponse:
-    try:
-        # token_data = decode_invite_token(payload.token)
-        pass
-    except Exception:
+    # 1. Fast Redis lookup — get invite metadata by hashed OTP
+    otp_hash = hash_otp(payload.code)
+    raw_data = await redis_client.get(f"invite_otp:{otp_hash}")
+    if not raw_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired invite link.",
         )
 
-    tenant = await _get_tenant_or_404(db, public_id=token_data["tenant_public_id"])
-    email = token_data["email"]
-    role = TenantRole(token_data["role"])
-    invited_by_id = token_data.get("invited_by_id")
+    invite_data  = json.loads(raw_data)
+    user_id      = invite_data["user_id"]
+    role         = TenantRole(invite_data["role"])
+    invited_by_id = invite_data.get("invited_by_id")
 
-    # Re-check seat limit at acceptance time — invite may have been sent
-    # before limit was reached but accepted after
+    # 2. Verify OTP against DB record — handles attempts + consumed_at
+    otp_record = await auth_repo.get_active_otp(
+        db, user_id=user_id, purpose=OTPPurpose.TENANT_INVITE
+    )
+    if otp_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired invite link.",
+        )
+
+    is_valid = await auth_repo.verify_otp(db, record=otp_record, raw_code=payload.code)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired invite link.",
+        )
+
+    # 3. Consume Redis key — single use
+    await redis_client.delete(f"invite_otp:{otp_hash}")
+
+    # 4. Load tenant and re-check seat limit at acceptance time
+    tenant = await _get_tenant_or_404(db, public_id=invite_data["tenant_public_id"])
     seat_info = await _get_seat_info(db, tenant_id=tenant.id)
     if seat_info["seats_remaining"] <= 0:
         raise HTTPException(
@@ -280,36 +334,33 @@ async def accept_invite(
             ),
         )
 
-    existing_user = await user_repo.get_user_by_email(db, email=email)
+    # 5. Load the pre-created invited user
+    user = await user_repo.get_user_by_id(db, id=user_id)
 
-    if existing_user:
-        user = existing_user
-        if await repo.is_member(db, tenant_id=tenant.id, user_id=user.id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="You are already a member of this team.",
-            )
-    else:
-        user = await user_repo.create_user(
-            db,
-            payload=payload,
-            overrides={
-                "email": email,
-                "email_hash": hashlib.sha256(email.lower().encode()).hexdigest(),
-                "password_hash": hash_password(payload.password),
-                "status": UserStatus.ACTIVE,
-                "email_verified_at": datetime.now(timezone.utc),
-            },
+    if await repo.is_member(db, tenant_id=tenant.id, user_id=user.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You are already a member of this team.",
         )
 
+    # 6. If user is still in INVITED state, activate them with submitted profile
+    if user.status == UserStatus.INVITED:
+        user.first_name        = payload.first_name
+        user.last_name         = payload.last_name
+        user.password_hash     = hash_password(payload.password)
+        user.status            = UserStatus.ACTIVE
+        user.email_verified_at = datetime.now(timezone.utc)
+        await db.flush()
+
+    # 7. Add to tenant
     db.add(
         TenantUser(
-            tenant_id=tenant.id,
-            user_id=user.id,
-            role=role,
-            invited_by=invited_by_id,
-            status=TenantUserStatus.ACTIVE,
-            joined_at=datetime.now(timezone.utc),
+            tenant_id  = tenant.id,
+            user_id    = user.id,
+            role       = role,
+            invited_by = invited_by_id,
+            status     = TenantUserStatus.ACTIVE,
+            joined_at  = datetime.now(timezone.utc),
         )
     )
 

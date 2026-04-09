@@ -111,7 +111,9 @@ async def get_tenant_user_by_public_id(
     db: AsyncSession, *, public_id: str
 ) -> Optional[TenantUser]:
     result = await db.execute(
-        select(TenantUser).where(TenantUser.public_id == public_id)
+        select(TenantUser)
+        .options(selectinload(TenantUser.user))
+        .where(TenantUser.public_id == public_id)
     )
     return result.scalar_one_or_none()
 
