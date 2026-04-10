@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, not_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -170,14 +170,14 @@ async def count_active_members(
     db: AsyncSession, *, tenant_id: int
 ) -> int:
     """
-    Active seat count for Gate 3 seat limit enforcement.
-    Only ACTIVE members consume a seat.
-    invited / suspended / deactivated do NOT consume seats.
+    Seat count for Gate 3 seat limit enforcement.
+    ACTIVE and INVITED members both consume a seat.
+    suspended / deactivated do NOT consume seats.
     """
     result = await db.execute(
         select(func.count(TenantUser.id)).where(
             TenantUser.tenant_id == tenant_id,
-            TenantUser.status == TenantUserStatus.ACTIVE,
+            TenantUser.status.in_([TenantUserStatus.ACTIVE, TenantUserStatus.INVITED]),
         )
     )
     return result.scalar_one()
@@ -260,3 +260,36 @@ async def get_invite_by_otp_id(
 async def consume_invite(db: AsyncSession, *, invite: TenantInvite) -> None:
     invite.consumed_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+async def get_pending_invites_without_membership(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+) -> List[TenantInvite]:
+    """
+    Returns unconsumed, non-expired invites for this tenant where the invitee
+    has no TenantUser row yet. Used to show legacy pending invites in the
+    member list before the invitee accepts.
+    """
+    from app.modules.users.models import User  # avoid circular import
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(TenantInvite)
+        .options(selectinload(TenantInvite.invitee))
+        .where(
+            TenantInvite.tenant_id == tenant_id,
+            TenantInvite.consumed_at.is_(None),
+            TenantInvite.expires_at > now,
+            not_(
+                exists(
+                    select(TenantUser.id).where(
+                        TenantUser.tenant_id == tenant_id,
+                        TenantUser.user_id == TenantInvite.invitee_user_id,
+                    )
+                )
+            ),
+        )
+        .order_by(TenantInvite.sent_at.asc())
+    )
+    return list(result.scalars().all())

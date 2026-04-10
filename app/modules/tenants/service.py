@@ -203,10 +203,27 @@ async def list_members(
     )
     seat_info = await _get_seat_info(db, tenant_id=tenant.id)
 
+    member_responses = [_build_member_response(m) for m in members if m.user is not None]
+
+    # Include legacy pending invites that have no TenantUser row yet (pre-fix data).
+    # New invites already create a TenantUser(status=INVITED), so this only catches
+    # invites sent before that fix was deployed.
+    pending_invites = await repo.get_pending_invites_without_membership(
+        db, tenant_id=tenant.id
+    )
+    pending_count = 0
+    for invite in pending_invites:
+        if invite.invitee is None:
+            continue
+        if role and invite.role != role:
+            continue
+        member_responses.append(_build_pending_invite_response(invite))
+        pending_count += 1
+
     return schemas.MemberListResponse(
-        total=total,
+        total=total + pending_count,
         **seat_info,
-        members=[_build_member_response(m) for m in members if m.user is not None],
+        members=member_responses,
     )
 
 
@@ -616,6 +633,25 @@ async def _get_membership_or_403(
             detail="You are not a member of this tenant.",
         )
     return tu
+
+
+def _build_pending_invite_response(invite) -> schemas.TenantMemberResponse:
+    """Build a member response for a legacy pending invite (no TenantUser row yet)."""
+    user = invite.invitee
+    return schemas.TenantMemberResponse(
+        public_id=str(invite.public_id),
+        role=invite.role,
+        status=TenantUserStatus.INVITED,
+        is_primary_owner=False,
+        joined_at=None,
+        created_at=invite.sent_at,
+        user_public_id=user.public_id,
+        user_last_login=user.last_login_at,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        avatar_url=user.avatar_url,
+    )
 
 
 def _build_member_response(tu: TenantUser) -> schemas.TenantMemberResponse:
