@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.tenants.models import Tenant
+from app.modules.tenants.models import Tenant, TenantInvite
 from app.modules.models.tenant_user import TenantUser
 from app.core.enums import TenantStatus, TenantRole, TenantUserStatus
 
@@ -191,3 +191,70 @@ async def is_member(
         )
     )
     return result.scalar_one_or_none() is not None
+
+
+# =============================================================================
+# TENANT INVITE
+# =============================================================================
+
+async def get_invites_last_24h(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    invitee_user_id: int,
+) -> List[TenantInvite]:
+    """
+    Returns all invites sent to this (tenant, invitee) pair in the last 24 hours,
+    ordered most-recent first. Used to enforce the rate-limit / lock logic.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    result = await db.execute(
+        select(TenantInvite)
+        .where(
+            TenantInvite.tenant_id == tenant_id,
+            TenantInvite.invitee_user_id == invitee_user_id,
+            TenantInvite.sent_at > cutoff,
+        )
+        .order_by(TenantInvite.sent_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def create_invite(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    invitee_user_id: int,
+    invited_by_user_id: Optional[int],
+    role: TenantRole,
+    otp_id: int,
+    expires_at: datetime,
+) -> TenantInvite:
+    now = datetime.now(timezone.utc)
+    invite = TenantInvite(
+        tenant_id=tenant_id,
+        invitee_user_id=invitee_user_id,
+        invited_by_user_id=invited_by_user_id,
+        role=role,
+        otp_id=otp_id,
+        sent_at=now,
+        expires_at=expires_at,
+    )
+    db.add(invite)
+    await db.flush()
+    await db.refresh(invite)
+    return invite
+
+
+async def get_invite_by_otp_id(
+    db: AsyncSession, *, otp_id: int
+) -> Optional[TenantInvite]:
+    result = await db.execute(
+        select(TenantInvite).where(TenantInvite.otp_id == otp_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def consume_invite(db: AsyncSession, *, invite: TenantInvite) -> None:
+    invite.consumed_at = datetime.now(timezone.utc)
+    await db.flush()

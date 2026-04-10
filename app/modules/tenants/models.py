@@ -53,19 +53,21 @@ INDEXES — Decision record
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, String, Index, text, DateTime
+from sqlalchemy import BigInteger, String, Index, text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db_base import Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin
-from app.core.enums import TenantStatus, tenant_status_enum
+from app.core.enums import TenantStatus, tenant_status_enum, TenantRole, tenant_role_enum
 
 if TYPE_CHECKING:
     from app.modules.models.tenant_user import TenantUser
     from app.modules.billing.models import TenantSubscription
     from app.modules.chatbot.models import ChatbotConfig
+    from app.modules.models.otp import OTPVerification
+    from app.modules.users.models import User
 
 
 class Tenant(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
@@ -224,3 +226,85 @@ class Tenant(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
         return (
             f"<Tenant id={self.id} slug={self.slug!r} status={self.status}>"
         )
+
+
+class TenantInvite(Base, PublicIdMixin, TimestampMixin):
+    """
+    Tracks every invite sent to a user for a tenant.
+
+    Purpose:
+    - Store invite metadata (tenant, role, invited_by) reliably in DB instead of Redis.
+    - Enforce 72-hour resend restriction: at most one invite per (tenant, invitee) per 72h.
+    - Allow accept_invite to resolve tenant/role without Redis.
+
+    The `otp_id` links to the OTPVerification row that holds the hashed code.
+    When the invite is accepted, `consumed_at` is set here (OTP is also consumed).
+    """
+
+    __tablename__ = "tenant_invites"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    invitee_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    invited_by_user_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    role: Mapped[TenantRole] = mapped_column(
+        tenant_role_enum,
+        nullable=False,
+    )
+
+    otp_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("otp_verifications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+        comment="When this invite email was dispatched. Used for 72h resend restriction.",
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="Set when the invitee accepts. NULL = pending.",
+    )
+
+    # ── Relationships ─────────────────────────────────────────────────────────
+    tenant: Mapped["Tenant"] = relationship("Tenant", foreign_keys=[tenant_id], lazy="noload")
+    invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_user_id], lazy="noload")
+    otp: Mapped[Optional["OTPVerification"]] = relationship(
+        "OTPVerification", foreign_keys=[otp_id], lazy="noload"
+    )
+
+    # ── Indexes ───────────────────────────────────────────────────────────────
+    __table_args__ = (
+        Index("ix_tenant_invites_tenant_invitee", "tenant_id", "invitee_user_id"),
+        Index("ix_tenant_invites_otp_id", "otp_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TenantInvite tenant={self.tenant_id} invitee={self.invitee_user_id} consumed={self.consumed_at is not None}>"

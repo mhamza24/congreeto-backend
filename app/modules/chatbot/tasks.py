@@ -25,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.celery_worker import celery_app, QUEUEEnum
 from app.config.settings import get_settings
 from app.core.database import get_task_db_session
-from app.core.enums import CrawlStatus, DocStatus, UsageMetric
+from app.core.db_base import _new_public_id
+from app.core.enums import CrawlStatus, DocStatus, ListingSource, UsageMetric
 from app.modules.billing import repository as billing_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot.models import DocumentChunk
@@ -37,6 +38,7 @@ from app.modules.chatbot.task_helpers import (
     chunk_pages,
     chunk_plain_text,
     embed_chunks,
+    extract_listings_from_page,
 )
 
 settings = get_settings()
@@ -154,6 +156,10 @@ async def _crawl_and_embed_async(
             logger.error(f"CrawlJob {crawl_job_id} not found.")
             return
 
+        # Load KS config to check extract_listings flag
+        ks = await repo.get_knowledge_source(db, tenant_id=tenant_id, source_id=knowledge_source_id)
+        extract_listings = bool(ks and ks.config.get("extract_listings", False))
+
         await repo.update_crawl_job(
             db,
             job=job,
@@ -189,7 +195,6 @@ async def _crawl_and_embed_async(
 
         for page_url, page_text in pages_dict.items():
             try:
-                # Create document row for this page
                 import uuid
                 doc = await repo.create_document(
                     db,
@@ -202,44 +207,75 @@ async def _crawl_and_embed_async(
                 )
                 await db.commit()
 
-                # Chunk the page text
+                # ── 3a: RAG chunks (always) ───────────────────────────────
                 raw_chunks = chunk_plain_text(page_text, source_url=page_url)
 
                 if not raw_chunks:
+                    await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
+                    await db.commit()
+                    pages_processed += 1
+                else:
+                    embedded_chunks = await embed_chunks(raw_chunks, openai_service)
+                    chunk_rows = [
+                        DocumentChunk(
+                            document_id=doc.id,
+                            tenant_id=tenant_id,
+                            chunk_index=c["chunk_index"],
+                            content=c["content"],
+                            embedding=c["embedding"],
+                            chunk_metadata=c["metadata"],
+                        )
+                        for c in embedded_chunks
+                    ]
+                    await repo.bulk_create_chunks(db, chunks=chunk_rows)
                     await repo.update_document(
-                        db, doc=doc,
-                        status=DocStatus.READY,
-                        chunk_count=0,
+                        db, doc=doc, status=DocStatus.READY, chunk_count=len(chunk_rows)
                     )
                     await db.commit()
                     pages_processed += 1
-                    continue
 
-                # Embed all chunks
-                embedded_chunks = await embed_chunks(raw_chunks, openai_service)
-
-                # Write DocumentChunk rows
-                chunk_rows = [
-                    DocumentChunk(
-                        document_id=doc.id,
-                        tenant_id=tenant_id,
-                        chunk_index=c["chunk_index"],
-                        content=c["content"],
-                        embedding=c["embedding"],
-                        chunk_metadata=c["metadata"],
+                # ── 3b: Listing extraction (only if flag set) ─────────────
+                if extract_listings:
+                    extracted = await extract_listings_from_page(
+                        page_text, openai_service, source_url=page_url
                     )
-                    for c in embedded_chunks
-                ]
-                await repo.bulk_create_chunks(db, chunks=chunk_rows)
-
-                await repo.update_document(
-                    db, doc=doc,
-                    status=DocStatus.READY,
-                    chunk_count=len(chunk_rows),
-                )
-                await db.commit()
-
-                pages_processed += 1
+                    for item in extracted:
+                        external_id = f"{crawl_job_id}::{page_url}::{item.get('title', '')}"
+                        # Check existence first so we can assign public_id correctly
+                        existing = await repo.get_listing_by_external_id(
+                            db, tenant_id=tenant_id, external_id=external_id
+                        )
+                        listing, created = await repo.upsert_listing(
+                            db,
+                            tenant_id=tenant_id,
+                            external_id=external_id,
+                            crawl_job_id=crawl_job_id,
+                            source=ListingSource.CRAWLED.value,
+                            title=item.get("title") or page_url,
+                            listing_type=item.get("listing_type", "sale"),
+                            status=item.get("status", "active"),
+                            description=item.get("description"),
+                            price=item.get("price"),
+                            price_display=item.get("price_display"),
+                            currency=item.get("currency", "AUD"),
+                            street=item.get("street"),
+                            suburb=item.get("suburb"),
+                            state=item.get("state"),
+                            postcode=item.get("postcode"),
+                            bedrooms=item.get("bedrooms"),
+                            bathrooms=item.get("bathrooms"),
+                            garages=item.get("garages"),
+                            land_sqm=item.get("land_sqm"),
+                            house_sqm=item.get("house_sqm"),
+                            has_pool=item.get("has_pool", False),
+                            raw_data=item.get("raw_data", {}),
+                            public_id=_new_public_id() if not existing else existing.public_id,
+                        )
+                        await db.commit()
+                        embed_listing.apply_async(
+                            kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
+                            queue=QUEUEEnum.ANALYSIS.value,
+                        )
 
             except Exception as exc:
                 logger.error(f"Failed to process page {page_url}: {exc}")
@@ -264,7 +300,6 @@ async def _crawl_and_embed_async(
             await _flip_rag_if_needed(
                 db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id
             )
-            # Track pages_crawled usage
             await _increment_usage(
                 db, tenant_id=tenant_id,
                 metric=UsageMetric.PAGES_CRAWLED,
@@ -669,7 +704,100 @@ async def _clear_listing_embedding_async(*, listing_id: int, tenant_id: int) -> 
 
 
 # =============================================================================
-# TASK F — RECOVER STUCK CRAWL JOBS
+# TASK F — PROCESS EXCEL LISTING UPLOAD
+# =============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.chatbot.tasks.process_listing_excel",
+    max_retries=settings.CELERY_MAX_TRIES,
+    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def process_listing_excel(self, *, document_id: int, tenant_id: int) -> str:
+    """
+    Parse an uploaded Excel file and upsert each row as a Listing row,
+    then trigger embed_listing for each one.
+    """
+    try:
+        _run(_process_listing_excel_async(document_id=document_id, tenant_id=tenant_id))
+        return f"process_listing_excel completed for document_id={document_id}"
+    except Exception as exc:
+        countdown = 2 ** self.request.retries
+        logger.error(f"process_listing_excel failed for doc_id={document_id}: {exc}. Retrying in {countdown}s.")
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+async def _process_listing_excel_async(*, document_id: int, tenant_id: int) -> None:
+    from app.modules.chatbot.parsers.excel_parser import parse_excel_listings
+
+    async with get_task_db_session() as db:
+        doc = await repo.get_document(db, tenant_id=tenant_id, document_id=document_id)
+        if not doc:
+            logger.error(f"Excel document {document_id} not found.")
+            return
+
+        await repo.update_document(db, doc=doc, status=DocStatus.PROCESSING)
+        await db.commit()
+
+        try:
+            file_bytes = bytes(doc.file_data) if doc.file_data else b""
+            rows = parse_excel_listings(file_bytes)
+        except Exception as exc:
+            await repo.update_document(
+                db, doc=doc, status=DocStatus.FAILED,
+                error_message=f"Excel parse error: {exc}",
+            )
+            await db.commit()
+            raise
+
+        upserted = 0
+        for item in rows:
+            external_id = f"excel::{document_id}::{item.get('title', '')}::{item.get('suburb', '')}"
+            existing = await repo.get_listing_by_external_id(
+                db, tenant_id=tenant_id, external_id=external_id
+            )
+            listing, created = await repo.upsert_listing(
+                db,
+                tenant_id=tenant_id,
+                external_id=external_id,
+                source=ListingSource.MANUAL.value,
+                title=item.get("title", "Untitled"),
+                listing_type=item.get("listing_type", "sale"),
+                status=item.get("status", "active"),
+                description=item.get("description"),
+                price=item.get("price"),
+                price_display=item.get("price_display"),
+                currency=item.get("currency", "AUD"),
+                street=item.get("street"),
+                suburb=item.get("suburb"),
+                state=item.get("state"),
+                postcode=item.get("postcode"),
+                bedrooms=item.get("bedrooms"),
+                bathrooms=item.get("bathrooms"),
+                garages=item.get("garages"),
+                land_sqm=item.get("land_sqm"),
+                house_sqm=item.get("house_sqm"),
+                has_pool=item.get("has_pool", False),
+                raw_data=item.get("raw_data", {}),
+                public_id=_new_public_id() if not existing else existing.public_id,
+            )
+            await db.commit()
+            embed_listing.apply_async(
+                kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
+                queue=QUEUEEnum.ANALYSIS.value,
+            )
+            upserted += 1
+
+        await repo.update_document(
+            db, doc=doc, status=DocStatus.READY, chunk_count=upserted
+        )
+        await db.commit()
+        logger.info(f"Excel document {document_id}: upserted {upserted} listings.")
+
+
+# =============================================================================
+# TASK G — RECOVER STUCK CRAWL JOBS
 # =============================================================================
 
 

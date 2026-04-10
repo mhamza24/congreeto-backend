@@ -256,6 +256,89 @@ def build_listing_embed_text(listing: Any) -> str:
     return " | ".join(p for p in parts if p)
 
 
+# =============================================================================
+# LISTING EXTRACTION FROM CRAWLED PAGE TEXT
+# =============================================================================
+
+_LISTING_EXTRACT_PROMPT = """\
+You are a data extraction assistant for a real-estate platform.
+
+Given the text scraped from a property listing webpage, extract all property listings you can find.
+Return a JSON array. Each element must have these fields (use null when unknown):
+{
+  "title": "string — property title or address",
+  "listing_type": "sale | rent",
+  "status": "active | sold | leased",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "string like $1,200,000 or $450/week or null",
+  "currency": "AUD",
+  "street": "string or null",
+  "suburb": "string or null",
+  "state": "string or null",
+  "postcode": "string or null",
+  "bedrooms": integer or null,
+  "bathrooms": integer or null,
+  "garages": integer or null,
+  "land_sqm": float or null,
+  "house_sqm": float or null,
+  "has_pool": true | false
+}
+
+If the page contains NO property listings, return an empty array: []
+Return ONLY the JSON array, no explanation.
+
+PAGE TEXT:
+"""
+
+
+async def extract_listings_from_page(
+    page_text: str,
+    openai_service: Any,
+    source_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Ask the LLM to extract structured listing data from a scraped page.
+    Returns a (possibly empty) list of listing dicts.
+    Failures are caught and logged — never raise, just return [].
+    """
+    import json
+
+    # Don't waste tokens on very short pages
+    if len(page_text.strip()) < 100:
+        return []
+
+    # Truncate to avoid hitting context limits (~12k chars ≈ 3k tokens)
+    truncated = page_text[:12000]
+    prompt = _LISTING_EXTRACT_PROMPT + truncated
+
+    try:
+        raw = await openai_service.openai_call_conversation(
+            messages=[{"role": "user", "content": prompt}],
+            system_instructions="You extract structured property listing data from webpage text. Return only valid JSON.",
+        )
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        listings = json.loads(raw)
+        if not isinstance(listings, list):
+            return []
+
+        # Attach source_url for traceability
+        for item in listings:
+            if source_url:
+                item.setdefault("raw_data", {})["source_url"] = source_url
+
+        logger.info(f"Listing extraction: found {len(listings)} listings from {source_url or 'page'}")
+        return listings
+
+    except Exception as exc:
+        logger.warning(f"Listing extraction failed for {source_url}: {exc}")
+        return []
+
+
 def clean_html_text(raw: str) -> str:
     """
     Remove excess whitespace and noise lines from scraped HTML text.

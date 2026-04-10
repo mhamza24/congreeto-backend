@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -8,7 +7,6 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import SlugExistError
-from app.core.redis import redis_client
 from app.modules.auth import repository as auth_repo
 from app.modules.tenants import repository as repo
 from app.modules.tenants import schemas
@@ -223,6 +221,12 @@ async def invite_user(
     Admin/owner invites a new user.
     Gate 3: seat limit enforced from active plan + addon grants.
     Purchase extra_users addon to raise the limit.
+
+    Resend rate-limit (per email+tenant, rolling 24h window):
+      1st send  → no delay
+      2nd send  → must wait 30 minutes after the 1st
+      3rd send  → must wait 2 hours after the 2nd
+      4th send+ → locked for 24 hours from the 1st send in the window
     """
     tu = caller_tu
     if not tu.is_owner_or_admin:
@@ -264,6 +268,12 @@ async def invite_user(
         )
         invitee = await user_repo.create_user(db, user=invitee)
 
+    # Resend rate-limit check
+    recent_invites = await repo.get_invites_last_24h(
+        db, tenant_id=tenant.id, invitee_user_id=invitee.id
+    )
+    _check_invite_rate_limit(recent_invites)
+
     # Create OTP record in DB (same table used by email verification)
     # expires_in_minutes = 72h * 60 = 4320 min
     raw_otp = await auth_repo.create_otp(
@@ -273,20 +283,22 @@ async def invite_user(
         expires_in_minutes = INVITE_TTL_HOURS * 60,
     )
 
-    # Store invite metadata in Redis keyed by otp_hash for fast accept lookup
-    otp_hash = hash_otp(raw_otp)
-    await redis_client.set(
-        f"invite_otp:{otp_hash}",
-        json.dumps({
-            "user_id":          invitee.id,
-            "tenant_public_id": tenant.public_id,
-            "role":             payload.role.value,
-            "invited_by_id":    caller_tu.user_id,
-        }),
-        ex=INVITE_TTL_HOURS * 3600,
+    # Store invite metadata in DB (tenant, role, invited_by) — replaces Redis
+    otp_record = await auth_repo.get_active_otp(
+        db, user_id=invitee.id, purpose=OTPPurpose.TENANT_INVITE
     )
+    await repo.create_invite(
+        db,
+        tenant_id=tenant.id,
+        invitee_user_id=invitee.id,
+        invited_by_user_id=caller_tu.user_id,
+        role=payload.role,
+        otp_id=otp_record.id,
+        expires_at=expires_at,
+    )
+    await db.commit()
 
-    invite_link = f"{settings.FRONTEND_URL}/invite/accept?otp={raw_otp}"
+    invite_link = f"{settings.FRONTEND_URL}/invite/accept?code={raw_otp}"
     celery_task = background_tasks.send_invite_email_task.delay(
         to           = payload.email,
         first_name   = invitee.first_name or payload.email.split("@")[0],
@@ -310,23 +322,10 @@ async def accept_invite(
     *,
     payload: schemas.AcceptInviteRequest,
 ) -> schemas.AcceptInviteResponse:
-    # 1. Fast Redis lookup — get invite metadata by hashed OTP
+    # 1. Look up OTP record by hash — no Redis needed
     otp_hash = hash_otp(payload.code)
-    raw_data = await redis_client.get(f"invite_otp:{otp_hash}")
-    if not raw_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired invite link.",
-        )
-
-    invite_data  = json.loads(raw_data)
-    user_id      = invite_data["user_id"]
-    role         = TenantRole(invite_data["role"])
-    invited_by_id = invite_data.get("invited_by_id")
-
-    # 2. Verify OTP against DB record — handles attempts + consumed_at
-    otp_record = await auth_repo.get_active_otp(
-        db, user_id=user_id, purpose=OTPPurpose.TENANT_INVITE
+    otp_record = await auth_repo.get_active_otp_by_hash(
+        db, code_hash=otp_hash, purpose=OTPPurpose.TENANT_INVITE
     )
     if otp_record is None:
         raise HTTPException(
@@ -334,6 +333,19 @@ async def accept_invite(
             detail="Invalid or expired invite link.",
         )
 
+    # 2. Load invite metadata from DB
+    invite = await repo.get_invite_by_otp_id(db, otp_id=otp_record.id)
+    if invite is None or invite.consumed_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired invite link.",
+        )
+
+    user_id       = invite.invitee_user_id
+    role          = invite.role
+    invited_by_id = invite.invited_by_user_id
+
+    # 3. Verify OTP — marks consumed_at on success, increments attempts on failure
     is_valid = await auth_repo.verify_otp(db, record=otp_record, raw_code=payload.code)
     if not is_valid:
         raise HTTPException(
@@ -341,12 +353,12 @@ async def accept_invite(
             detail="Invalid or expired invite link.",
         )
 
-    # 3. Consume Redis key — single use
-    await redis_client.delete(f"invite_otp:{otp_hash}")
+    # 4. Mark invite consumed
+    await repo.consume_invite(db, invite=invite)
 
-    # 4. Load tenant, verify it's still active, and re-check seat limit at acceptance time
-    tenant = await _get_tenant_or_404(db, public_id=invite_data["tenant_public_id"])
-    if tenant.status in (TenantStatus.SUSPENDED, TenantStatus.CANCELLED):
+    # 5. Load tenant, verify it's still active, and re-check seat limit at acceptance time
+    tenant = await repo.get_tenant_by_id(db, id=invite.tenant_id)
+    if tenant is None or tenant.status in (TenantStatus.SUSPENDED, TenantStatus.CANCELLED):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This tenant account is no longer active.",
@@ -361,7 +373,7 @@ async def accept_invite(
             ),
         )
 
-    # 5. Load the pre-created invited user
+    # 6. Load the pre-created invited user
     user = await user_repo.get_user_by_id(db, id=user_id)
 
     if await repo.is_member(db, tenant_id=tenant.id, user_id=user.id):
@@ -370,7 +382,7 @@ async def accept_invite(
             detail="You are already a member of this team.",
         )
 
-    # 6. If user is still in INVITED state, activate them with submitted profile
+    # 7. If user is still in INVITED state, activate them with submitted profile
     if user.status == UserStatus.INVITED:
         user.first_name        = payload.first_name
         user.last_name         = payload.last_name
@@ -379,7 +391,7 @@ async def accept_invite(
         user.email_verified_at = datetime.now(timezone.utc)
         await db.flush()
 
-    # 7. Add to tenant
+    # 8. Add to tenant
     db.add(
         TenantUser(
             tenant_id  = tenant.id,
@@ -515,6 +527,52 @@ async def remove_member(
 # =============================================================================
 # PRIVATE HELPERS
 # =============================================================================
+
+
+def _check_invite_rate_limit(recent_invites: list) -> None:
+    """
+    Enforces invite resend rate-limiting based on sends in the last 24 hours.
+
+    Rules (rolling 24h window):
+      count == 0 → allow (first send)
+      count == 1 → allow only if last send was > 30 minutes ago
+      count == 2 → allow only if last send was > 2 hours ago
+      count >= 3 → locked; tell caller when 24h window resets
+    """
+    count = len(recent_invites)
+    if count == 0:
+        return
+
+    now = datetime.now(timezone.utc)
+    # recent_invites is ordered most-recent first
+    last_sent = recent_invites[0].sent_at
+
+    if count >= 3:
+        # Locked until the oldest of the 3 sends ages out of the 24h window
+        oldest_sent = recent_invites[-1].sent_at
+        lock_until = oldest_sent + timedelta(hours=24)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Invite limit reached (3 sends in 24 hours). "
+                f"You can send again after {lock_until.strftime('%Y-%m-%d %H:%M UTC')}."
+            ),
+        )
+
+    if count == 2:
+        delay = timedelta(hours=2)
+    else:  # count == 1
+        delay = timedelta(minutes=30)
+
+    earliest_resend = last_sent + delay
+    if now < earliest_resend:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Please wait before resending. "
+                f"You can resend after {earliest_resend.strftime('%Y-%m-%d %H:%M UTC')}."
+            ),
+        )
 
 async def _get_tenant_or_404(db: AsyncSession, *, public_id: str) -> Tenant:
     tenant = await repo.get_tenant_by_public_id(db, public_id=public_id)

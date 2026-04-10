@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
 from typing import List, Optional
 
 from fastapi import HTTPException, status

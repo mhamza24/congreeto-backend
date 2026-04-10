@@ -101,6 +101,32 @@ async def verify_otp(
 
 # ── Read operations ───────────────────────────────────────────────────────────
 
+async def get_active_otp_by_hash(
+    db: AsyncSession,
+    *,
+    code_hash: str,
+    purpose: OTPPurpose,
+) -> Optional[OTPVerification]:
+    """
+    Looks up an active OTP by its stored hash and purpose.
+    Used by accept_invite to resolve user_id without a Redis lookup.
+    """
+    result = await db.execute(
+        select(OTPVerification)
+        .where(
+            and_(
+                OTPVerification.code_hash == code_hash,
+                OTPVerification.purpose == purpose,
+                OTPVerification.consumed_at.is_(None),
+                OTPVerification.expires_at > datetime.now(timezone.utc),
+                OTPVerification.attempts < OTPVerification.max_attempts,
+            )
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_active_otp(
     db: AsyncSession,
     *,
