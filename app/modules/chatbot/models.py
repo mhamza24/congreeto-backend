@@ -22,6 +22,7 @@ from app.core.enums import (
     DocStatus, doc_status_enum,
     ListingSource, ListingStatus, ListingType,
     listing_source_enum, listing_status_enum, listing_type_enum,
+    UploadJobStatus, upload_job_status_enum,
 )
 
 if TYPE_CHECKING:
@@ -553,3 +554,54 @@ class ChatbotAsset(Base, PublicIdMixin):
 
     def __repr__(self) -> str:
         return f"<ChatbotAsset id={self.id} type={self.asset_type} chatbot={self.chatbot_config_id}>"
+
+
+# =============================================================================
+# LISTING UPLOAD JOBS  (background file import tracking)
+# =============================================================================
+
+class ListingUploadJob(Base, TimestampMixin):
+    __tablename__ = "listing_upload_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    public_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True,
+        comment="External ID exposed in API responses."
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_type: Mapped[str] = mapped_column(
+        String(10), nullable=False, comment="'xlsx', 'xls', or 'csv'"
+    )
+
+    # Blob now, S3/GCS later
+    file_data: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True, default=None,
+        comment="Raw file bytes. NULL after migrating to S3."
+    )
+    storage_path: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True, default=None,
+        comment="S3/GCS object key. NULL while using file_data."
+    )
+
+    status: Mapped[UploadJobStatus] = mapped_column(
+        upload_job_status_enum, nullable=False,
+        default=UploadJobStatus.QUEUED, server_default=text("'queued'")
+    )
+    total_rows: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    processed_rows: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+
+    __table_args__ = (
+        Index("ix_listing_upload_jobs_tenant", "tenant_id"),
+        Index("ix_listing_upload_jobs_status", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ListingUploadJob id={self.id} file={self.filename!r} status={self.status}>"

@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from app.core.db_base import Base
 from app.modules.chat.models import Conversation, Message, ConversationInsights
 from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, AffiliationInquiry
-from app.modules.chatbot.models import ChatbotConfig, WidgetTheme, KnowledgeSource, CrawlJob, Document, DocumentChunk, Listing, ChatbotAsset
+from app.modules.chatbot.models import ChatbotConfig, WidgetTheme, KnowledgeSource, CrawlJob, Document, DocumentChunk, Listing, ChatbotAsset, ListingUploadJob
 from app.modules.users.models import User
 from app.modules.models.otp import OTPVerification
 from app.modules.models.tenant_user import TenantUser

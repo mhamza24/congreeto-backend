@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chatbot.models import Listing
@@ -57,6 +57,28 @@ async def list_listings(
     q = q.order_by(Listing.updated_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
     return result.scalars().all()
+
+
+async def count_listings(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    suburb: Optional[str] = None,
+    listing_type: Optional[str] = None,
+    status_filter: Optional[str] = None,
+) -> int:
+    q = select(func.count()).select_from(Listing).where(
+        Listing.tenant_id == tenant_id,
+        Listing.deleted_at.is_(None),
+    )
+    if suburb:
+        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
+    if listing_type:
+        q = q.where(Listing.listing_type == listing_type)
+    if status_filter:
+        q = q.where(Listing.status == status_filter)
+    result = await db.execute(q)
+    return result.scalar_one()
 
 
 async def create_listing(

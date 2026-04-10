@@ -26,7 +26,7 @@ from app.config.celery_worker import celery_app, QUEUEEnum
 from app.config.settings import get_settings
 from app.core.database import get_task_db_session
 from app.core.db_base import _new_public_id
-from app.core.enums import CrawlStatus, DocStatus, ListingSource, UsageMetric
+from app.core.enums import CrawlStatus, DocStatus, ListingSource, UploadJobStatus, UsageMetric
 from app.modules.billing import repository as billing_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot.models import DocumentChunk
@@ -704,96 +704,214 @@ async def _clear_listing_embedding_async(*, listing_id: int, tenant_id: int) -> 
 
 
 # =============================================================================
-# TASK F — PROCESS EXCEL LISTING UPLOAD
+# TASK F — PROCESS LISTING FILE UPLOAD (Excel or CSV, LLM-parsed, background)
 # =============================================================================
 
 @celery_app.task(
     bind=True,
-    name="app.modules.chatbot.tasks.process_listing_excel",
+    name="app.modules.chatbot.tasks.process_listing_file",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
 )
-def process_listing_excel(self, *, document_id: int, tenant_id: int) -> str:
+def process_listing_file(self, *, job_id: int, tenant_id: int) -> str:
     """
-    Parse an uploaded Excel file and upsert each row as a Listing row,
-    then trigger embed_listing for each one.
+    Background task: parse an uploaded Excel or CSV listing file with LLM normalization,
+    then upsert each listing row in batches and trigger embed_listing for each one.
     """
     try:
-        _run(_process_listing_excel_async(document_id=document_id, tenant_id=tenant_id))
-        return f"process_listing_excel completed for document_id={document_id}"
+        _run(_process_listing_file_async(job_id=job_id, tenant_id=tenant_id))
+        return f"process_listing_file completed for job_id={job_id}"
     except Exception as exc:
         countdown = 2 ** self.request.retries
-        logger.error(f"process_listing_excel failed for doc_id={document_id}: {exc}. Retrying in {countdown}s.")
+        logger.error(
+            f"process_listing_file failed for job_id={job_id}: {exc}. "
+            f"Retrying in {countdown}s."
+        )
         raise self.retry(exc=exc, countdown=countdown)
 
 
-async def _process_listing_excel_async(*, document_id: int, tenant_id: int) -> None:
+async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
     from app.modules.chatbot.parsers.excel_parser import parse_excel_listings
+    from app.modules.chatbot.parsers.csv_parser import parse_csv_listings
+    from app.modules.chatbot.task_helpers import parse_listings_from_table
+    from app.modules.open_ai import service as openai_service
+
+    _BATCH_SIZE = 20  # listings committed per DB transaction
 
     async with get_task_db_session() as db:
-        doc = await repo.get_document(db, tenant_id=tenant_id, document_id=document_id)
-        if not doc:
-            logger.error(f"Excel document {document_id} not found.")
+        job = await repo.get_listing_upload_job(db, tenant_id=tenant_id, job_id=job_id)
+        if not job:
+            logger.error(f"ListingUploadJob {job_id} not found.")
             return
 
-        await repo.update_document(db, doc=doc, status=DocStatus.PROCESSING)
+        await repo.update_listing_upload_job(db, job=job, status=UploadJobStatus.PROCESSING)
         await db.commit()
 
+        # ── Step 1: Fetch file bytes ──────────────────────────────────────
         try:
-            file_bytes = bytes(doc.file_data) if doc.file_data else b""
-            rows = parse_excel_listings(file_bytes)
+            file_bytes = _get_listing_file_bytes(job)
         except Exception as exc:
-            await repo.update_document(
-                db, doc=doc, status=DocStatus.FAILED,
-                error_message=f"Excel parse error: {exc}",
+            await repo.update_listing_upload_job(
+                db, job=job, status=UploadJobStatus.FAILED,
+                error_message=f"Could not fetch file: {exc}",
             )
             await db.commit()
             raise
 
-        upserted = 0
-        for item in rows:
-            external_id = f"excel::{document_id}::{item.get('title', '')}::{item.get('suburb', '')}"
-            existing = await repo.get_listing_by_external_id(
-                db, tenant_id=tenant_id, external_id=external_id
-            )
-            listing, created = await repo.upsert_listing(
-                db,
-                tenant_id=tenant_id,
-                external_id=external_id,
-                source=ListingSource.MANUAL.value,
-                title=item.get("title", "Untitled"),
-                listing_type=item.get("listing_type", "sale"),
-                status=item.get("status", "active"),
-                description=item.get("description"),
-                price=item.get("price"),
-                price_display=item.get("price_display"),
-                currency=item.get("currency", "AUD"),
-                street=item.get("street"),
-                suburb=item.get("suburb"),
-                state=item.get("state"),
-                postcode=item.get("postcode"),
-                bedrooms=item.get("bedrooms"),
-                bathrooms=item.get("bathrooms"),
-                garages=item.get("garages"),
-                land_sqm=item.get("land_sqm"),
-                house_sqm=item.get("house_sqm"),
-                has_pool=item.get("has_pool", False),
-                raw_data=item.get("raw_data", {}),
-                public_id=_new_public_id() if not existing else existing.public_id,
+        # ── Step 2: Parse file ────────────────────────────────────────────
+        try:
+            if job.file_type in ("xlsx", "xls"):
+                raw_rows = parse_excel_listings(file_bytes)
+            else:
+                raw_rows = parse_csv_listings(file_bytes)
+        except Exception as exc:
+            await repo.update_listing_upload_job(
+                db, job=job, status=UploadJobStatus.FAILED,
+                error_message=f"File parse error: {exc}",
             )
             await db.commit()
-            embed_listing.apply_async(
-                kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
-                queue=QUEUEEnum.ANALYSIS.value,
-            )
-            upserted += 1
+            raise
 
-        await repo.update_document(
-            db, doc=doc, status=DocStatus.READY, chunk_count=upserted
+        total_rows = len(raw_rows)
+        await repo.update_listing_upload_job(db, job=job, total_rows=total_rows)
+        await db.commit()
+
+        if not raw_rows:
+            await repo.update_listing_upload_job(db, job=job, status=UploadJobStatus.COMPLETED)
+            await db.commit()
+            logger.info(f"ListingUploadJob {job_id}: file is empty, nothing to import.")
+            return
+
+        # ── Step 3: LLM normalization ─────────────────────────────────────
+        try:
+            structured_rows = await parse_listings_from_table(raw_rows, openai_service)
+        except Exception as exc:
+            logger.warning(
+                f"ListingUploadJob {job_id}: LLM normalization failed ({exc}), "
+                "falling back to raw parsed rows."
+            )
+            structured_rows = raw_rows
+
+        # ── Step 4: Upsert in batches ─────────────────────────────────────
+        # Each batch: 1 SELECT (bulk existence check) + 1 flush + 1 commit
+        # instead of N SELECTs + N flushes + N commits.
+        processed = 0
+        _VALID_STATUSES = {"active", "inactive", "sold", "leased"}
+        _VALID_TYPES = {"sale", "rent"}
+
+        for i in range(0, len(structured_rows), _BATCH_SIZE):
+            batch = structured_rows[i: i + _BATCH_SIZE]
+
+            # ── 4a: Normalize + build external_ids for the whole batch ────
+            normalized: list[dict] = []
+            for item in batch:
+                raw_status = str(item.get("status") or "active").strip().lower()
+                raw_type = str(item.get("listing_type") or "sale").strip().lower()
+                external_id = (
+                    f"upload::{job_id}::{item.get('title', '')}"
+                    f"::{item.get('suburb', '')}"
+                )
+                normalized.append({
+                    "item": item,
+                    "external_id": external_id,
+                    "status": raw_status if raw_status in _VALID_STATUSES else "active",
+                    "listing_type": raw_type if raw_type in _VALID_TYPES else "sale",
+                    "currency": str(item.get("currency") or "AUD").strip().upper(),
+                })
+
+            # ── 4b: ONE query for all existing listings in this batch ─────
+            existing_map = await repo.get_listings_by_external_ids(
+                db,
+                tenant_id=tenant_id,
+                external_ids=[n["external_id"] for n in normalized],
+            )
+
+            # ── 4c: Apply updates / create new rows in memory ─────────────
+            upserted_listings: list = []
+            for row_num, n in enumerate(normalized, start=i):
+                item = n["item"]
+                external_id = n["external_id"]
+                existing = existing_map.get(external_id)
+                fields = dict(
+                    source=ListingSource.MANUAL.value,
+                    title=item.get("title") or "Untitled",
+                    listing_type=n["listing_type"],
+                    status=n["status"],
+                    description=item.get("description"),
+                    price=item.get("price"),
+                    price_display=item.get("price_display"),
+                    currency=n["currency"],
+                    street=item.get("street"),
+                    suburb=item.get("suburb"),
+                    state=item.get("state"),
+                    postcode=item.get("postcode"),
+                    bedrooms=item.get("bedrooms"),
+                    bathrooms=item.get("bathrooms"),
+                    garages=item.get("garages"),
+                    land_sqm=item.get("land_sqm"),
+                    house_sqm=item.get("house_sqm"),
+                    has_pool=bool(item.get("has_pool", False)),
+                    raw_data=item.get("raw_data", {}),
+                )
+                try:
+                    if existing:
+                        for key, value in fields.items():
+                            if value is not None:
+                                setattr(existing, key, value)
+                        upserted_listings.append(existing)
+                    else:
+                        listing, _ = await repo.upsert_listing(
+                            db,
+                            tenant_id=tenant_id,
+                            external_id=external_id,
+                            public_id=_new_public_id(),
+                            **fields,
+                        )
+                        upserted_listings.append(listing)
+                    processed += 1
+                except Exception as exc:
+                    logger.error(
+                        f"ListingUploadJob {job_id}: failed to upsert row {row_num}: {exc}"
+                    )
+
+            # ── 4d: ONE flush + commit for the entire batch ───────────────
+            await db.flush()
+            await db.commit()
+
+            # ── 4e: Queue embed tasks after commit (ids are stable) ───────
+            for listing in upserted_listings:
+                embed_listing.apply_async(
+                    kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+
+            await repo.update_listing_upload_job(db, job=job, processed_rows=processed)
+            await db.commit()
+
+        # ── Step 5: Finalize ──────────────────────────────────────────────
+        await repo.update_listing_upload_job(
+            db, job=job, status=UploadJobStatus.COMPLETED, processed_rows=processed
         )
         await db.commit()
-        logger.info(f"Excel document {document_id}: upserted {upserted} listings.")
+        logger.info(
+            f"ListingUploadJob {job_id}: completed. "
+            f"processed={processed}/{total_rows}"
+        )
+
+
+def _get_listing_file_bytes(job: Any) -> bytes:
+    """Retrieve raw file bytes from wherever they live. Blob now, S3/GCS later."""
+    if job.file_data:
+        return bytes(job.file_data)
+    if job.storage_path:
+        # TODO: swap in S3/GCS fetch when migrating off blob storage
+        raise NotImplementedError(
+            f"S3/GCS fetch not yet implemented. storage_path={job.storage_path}"
+        )
+    raise ValueError(
+        f"ListingUploadJob {job.id} has neither file_data nor storage_path."
+    )
 
 
 # =============================================================================
