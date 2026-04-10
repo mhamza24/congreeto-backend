@@ -566,11 +566,13 @@ def _check_invite_rate_limit(recent_invites: list) -> None:
 
     earliest_resend = last_sent + delay
     if now < earliest_resend:
+        wait_minutes = int((earliest_resend - now).total_seconds() / 60) + 1
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
                 f"Please wait before resending. "
-                f"You can resend after {earliest_resend.strftime('%Y-%m-%d %H:%M UTC')}."
+                f"You can resend after {earliest_resend.strftime('%Y-%m-%d %H:%M UTC')} "
+                f"({wait_minutes} minute{'s' if wait_minutes != 1 else ''} remaining)."
             ),
         )
 
