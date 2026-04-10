@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -25,7 +26,7 @@ def upgrade() -> None:
     sa.Column('tenant_id', sa.BigInteger(), nullable=False),
     sa.Column('invitee_user_id', sa.BigInteger(), nullable=False),
     sa.Column('invited_by_user_id', sa.BigInteger(), nullable=True),
-    sa.Column('role', sa.Enum('owner', 'admin', 'agent', 'viewer', name='tenant_role'), nullable=False),
+    sa.Column('role', postgresql.ENUM('owner', 'admin', 'agent', 'viewer', name='tenant_role', create_type=False), nullable=False),
     sa.Column('otp_id', sa.BigInteger(), nullable=True),
     sa.Column('sent_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False, comment='When this invite email was dispatched. Used for 72h resend restriction.'),
     sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
