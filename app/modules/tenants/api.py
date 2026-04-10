@@ -166,13 +166,15 @@ async def update_tenant_status(
 async def list_members(
     db: DBDep,
     ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
     role: Optional[TenantRole] = Query(None, description="Filter by role"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ) -> ApiResponse[schemas.MemberListResponse]:
     try:
         result = await service.list_members(
-            db, tenant=ctx.tenant, role=role, skip=skip, limit=limit,
+            db, tenant=ctx.tenant, caller_tu=ctx.membership,
+            caller_user=current_user, role=role, skip=skip, limit=limit,
         )
     except HTTPException:
         raise

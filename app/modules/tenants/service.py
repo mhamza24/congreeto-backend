@@ -194,6 +194,8 @@ async def list_members(
     db: AsyncSession,
     *,
     tenant: Tenant,
+    caller_tu: Optional[TenantUser] = None,
+    caller_user=None,
     role: Optional[TenantRole] = None,
     skip: int = 0,
     limit: int = 50,
@@ -220,9 +222,28 @@ async def list_members(
         member_responses.append(_build_pending_invite_response(invite))
         pending_count += 1
 
+    # Build the caller's own membership entry so the frontend knows "which one is me"
+    me = None
+    if caller_tu is not None and caller_user is not None:
+        me = schemas.TenantMemberResponse(
+            public_id=str(caller_tu.public_id),
+            role=caller_tu.role,
+            status=caller_tu.status,
+            is_primary_owner=caller_tu.is_primary_owner,
+            joined_at=caller_tu.joined_at,
+            created_at=caller_tu.created_at,
+            user_public_id=caller_user.public_id,
+            user_last_login=caller_user.last_login_at,
+            email=caller_user.email,
+            first_name=caller_user.first_name,
+            last_name=caller_user.last_name,
+            avatar_url=caller_user.avatar_url,
+        )
+
     return schemas.MemberListResponse(
         total=total + pending_count,
         **seat_info,
+        me=me,
         members=member_responses,
     )
 

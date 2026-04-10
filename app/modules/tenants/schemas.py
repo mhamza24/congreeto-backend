@@ -182,6 +182,7 @@ class MemberListResponse(BaseModel):
     seats_used:      int
     seats_total:     int
     seats_remaining: int
+    me:              Optional[TenantMemberResponse]
     members:         List[TenantMemberResponse]
 
 
