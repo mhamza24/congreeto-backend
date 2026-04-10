@@ -41,20 +41,36 @@ OPENAI_CALL_PARAMS = {
 }
 
 async def openai_call_conversation(messages: list, system_instructions: str) -> str:
+    """Legacy wrapper — returns content string only. Use openai_call_with_usage for new code."""
+    content, _ = await openai_call_with_usage(messages, system_instructions)
+    return content
+
+
+async def openai_call_with_usage(
+    messages: list,
+    system_instructions: str,
+) -> tuple[str, int]:
+    """
+    Call the LLM and return (cleaned_content, total_tokens_used).
+
+    total_tokens_used is the sum of prompt + completion tokens reported by the
+    API. This value is used to update usage records for billing enforcement.
+    Returns 0 for tokens if the API call fails.
+    """
     try:
         response = await async_client.chat.completions.create(
             messages=[
-                {"role": "system", "content":
-                    system_instructions},
-                *messages,  # spread the full history including current user message
+                {"role": "system", "content": system_instructions},
+                *messages,
             ],
-            **OPENAI_CALL_PARAMS
+            **OPENAI_CALL_PARAMS,
         )
         cleaned_response = clean_response_helper(response.choices[0].message.content)
-        return cleaned_response
+        tokens_used = response.usage.total_tokens if response.usage else 0
+        return cleaned_response, tokens_used
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
-        return "Sorry, I could not generate a response. Please try again shortly."
+        return "Sorry, I could not generate a response. Please try again shortly.", 0
 
 
 

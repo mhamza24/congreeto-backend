@@ -19,8 +19,12 @@ from app.modules.billing import repository as billing_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot import schemas
 from app.modules.chatbot import tasks as bg
+from app.utils.system_prompt_generator import build_static_system_prompt
 
 logger = logging.getLogger(__name__)
+
+# Default personality slug — used when chatbot has no explicit personality set
+_DEFAULT_PERSONALITY_SLUG = "aria"
 
 
 # =============================================================================
@@ -47,6 +51,18 @@ async def create_chatbot(
                     ),
                 )
 
+    # ── Resolve personality ───────────────────────────────────────────────────
+    personality_slug = payload.prompt_personality_slug or _DEFAULT_PERSONALITY_SLUG
+    personality = await repo.get_prompt_personality_by_slug(db, slug=personality_slug)
+    if not personality:
+        # Fallback to platform default — should always exist after migration seed
+        personality = await repo.get_prompt_personality_by_slug(db, slug=_DEFAULT_PERSONALITY_SLUG)
+
+    # ── Generate static system prompt ─────────────────────────────────────────
+    company_profile_dict = payload.company_profile.model_dump() if payload.company_profile else {}
+    personality_content = personality.personality_content if personality else {}
+    static_prompt = build_static_system_prompt(personality_content, company_profile_dict)
+
     iframe_token = uuid.uuid4().hex  # 32-char hex, no dashes — used as embed token
 
     chatbot = await repo.create_chatbot(
@@ -55,12 +71,14 @@ async def create_chatbot(
         name=payload.name,
         iframe_token=iframe_token,
         identity=payload.identity,
-        system_prompt_template=payload.system_prompt_template,
+        system_prompt_template=static_prompt,
         welcome_message=payload.welcome_message,
         auto_close_minutes=payload.auto_close_minutes,
         allowed_domains=payload.allowed_domains,
         branding=payload.branding,
         lead_capture_config=payload.lead_capture_config,
+        company_profile=company_profile_dict,
+        prompt_personality_id=personality.id if personality else None,
         public_id=_new_public_id(),
     )
 
@@ -110,7 +128,41 @@ async def update_chatbot(
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
 
-    updates = payload.model_dump(exclude_none=True)
+    updates = payload.model_dump(exclude_none=True, exclude={"company_profile", "prompt_personality_slug"})
+
+    # ── Handle company_profile update ─────────────────────────────────────────
+    new_company_profile: dict | None = None
+    if payload.company_profile is not None:
+        new_company_profile = payload.company_profile.model_dump()
+        updates["company_profile"] = new_company_profile
+
+    # ── Handle personality switch ─────────────────────────────────────────────
+    personality = None
+    if payload.prompt_personality_slug:
+        personality = await repo.get_prompt_personality_by_slug(
+            db, slug=payload.prompt_personality_slug
+        )
+        if personality:
+            updates["prompt_personality_id"] = personality.id
+
+    # ── Regenerate static prompt if personality or company_profile changed ────
+    if payload.company_profile is not None or payload.prompt_personality_slug:
+        # Load personality content if not already loaded from slug switch
+        if personality is None and chatbot.prompt_personality_id:
+            personality = await repo.get_prompt_personality_by_id(
+                db, personality_id=chatbot.prompt_personality_id
+            )
+        if personality is None:
+            personality = await repo.get_prompt_personality_by_slug(
+                db, slug=_DEFAULT_PERSONALITY_SLUG
+            )
+
+        effective_profile = new_company_profile if new_company_profile is not None else chatbot.company_profile
+        personality_content = personality.personality_content if personality else {}
+        updates["system_prompt_template"] = build_static_system_prompt(
+            personality_content, effective_profile
+        )
+
     chatbot = await repo.update_chatbot(db, chatbot=chatbot, **updates)
     await db.commit()
     await db.refresh(chatbot)
@@ -763,6 +815,19 @@ async def upload_chatbot_asset(
         file_data=file_data,
         public_id=public_id,
     )
+
+    serve_url = f"{base_url}/knowledge/assets/{public_id}"
+
+    # ── Auto-update chatbot branding with the asset URL ───────────────────────
+    # This keeps branding.logo_url / branding.avatar_url etc. always current
+    # without requiring a separate PATCH call from the frontend.
+    await repo.update_chatbot_branding_asset_url(
+        db,
+        chatbot_config_id=chatbot.id,
+        asset_type=asset_type,
+        asset_url=serve_url,
+    )
+
     await db.commit()
     await db.refresh(asset)
 
@@ -772,7 +837,7 @@ async def upload_chatbot_asset(
         file_name=asset.file_name,
         content_type=asset.content_type,
         file_size_bytes=asset.file_size_bytes,
-        serve_url=f"{base_url}/knowledge/assets/{asset.public_id}",
+        serve_url=serve_url,
         created_at=asset.created_at,
     )
 

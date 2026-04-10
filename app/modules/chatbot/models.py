@@ -31,6 +31,48 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# PROMPT PERSONALITIES  (ARIA, LEO, etc. — one row per persona)
+# =============================================================================
+
+class PromptPersonality(Base, PublicIdMixin, TimestampMixin):
+    """
+    Stores reusable chatbot personalities (ARIA, LEO, custom branded, etc.).
+    Each ChatbotConfig points to one personality via prompt_personality_id.
+    The raw personality_content JSON is the canonical source of truth;
+    ChatbotConfig.system_prompt_template is the assembled output
+    (personality + company profile) regenerated on every chatbot update.
+    """
+    __tablename__ = "prompt_personalities"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    slug: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True,
+        comment="Machine-readable key, e.g. 'aria', 'leo'. Never changes after creation."
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    personality_content: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment="Full personality JSON (tone, rules, formatting, QA pairs, etc.)"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("TRUE")
+    )
+
+    chatbots: Mapped[list["ChatbotConfig"]] = relationship(
+        "ChatbotConfig", back_populates="prompt_personality", lazy="noload"
+    )
+
+    __table_args__ = (
+        Index("ix_prompt_personalities_slug", "slug"),
+        Index("ix_prompt_personalities_active", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PromptPersonality slug={self.slug!r} active={self.is_active}>"
+
+
+# =============================================================================
 # CHATBOT CONFIGS
 # =============================================================================
 
@@ -57,7 +99,35 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         chatbot_identity_enum, nullable=False,
         default=ChatbotIdentity.WEBSITE, server_default=text("'website'")
     )
-    system_prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+
+    # ── Personality link ──────────────────────────────────────────────────────
+    prompt_personality_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("prompt_personalities.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="FK to prompt_personalities. NULL = use platform default (ARIA)."
+    )
+
+    # ── Tenant company profile (used to customise the static system prompt) ──
+    company_profile: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment=(
+            "Tenant-specific branding injected into the system prompt. "
+            "Keys: company_name, company_website, company_vision, "
+            "company_description, tagline, contact_email, contact_phone, "
+            "locations, portfolio_summary, industry."
+        )
+    )
+
+    # ── Assembled prompt (static portion — personality + company profile) ─────
+    system_prompt_template: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment=(
+            "Pre-rendered static system prompt. Regenerated whenever the chatbot "
+            "config or company_profile is updated. Dynamic parts (RAG context, "
+            "time awareness, returning-visitor recap) are appended at chat time."
+        )
+    )
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     rag_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE"),
@@ -70,13 +140,20 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
     branding: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment=(
+            "UI branding config + auto-populated asset URLs. "
+            "Keys auto-set on asset upload: logo_url, avatar_url, banner_url, etc."
+        )
     )
     lead_capture_config: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="chatbots", lazy="noload")
+    prompt_personality: Mapped["PromptPersonality | None"] = relationship(
+        "PromptPersonality", back_populates="chatbots", lazy="noload"
+    )
     themes: Mapped[list["WidgetTheme"]] = relationship(
         "WidgetTheme", back_populates="chatbot_config",
         lazy="noload", cascade="all, delete-orphan"
@@ -90,6 +167,7 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         Index("ix_chatbot_configs_tenant", "tenant_id"),
         Index("ix_chatbot_configs_iframe_token", "iframe_token"),
         Index("ix_chatbot_configs_status", "tenant_id", "status"),
+        Index("ix_chatbot_configs_personality", "prompt_personality_id"),
     )
 
     def __repr__(self) -> str:

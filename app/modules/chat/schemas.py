@@ -24,16 +24,10 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class ChatbotIdentityEnum(str, Enum):
-    website = "website"
-    veloce_demo = "veloce_demo"
-    leo_odysseynleo="leo_odysseynleo"
-
-
 class ChatMessagePair(BaseModel):
     user: str
     assistant: str
-    
+
 class AdminConsoleMessage(BaseModel):
     role: MessageRole
     content: str = Field(..., min_length=1, max_length=32_000)
@@ -45,25 +39,27 @@ class AdminConsoleMessage(BaseModel):
 
 class ChatCreateRequest(BaseModel):
     """
-    Create or continue a conversation.
+    Create or continue a conversation via an embedded widget.
+
+    The iframe_token uniquely identifies the chatbot (and its tenant) — no
+    tenant_id or chatbot_identity needed in the request body.
 
     - Omit `conversation_id` to start a new conversation.
     - Pass an existing `conversation_id` (public_id) to continue one.
     """
+    iframe_token: str = Field(
+        ..., min_length=1, max_length=64,
+        description="Chatbot embed token — uniquely identifies the chatbot and its tenant.",
+    )
     conversation_id: Optional[str] = Field(
         default=None,
         description="Public conversation ID (uuid7). Omit to start a new conversation.",
     )
     message: str = Field(..., min_length=1, max_length=32_000)
-    chatbot_identity: ChatbotIdentityEnum = Field(
-        default=ChatbotIdentityEnum.veloce_demo.value,
-        description="Main Veloce website or Veloce as a client, for system prompt",
-    )
-    tenant_id: str = Field(min_length=1, max_length=100,
-                           default="veloce",
-                           description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
     user_local_timestamp: Optional[datetime] = Field(
-        default=None, description="User's local timestamp for time-aware system prompts (optional, ISO format)")
+        default=None,
+        description="User's local timestamp for time-aware responses (ISO format).",
+    )
 
 
 
@@ -89,19 +85,15 @@ class AdminConsoleChatCreateRequest(BaseModel):
 
 
 class ChatCompleteRequest(BaseModel):
-    """
-    Complete a conversation.
-
-    - Omit `conversation_id` to start a complete conversation.
-    - Pass an existing `conversation_id` (public_id) to continue one.
-    """
+    """Complete a conversation identified by its public_id."""
     conversation_id: str = Field(
-        default=None,
-        description="Public conversation ID (uuid7). Omit to complete a  conversation.",
+        ...,
+        description="Public conversation ID (uuid7) to close.",
     )
-    tenant_id: str = Field(min_length=1, max_length=100,
-                           default="veloce",
-                           description="Tenant ID for multi-tenancy (extracted from auth in real implementation).")
+    iframe_token: str = Field(
+        ..., min_length=1, max_length=64,
+        description="Chatbot embed token — used to scope the conversation lookup.",
+    )
 
 
 

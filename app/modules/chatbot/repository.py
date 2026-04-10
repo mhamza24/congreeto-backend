@@ -24,6 +24,7 @@ from app.modules.chatbot.models import (
     KnowledgeSource,
     Listing,
     ListingUploadJob,
+    PromptPersonality,
     WidgetTheme,
 )
 from app.core.enums import CrawlStatus, DocStatus, ChatbotStatus
@@ -48,6 +49,8 @@ async def create_chatbot(
     allowed_domains: list | None = None,
     branding: dict | None = None,
     lead_capture_config: dict | None = None,
+    company_profile: dict | None = None,
+    prompt_personality_id: Optional[int] = None,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -61,6 +64,8 @@ async def create_chatbot(
         allowed_domains=allowed_domains or [],
         branding=branding or {},
         lead_capture_config=lead_capture_config or {},
+        company_profile=company_profile or {},
+        prompt_personality_id=prompt_personality_id,
         public_id=public_id,
     )
     db.add(chatbot)
@@ -100,6 +105,80 @@ async def get_chatbot_by_iframe_token(
         select(ChatbotConfig).where(ChatbotConfig.iframe_token == iframe_token)
     )
     return result.scalar_one_or_none()
+
+
+# =============================================================================
+# PROMPT PERSONALITIES
+# =============================================================================
+
+async def get_prompt_personality_by_slug(
+    db: AsyncSession, *, slug: str
+) -> Optional[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality).where(
+            PromptPersonality.slug == slug,
+            PromptPersonality.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_prompt_personality_by_id(
+    db: AsyncSession, *, personality_id: int
+) -> Optional[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality).where(PromptPersonality.id == personality_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_prompt_personalities(db: AsyncSession) -> Sequence[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality)
+        .where(PromptPersonality.is_active == True)
+        .order_by(PromptPersonality.name)
+    )
+    return result.scalars().all()
+
+
+# =============================================================================
+# CHATBOT BRANDING ASSET URL UPDATE
+# =============================================================================
+
+# Maps asset_type → the branding JSONB key that holds its URL
+_ASSET_TYPE_TO_BRANDING_KEY: dict[str, str] = {
+    "logo":        "logo_url",
+    "avatar":      "avatar_url",
+    "banner":      "banner_url",
+    "gif":         "gif_url",
+    "ribbon_icon": "ribbon_icon_url",
+}
+
+
+async def update_chatbot_branding_asset_url(
+    db: AsyncSession,
+    *,
+    chatbot_config_id: int,
+    asset_type: str,
+    asset_url: str,
+) -> None:
+    """
+    Merge the asset URL into ChatbotConfig.branding JSONB under the appropriate key.
+    Uses PostgreSQL's || operator for a single-round-trip atomic update.
+    """
+    branding_key = _ASSET_TYPE_TO_BRANDING_KEY.get(asset_type)
+    if not branding_key:
+        return  # unknown asset type — skip, don't corrupt branding
+
+    await db.execute(
+        update(ChatbotConfig)
+        .where(ChatbotConfig.id == chatbot_config_id)
+        .values(
+            branding=ChatbotConfig.branding.op("||")(
+                func.jsonb_build_object(branding_key, asset_url)
+            )
+        )
+    )
 
 
 async def list_chatbots(
