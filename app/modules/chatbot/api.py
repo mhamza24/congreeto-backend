@@ -81,6 +81,55 @@ _MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
 
 
 # =============================================================================
+# ADMIN — cross-tenant chatbot management (super admin only)
+# =============================================================================
+
+
+@router.get(
+    "/admin/chatbots",
+    response_model=ApiResponse[List[schemas.ChatbotResponse]],
+    summary="List all chatbots across all tenants (admin only)",
+)
+async def admin_list_chatbots(
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[List[schemas.ChatbotResponse]]:
+    data = await service.admin_list_chatbots(db)
+    return ApiResponse(success=True, message="OK", data=data)
+
+
+@router.patch(
+    "/admin/chatbots/{chatbot_id}/status",
+    response_model=ApiResponse[schemas.ChatbotResponse],
+    summary="Force-set chatbot status for any tenant (admin only)",
+)
+async def admin_set_chatbot_status(
+    chatbot_id: str,
+    payload: schemas.AdminChatbotStatusRequest,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.ChatbotResponse]:
+    data = await service.admin_set_chatbot_status(
+        db, chatbot_public_id=chatbot_id, new_status=payload.status
+    )
+    return ApiResponse(success=True, message=f"Chatbot status set to '{payload.status}'.", data=data)
+
+
+@router.delete(
+    "/admin/chatbots/{chatbot_id}",
+    response_model=ApiResponse[None],
+    summary="Force-delete a chatbot for any tenant (admin only)",
+)
+async def admin_delete_chatbot(
+    chatbot_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[None]:
+    await service.admin_delete_chatbot(db, chatbot_public_id=chatbot_id)
+    return ApiResponse(success=True, message="Chatbot deleted.", data=None)
+
+
+# =============================================================================
 # CHATBOT CONFIG
 # =============================================================================
 
@@ -696,55 +745,6 @@ async def create_manual_entry(
         message="Entry queued for processing.",
         data=data,
     )
-
-
-# =============================================================================
-# ADMIN — cross-tenant chatbot management (super admin only)
-# =============================================================================
-
-
-@router.get(
-    "/admin/chatbots",
-    response_model=ApiResponse[List[schemas.ChatbotResponse]],
-    summary="List all chatbots across all tenants (admin only)",
-)
-async def admin_list_chatbots(
-    db: DBDep,
-    current_user=Depends(require_superadmin),
-) -> ApiResponse[List[schemas.ChatbotResponse]]:
-    data = await service.admin_list_chatbots(db)
-    return ApiResponse(success=True, message="OK", data=data)
-
-
-@router.patch(
-    "/admin/chatbots/{chatbot_id}/status",
-    response_model=ApiResponse[schemas.ChatbotResponse],
-    summary="Force-set chatbot status for any tenant (admin only)",
-)
-async def admin_set_chatbot_status(
-    chatbot_id: str,
-    payload: schemas.AdminChatbotStatusRequest,
-    db: DBDep,
-    current_user=Depends(require_superadmin),
-) -> ApiResponse[schemas.ChatbotResponse]:
-    data = await service.admin_set_chatbot_status(
-        db, chatbot_public_id=chatbot_id, new_status=payload.status
-    )
-    return ApiResponse(success=True, message=f"Chatbot status set to '{payload.status}'.", data=data)
-
-
-@router.delete(
-    "/admin/chatbots/{chatbot_id}",
-    response_model=ApiResponse[None],
-    summary="Force-delete a chatbot for any tenant (admin only)",
-)
-async def admin_delete_chatbot(
-    chatbot_id: str,
-    db: DBDep,
-    current_user=Depends(require_superadmin),
-) -> ApiResponse[None]:
-    await service.admin_delete_chatbot(db, chatbot_public_id=chatbot_id)
-    return ApiResponse(success=True, message="Chatbot deleted.", data=None)
 
 
 # =============================================================================

@@ -81,3 +81,15 @@ class ListingResponse(BaseModel):
 class ListingImportResponse(BaseModel):
     imported: int
     filename: str
+
+
+class ListingUploadJobResponse(BaseModel):
+    public_id: str
+    filename: str
+    file_type: str
+    status: str
+    total_rows: int
+    processed_rows: int
+    error_message: Optional[str]
+
+    model_config = {"from_attributes": True}

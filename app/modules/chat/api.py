@@ -74,7 +74,7 @@ async def chat_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in chat_endpoint")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -105,7 +105,7 @@ async def admin_console_chat_endpoint(
         reply = await service.admin_console_chat( db,payload=payload)
     except Exception:
         logger.exception("Unexpected error in admin_console_chat_endpoint")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -125,23 +125,19 @@ async def admin_console_chat_endpoint(
     "/complete",
     response_model=ApiResponse[schemas.ChatCompleteResponse],
     status_code=status.HTTP_200_OK,
-    summary="Send a message (creates a new conversation if no conversation_id provided)",
+    summary="Complete (close) a conversation and trigger AI analysis",
 )
 async def chat_complete_endpoint(
     payload: schemas.ChatCompleteRequest,
     db: DBDep,
 ) -> ApiResponse[schemas.ChatCompleteResponse]:
     try:
-        task = await service.complete_conversation(
-            db,
-            payload=payload,
-        )
+        task = await service.complete_conversation(db, payload=payload)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except Exception:
-        logger.exception("Unexpected error in chat_endpoint")
-        sentry_sdk.capture_exception(Exception)
+        logger.exception("Unexpected error in chat_complete_endpoint")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -149,7 +145,7 @@ async def chat_complete_endpoint(
 
     return ApiResponse(
         success=True,
-        message="Chat complete successfully. Ai analysis initiated",
+        message="Chat completed. AI analysis initiated.",
         data=task,
     )
 
@@ -200,7 +196,7 @@ async def list_conversations_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in list_conversations_endpoint")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch conversations. Please try again later.",
@@ -244,7 +240,7 @@ async def get_conversation_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in get_conversation_endpoint")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch conversation. Please try again later.",

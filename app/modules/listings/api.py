@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
 from app.core.database import get_db
-from app.core.response import ApiResponse
+from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.modules.listings import schemas, service
 
@@ -25,10 +26,21 @@ _EXCEL_MIME_TYPES = {
     "application/octet-stream",
 }
 
+_CSV_MIME_TYPES = {
+    "text/csv",
+    "application/csv",
+    "text/plain",
+    "application/octet-stream",
+}
+
+
+# =============================================================================
+# LISTINGS — collection + create
+# =============================================================================
 
 @router.get(
     "/{tenant_public_id}/listings",
-    response_model=ApiResponse[List[schemas.ListingResponse]],
+    response_model=PagedApiResponse[List[schemas.ListingResponse]],
     summary="List all listings for the tenant",
 )
 async def list_listings(
@@ -40,8 +52,8 @@ async def list_listings(
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-) -> ApiResponse[List[schemas.ListingResponse]]:
-    data = await service.list_listings(
+) -> PagedApiResponse[List[schemas.ListingResponse]]:
+    data, total = await service.list_listings(
         db,
         tenant_id=ctx.tenant.id,
         suburb=suburb,
@@ -50,22 +62,18 @@ async def list_listings(
         limit=limit,
         offset=offset,
     )
-    return ApiResponse(success=True, message="OK", data=data)
-
-
-@router.get(
-    "/{tenant_public_id}/listings/{listing_id}",
-    response_model=ApiResponse[schemas.ListingResponse],
-    summary="Get a single listing",
-)
-async def get_listing(
-    tenant_public_id: str,
-    listing_id: str,
-    db: DBDep,
-    ctx: CtxDep,
-) -> ApiResponse[schemas.ListingResponse]:
-    data = await service.get_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
-    return ApiResponse(success=True, message="OK", data=data)
+    return PagedApiResponse(
+        success=True,
+        message="OK",
+        data=data,
+        meta=PaginationMeta(
+            total=total,
+            limit=limit,
+            offset=offset,
+            has_next=offset + limit < total,
+            has_prev=offset > 0,
+        ),
+    )
 
 
 @router.post(
@@ -83,6 +91,169 @@ async def create_listing(
     require_write(ctx)
     data = await service.create_listing(db, tenant_id=ctx.tenant.id, payload=payload)
     return ApiResponse(success=True, message="Listing created.", data=data)
+
+
+# =============================================================================
+# UPLOAD JOBS — must be registered before /{listing_id} to avoid route conflict
+# =============================================================================
+
+@router.post(
+    "/{tenant_public_id}/listings/upload",
+    response_model=ApiResponse[schemas.ListingUploadJobResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload an Excel (.xlsx/.xls) or CSV (.csv) file — rows parsed by LLM and imported in background",
+)
+async def upload_listing_file(
+    tenant_public_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+    file: UploadFile = File(..., description=".xlsx, .xls, or .csv file with one listing per row"),
+) -> ApiResponse[schemas.ListingUploadJobResponse]:
+    require_write(ctx)
+
+    filename = file.filename or "listings.xlsx"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    content_type = file.content_type or "application/octet-stream"
+
+    if ext in ("xlsx", "xls"):
+        file_type = ext
+    elif ext == "csv":
+        file_type = "csv"
+    elif content_type in _EXCEL_MIME_TYPES and content_type != "application/octet-stream":
+        file_type = "xlsx"
+    elif content_type in _CSV_MIME_TYPES and content_type != "application/octet-stream":
+        file_type = "csv"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only Excel (.xlsx, .xls) or CSV (.csv) files are accepted for listing upload.",
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB limit.",
+        )
+
+    data = await service.queue_listing_file_import(
+        db,
+        tenant_id=ctx.tenant.id,
+        file_bytes=file_bytes,
+        filename=filename,
+        file_type=file_type,
+    )
+    return ApiResponse(
+        success=True,
+        message=f"'{filename}' queued for processing. Use public_id to poll status.",
+        data=data,
+    )
+
+
+@router.get(
+    "/{tenant_public_id}/listings/uploads",
+    response_model=PagedApiResponse[List[schemas.ListingUploadJobResponse]],
+    summary="List all listing file import jobs (all statuses)",
+)
+async def list_listing_upload_jobs(
+    tenant_public_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> PagedApiResponse[List[schemas.ListingUploadJobResponse]]:
+    from app.modules.chatbot import repository as chatbot_repo
+
+    jobs, total = await asyncio.gather(
+        chatbot_repo.list_listing_upload_jobs(
+            db, tenant_id=ctx.tenant.id, status=status_filter, limit=limit, offset=offset
+        ),
+        chatbot_repo.count_listing_upload_jobs(
+            db, tenant_id=ctx.tenant.id, status=status_filter
+        ),
+    )
+    return PagedApiResponse(
+        success=True,
+        message="OK",
+        data=[schemas.ListingUploadJobResponse.model_validate(j) for j in jobs],
+        meta=PaginationMeta(
+            total=total,
+            limit=limit,
+            offset=offset,
+            has_next=offset + limit < total,
+            has_prev=offset > 0,
+        ),
+    )
+
+
+@router.get(
+    "/{tenant_public_id}/listings/uploads/{job_id}",
+    response_model=ApiResponse[schemas.ListingUploadJobResponse],
+    summary="Poll the status of a listing file import job",
+)
+async def get_listing_upload_job(
+    tenant_public_id: str,
+    job_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+) -> ApiResponse[schemas.ListingUploadJobResponse]:
+    from app.modules.chatbot import repository as chatbot_repo
+
+    job = await chatbot_repo.get_listing_upload_job_by_public_id(
+        db, tenant_id=ctx.tenant.id, public_id=job_id
+    )
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload job not found.")
+    return ApiResponse(
+        success=True,
+        message="OK",
+        data=schemas.ListingUploadJobResponse.model_validate(job),
+    )
+
+
+@router.post(
+    "/{tenant_public_id}/listings/uploads/{job_id}/retry",
+    response_model=ApiResponse[schemas.ListingUploadJobResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retry a failed listing file import job",
+)
+async def retry_listing_upload_job(
+    tenant_public_id: str,
+    job_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+) -> ApiResponse[schemas.ListingUploadJobResponse]:
+    require_write(ctx)
+    data = await service.retry_listing_upload_job(
+        db, tenant_id=ctx.tenant.id, job_public_id=job_id
+    )
+    return ApiResponse(
+        success=True,
+        message="Job re-queued for processing.",
+        data=data,
+    )
+
+
+# =============================================================================
+# LISTINGS — single item (dynamic segment — must come AFTER all static routes)
+# =============================================================================
+
+@router.get(
+    "/{tenant_public_id}/listings/{listing_id}",
+    response_model=ApiResponse[schemas.ListingResponse],
+    summary="Get a single listing",
+)
+async def get_listing(
+    tenant_public_id: str,
+    listing_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+) -> ApiResponse[schemas.ListingResponse]:
+    data = await service.get_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+    return ApiResponse(success=True, message="OK", data=data)
 
 
 @router.patch(
@@ -119,46 +290,3 @@ async def delete_listing(
     require_write(ctx)
     await service.delete_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
     return ApiResponse(success=True, message="Listing deleted.", data={})
-
-
-@router.post(
-    "/{tenant_public_id}/listings/upload",
-    response_model=ApiResponse[schemas.ListingImportResponse],
-    status_code=status.HTTP_201_CREATED,
-    summary="Upload an Excel (.xlsx) file — each row becomes a Listing record",
-)
-async def upload_listing_excel(
-    tenant_public_id: str,
-    db: DBDep,
-    ctx: CtxDep,
-    file: UploadFile = File(..., description=".xlsx file with one listing per row"),
-) -> ApiResponse[schemas.ListingImportResponse]:
-    require_write(ctx)
-
-    filename = file.filename or "listings.xlsx"
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    content_type = file.content_type or "application/octet-stream"
-
-    if content_type not in _EXCEL_MIME_TYPES and ext not in ("xlsx", "xls"):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only Excel files (.xlsx) are accepted for listing upload.",
-        )
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    if len(file_bytes) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB limit.",
-        )
-
-    data = await service.import_from_excel(
-        db, tenant_id=ctx.tenant.id, file_bytes=file_bytes, filename=filename
-    )
-    return ApiResponse(
-        success=True,
-        message=f"{data.imported} listing(s) imported from '{filename}'.",
-        data=data,
-    )

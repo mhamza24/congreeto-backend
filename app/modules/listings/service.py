@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_base import _new_public_id
-from app.core.enums import ListingSource
+from app.core.enums import ListingSource, UploadJobStatus
 from app.modules.listings import repository as repo
 from app.modules.listings import schemas
 
@@ -21,17 +22,26 @@ async def list_listings(
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-) -> List[schemas.ListingResponse]:
-    listings = await repo.list_listings(
-        db,
-        tenant_id=tenant_id,
-        suburb=suburb,
-        listing_type=listing_type,
-        status_filter=status_filter,
-        limit=limit,
-        offset=offset,
+) -> Tuple[List[schemas.ListingResponse], int]:
+    listings, total = await asyncio.gather(
+        repo.list_listings(
+            db,
+            tenant_id=tenant_id,
+            suburb=suburb,
+            listing_type=listing_type,
+            status_filter=status_filter,
+            limit=limit,
+            offset=offset,
+        ),
+        repo.count_listings(
+            db,
+            tenant_id=tenant_id,
+            suburb=suburb,
+            listing_type=listing_type,
+            status_filter=status_filter,
+        ),
     )
-    return [schemas.ListingResponse.model_validate(lst) for lst in listings]
+    return [schemas.ListingResponse.model_validate(lst) for lst in listings], total
 
 
 async def get_listing(
@@ -118,6 +128,79 @@ async def delete_listing(
     await db.commit()
 
     clear_listing_embedding.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
+
+
+async def queue_listing_file_import(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    file_bytes: bytes,
+    filename: str,
+    file_type: str,
+) -> schemas.ListingUploadJobResponse:
+    """
+    Store the uploaded file as a blob and dispatch a background Celery task
+    to parse (via LLM), upsert, and embed all listing rows.
+    Returns immediately with a job record so the caller can poll status.
+    """
+    from app.modules.chatbot import repository as chatbot_repo
+    from app.modules.chatbot.tasks import process_listing_file
+    from app.config.celery_worker import QUEUEEnum
+
+    job = await chatbot_repo.create_listing_upload_job(
+        db,
+        tenant_id=tenant_id,
+        public_id=_new_public_id(),
+        filename=filename,
+        file_type=file_type,
+        file_data=file_bytes,
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    process_listing_file.apply_async(
+        kwargs=dict(job_id=job.id, tenant_id=tenant_id),
+        queue=QUEUEEnum.ANALYSIS.value,
+    )
+
+    return schemas.ListingUploadJobResponse.model_validate(job)
+
+
+async def retry_listing_upload_job(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    job_public_id: str,
+) -> schemas.ListingUploadJobResponse:
+    """Re-queue a failed (or stuck) listing upload job."""
+    from app.modules.chatbot import repository as chatbot_repo
+    from app.modules.chatbot.tasks import process_listing_file
+    from app.config.celery_worker import QUEUEEnum
+
+    job = await chatbot_repo.get_listing_upload_job_by_public_id(
+        db, tenant_id=tenant_id, public_id=job_public_id
+    )
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload job not found.")
+
+    if job.status not in (UploadJobStatus.FAILED, UploadJobStatus.QUEUED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job is currently '{job.status}'. Only failed or queued jobs can be retried.",
+        )
+
+    await chatbot_repo.update_listing_upload_job(
+        db, job=job, status=UploadJobStatus.QUEUED, processed_rows=0, error_message=None
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    process_listing_file.apply_async(
+        kwargs=dict(job_id=job.id, tenant_id=tenant_id),
+        queue=QUEUEEnum.ANALYSIS.value,
+    )
+
+    return schemas.ListingUploadJobResponse.model_validate(job)
 
 
 async def import_from_excel(

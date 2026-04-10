@@ -71,6 +71,7 @@ async def get_or_create_conversation(
     *,
     conversation_public_id: Optional[str],
     tenant_id: str,
+    chatbot_config_id: Optional[int] = None,
 ) -> Tuple[Conversation, bool]:
     """
     Look up an existing conversation by its public_id, or create a new one.
@@ -78,6 +79,9 @@ async def get_or_create_conversation(
     Returns (conversation, is_new).
     Raises ValueError if the public_id is provided but not found (prevents
     clients from silently creating duplicate conversations).
+
+    chatbot_config_id is set for widget conversations (looked up via iframe_token)
+    and NULL for legacy/admin conversations.
     """
     if conversation_public_id:
         result = await db.execute(
@@ -94,7 +98,10 @@ async def get_or_create_conversation(
         return conversation, False
 
     # New conversation — flush so we get the generated id/public_id immediately
-    conversation = Conversation(tenant_id=tenant_id)
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        chatbot_config_id=chatbot_config_id,
+    )
     db.add(conversation)
     await db.flush()
     return conversation, True

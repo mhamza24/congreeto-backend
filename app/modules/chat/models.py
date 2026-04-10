@@ -144,6 +144,13 @@ class Conversation(Base):
     lead_email = Column(String,  nullable=True)
     lead_phone = Column(String,  nullable=True)
 
+    # ── Chatbot link ──────────────────────────────────────────────────────────
+    chatbot_config_id = Column(
+        BigInteger,
+        nullable=True,
+        comment="FK to chatbot_configs.id. Set for widget conversations; NULL for legacy.",
+    )
+
     # ── Counters (denormalized for fast reads — avoids COUNT(*) on messages) ─
     total_messages    = Column(Integer, nullable=False, default=0)
     total_tokens_used = Column(Integer, nullable=False, default=0)
@@ -200,6 +207,9 @@ class Conversation(Base):
 
         # Idle-timeout detection and activity dashboards
         Index("ix_conversations_last_activity", "last_activity_at"),
+
+        # Widget conversations filtered by chatbot
+        Index("ix_conversations_chatbot_config", "chatbot_config_id"),
 
         # Session token lookup (anonymous widget reconnects)
         Index("ix_conversations_session_token", "session_token"),

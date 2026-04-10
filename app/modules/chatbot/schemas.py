@@ -21,28 +21,82 @@ class OkResponse(BaseModel):
 
 
 # =============================================================================
+# COMPANY PROFILE  (tenant-specific context injected into the system prompt)
+# =============================================================================
+
+class CompanyProfile(BaseModel):
+    """
+    Tenant company information embedded into the chatbot's system prompt.
+    All fields are optional — only non-null values are rendered into the prompt.
+    """
+    company_name:        Optional[str]       = Field(default=None, max_length=255)
+    tagline:             Optional[str]       = Field(default=None, max_length=500)
+    company_description: Optional[str]       = Field(default=None, max_length=2000)
+    company_vision:      Optional[str]       = Field(default=None, max_length=1000)
+    company_website:     Optional[str]       = Field(default=None, max_length=500)
+    contact_email:       Optional[str]       = Field(default=None, max_length=255)
+    contact_phone:       Optional[str]       = Field(default=None, max_length=50)
+    locations:           Optional[List[str]] = Field(default=None)
+    portfolio_summary:   Optional[str]       = Field(
+        default=None, max_length=3000,
+        description="Brief overview of the property portfolio or offerings.",
+    )
+    industry:            Optional[str]       = Field(default="real_estate", max_length=100)
+
+
+# =============================================================================
+# PROMPT PERSONALITY
+# =============================================================================
+
+class PromptPersonalityResponse(BaseModel):
+    public_id: str
+    name: str
+    slug: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# =============================================================================
 # CHATBOT CONFIG
 # =============================================================================
 
 class ChatbotCreateRequest(BaseModel):
     name: str = Field(max_length=255, default="My Chatbot")
     identity: str = Field(default="website")
-    system_prompt_template: Optional[str] = None
     welcome_message: Optional[str] = None
     auto_close_minutes: int = Field(default=15, ge=1, le=1440)
     allowed_domains: List[str] = Field(default_factory=list)
     branding: Dict[str, Any] = Field(default_factory=dict)
     lead_capture_config: Dict[str, Any] = Field(default_factory=dict)
+    company_profile: Optional[CompanyProfile] = Field(
+        default=None,
+        description="Company information used to personalise the system prompt.",
+    )
+    prompt_personality_slug: Optional[str] = Field(
+        default="aria",
+        description="Personality template slug (e.g. 'aria'). Defaults to 'aria'.",
+    )
 
 
 class ChatbotUpdateRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=255)
-    system_prompt_template: Optional[str] = None
     welcome_message: Optional[str] = None
     auto_close_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
     allowed_domains: Optional[List[str]] = None
     branding: Optional[Dict[str, Any]] = None
     lead_capture_config: Optional[Dict[str, Any]] = None
+    company_profile: Optional[CompanyProfile] = Field(
+        default=None,
+        description="Update company profile. Triggers system prompt regeneration.",
+    )
+    prompt_personality_slug: Optional[str] = Field(
+        default=None,
+        description="Switch personality. Triggers system prompt regeneration.",
+    )
 
 
 class ChatbotActivateRequest(BaseModel):
@@ -63,6 +117,8 @@ class ChatbotResponse(BaseModel):
     allowed_domains: List[str]
     branding: Dict[str, Any]
     lead_capture_config: Dict[str, Any]
+    company_profile: Dict[str, Any]
+    prompt_personality_id: Optional[int]
     created_at: datetime
     updated_at: datetime
 
@@ -238,6 +294,7 @@ class RAGChunkResult(BaseModel):
     content: str
     chunk_metadata: Dict[str, Any]
     chunk_index: int
+    document_id: int = 0  # sentinel 0 = listing hit (no document row)
 
 
 class RAGQueryResponse(BaseModel):

@@ -186,6 +186,13 @@ class UsageMetric(str, enum.Enum):
     ACTIVE_USERS       = "active_users"
 
 
+class UploadJobStatus(str, enum.Enum):
+    QUEUED     = "queued"
+    PROCESSING = "processing"
+    COMPLETED  = "completed"
+    FAILED     = "failed"
+
+
 class LimitStatus(str, enum.Enum):
     """Computed — never stored in DB. Used only in API responses."""
     OK       = "ok"        # < 80%
@@ -329,5 +336,13 @@ usage_metric_enum = PgEnum(
     UsageMetric,
     name="usage_metric",
     create_type=True,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+upload_job_status_enum = PgEnum(
+    UploadJobStatus,
+    name="upload_job_status",
+    create_type=False,   # no native PG ENUM type — stored as VARCHAR
+    native_enum=False,
     values_callable=lambda x: [e.value for e in x],
 )

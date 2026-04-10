@@ -41,11 +41,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                 )
 
-            response = await call_next(request)
-            response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT)
-            response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT - request_count))
-            return response
-
         except Exception as e:
             logger.warning(f"Rate limiter Redis error, allowing request through: {e}")
-            return await call_next(request)
+            request_count = 0
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT)
+        response.headers["X-RateLimit-Remaining"] = str(max(0, RATE_LIMIT - request_count))
+        return response

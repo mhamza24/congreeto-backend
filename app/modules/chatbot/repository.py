@@ -23,6 +23,8 @@ from app.modules.chatbot.models import (
     DocumentChunk,
     KnowledgeSource,
     Listing,
+    ListingUploadJob,
+    PromptPersonality,
     WidgetTheme,
 )
 from app.core.enums import CrawlStatus, DocStatus, ChatbotStatus
@@ -47,6 +49,8 @@ async def create_chatbot(
     allowed_domains: list | None = None,
     branding: dict | None = None,
     lead_capture_config: dict | None = None,
+    company_profile: dict | None = None,
+    prompt_personality_id: Optional[int] = None,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -60,6 +64,8 @@ async def create_chatbot(
         allowed_domains=allowed_domains or [],
         branding=branding or {},
         lead_capture_config=lead_capture_config or {},
+        company_profile=company_profile or {},
+        prompt_personality_id=prompt_personality_id,
         public_id=public_id,
     )
     db.add(chatbot)
@@ -99,6 +105,80 @@ async def get_chatbot_by_iframe_token(
         select(ChatbotConfig).where(ChatbotConfig.iframe_token == iframe_token)
     )
     return result.scalar_one_or_none()
+
+
+# =============================================================================
+# PROMPT PERSONALITIES
+# =============================================================================
+
+async def get_prompt_personality_by_slug(
+    db: AsyncSession, *, slug: str
+) -> Optional[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality).where(
+            PromptPersonality.slug == slug,
+            PromptPersonality.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_prompt_personality_by_id(
+    db: AsyncSession, *, personality_id: int
+) -> Optional[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality).where(PromptPersonality.id == personality_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_prompt_personalities(db: AsyncSession) -> Sequence[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality)
+        .where(PromptPersonality.is_active == True)
+        .order_by(PromptPersonality.name)
+    )
+    return result.scalars().all()
+
+
+# =============================================================================
+# CHATBOT BRANDING ASSET URL UPDATE
+# =============================================================================
+
+# Maps asset_type → the branding JSONB key that holds its URL
+_ASSET_TYPE_TO_BRANDING_KEY: dict[str, str] = {
+    "logo":        "logo_url",
+    "avatar":      "avatar_url",
+    "banner":      "banner_url",
+    "gif":         "gif_url",
+    "ribbon_icon": "ribbon_icon_url",
+}
+
+
+async def update_chatbot_branding_asset_url(
+    db: AsyncSession,
+    *,
+    chatbot_config_id: int,
+    asset_type: str,
+    asset_url: str,
+) -> None:
+    """
+    Merge the asset URL into ChatbotConfig.branding JSONB under the appropriate key.
+    Uses PostgreSQL's || operator for a single-round-trip atomic update.
+    """
+    branding_key = _ASSET_TYPE_TO_BRANDING_KEY.get(asset_type)
+    if not branding_key:
+        return  # unknown asset type — skip, don't corrupt branding
+
+    await db.execute(
+        update(ChatbotConfig)
+        .where(ChatbotConfig.id == chatbot_config_id)
+        .values(
+            branding=ChatbotConfig.branding.op("||")(
+                func.jsonb_build_object(branding_key, asset_url)
+            )
+        )
+    )
 
 
 async def list_chatbots(
@@ -617,7 +697,8 @@ async def admin_list_all_chatbots(
 async def admin_set_chatbot_status(
     db: AsyncSession, *, public_id: str, new_status: str
 ) -> Optional[ChatbotConfig]:
-    chatbot = await get_chatbot_by_public_id(db, public_id=public_id)
+    result = await db.execute(select(ChatbotConfig).where(ChatbotConfig.public_id == public_id))
+    chatbot = result.scalar_one_or_none()
     if not chatbot:
         return None
     chatbot.status = new_status
@@ -629,7 +710,8 @@ async def admin_set_chatbot_status(
 async def admin_delete_chatbot(
     db: AsyncSession, *, public_id: str
 ) -> bool:
-    chatbot = await get_chatbot_by_public_id(db, public_id=public_id)
+    result = await db.execute(select(ChatbotConfig).where(ChatbotConfig.public_id == public_id))
+    chatbot = result.scalar_one_or_none()
     if not chatbot:
         return False
     await db.delete(chatbot)
@@ -989,6 +1071,29 @@ async def get_listing_by_external_id(
     return result.scalar_one_or_none()
 
 
+async def get_listings_by_external_ids(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    external_ids: List[str],
+) -> dict[str, Listing]:
+    """
+    Fetch multiple listings by external_id in ONE query.
+    Returns a dict keyed by external_id for O(1) lookup.
+    Used by batch-import tasks to avoid N+1 existence checks.
+    """
+    if not external_ids:
+        return {}
+    result = await db.execute(
+        select(Listing).where(
+            Listing.tenant_id == tenant_id,
+            Listing.external_id.in_(external_ids),
+            Listing.deleted_at.is_(None),
+        )
+    )
+    return {lst.external_id: lst for lst in result.scalars().all()}
+
+
 async def upsert_listing(
     db: AsyncSession,
     *,
@@ -1034,3 +1139,94 @@ async def get_document_bytes(
         )
     )
     return result.scalar_one_or_none()
+
+
+# =============================================================================
+# LISTING UPLOAD JOBS
+# =============================================================================
+
+async def create_listing_upload_job(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    public_id: str,
+    filename: str,
+    file_type: str,
+    file_data: Optional[bytes] = None,
+    storage_path: Optional[str] = None,
+) -> ListingUploadJob:
+    job = ListingUploadJob(
+        tenant_id=tenant_id,
+        public_id=public_id,
+        filename=filename,
+        file_type=file_type,
+        file_data=file_data,
+        storage_path=storage_path,
+    )
+    db.add(job)
+    await db.flush()
+    return job
+
+
+async def get_listing_upload_job(
+    db: AsyncSession, *, tenant_id: int, job_id: int
+) -> Optional[ListingUploadJob]:
+    result = await db.execute(
+        select(ListingUploadJob).where(
+            ListingUploadJob.id == job_id,
+            ListingUploadJob.tenant_id == tenant_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_listing_upload_job_by_public_id(
+    db: AsyncSession, *, tenant_id: int, public_id: str
+) -> Optional[ListingUploadJob]:
+    result = await db.execute(
+        select(ListingUploadJob).where(
+            ListingUploadJob.public_id == public_id,
+            ListingUploadJob.tenant_id == tenant_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_listing_upload_jobs(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Sequence[ListingUploadJob]:
+    q = select(ListingUploadJob).where(ListingUploadJob.tenant_id == tenant_id)
+    if status:
+        q = q.where(ListingUploadJob.status == status)
+    q = q.order_by(ListingUploadJob.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+async def count_listing_upload_jobs(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    status: Optional[str] = None,
+) -> int:
+    q = select(func.count()).select_from(ListingUploadJob).where(
+        ListingUploadJob.tenant_id == tenant_id
+    )
+    if status:
+        q = q.where(ListingUploadJob.status == status)
+    result = await db.execute(q)
+    return result.scalar_one()
+
+
+async def update_listing_upload_job(
+    db: AsyncSession, *, job: ListingUploadJob, **kwargs
+) -> ListingUploadJob:
+    for key, value in kwargs.items():
+        setattr(job, key, value)
+    await db.flush()
+    return job

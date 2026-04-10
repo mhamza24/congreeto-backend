@@ -348,3 +348,149 @@ def clean_html_text(raw: str) -> str:
     return "\n".join(
         line for line in lines if line and not re.fullmatch(r"[\-\–\—\d\s]+", line)
     )
+
+
+# =============================================================================
+# LLM PARSING FOR UPLOADED LISTING FILES (Excel / CSV)
+# =============================================================================
+
+_LISTING_FILE_PARSE_PROMPT = """\
+You are a real-estate data cleaning and extraction assistant.
+
+Below is tabular data from an uploaded property listing file (Excel or CSV).
+Each row is one property listing. The first line is column headers; the rest are data rows separated by tabs.
+
+The table contains exactly {row_count} data row(s). Return exactly {row_count} element(s) in the same order.
+
+== YOUR TASKS ==
+
+1. EXTRACT: Map each row to the output schema below.
+
+2. CLEAN text fields:
+   - Strip ALL noise from text: remove `***`, `!!!`, `@@`, `##`, `---`, excessive punctuation, trailing standalone numbers used as row IDs, and any random symbols.
+   - After stripping noise, keep only the meaningful words/sentences that remain. Examples:
+       "Nice place!!! needs cleanup @@ 5"  → "Nice place!"
+       "Great home ## 42"                  → "Great home"
+       "Spacious living --- @@@ test data" → "Spacious living"
+   - Trim whitespace. Convert ALL CAPS titles to Title Case.
+   - If after cleaning nothing meaningful remains (e.g. the entire field was noise/placeholder like "test data", "lorem ipsum", random symbols only), set it to null.
+   - If a title is null or placeholder/gibberish after cleaning, set it to "Property Listing".
+
+3. FIX geographic inconsistencies:
+   - If suburb and state are contradictory (e.g. suburb=Melbourne but state=NSW), correct the state to match the suburb using your knowledge of Australian geography.
+   - Known mappings: Sydney→NSW, Melbourne→VIC, Brisbane→QLD, Perth→WA, Adelaide→SA, Hobart→TAS, Darwin→NT, Canberra→ACT.
+   - Apply the same logic for well-known suburbs (e.g. Surry Hills→NSW, St Kilda→VIC, Fortitude Valley→QLD).
+
+4. FIX price vs listing_type inconsistency:
+   - If price_display contains "per week" or "pw" or "/wk", listing_type must be "rent".
+   - If price_display contains a large lump sum (e.g. "$500,000") without weekly mention, listing_type should be "sale".
+   - Price should be the numeric value only. If price and price_display clearly contradict each other, trust price_display and derive price from it.
+   - If price is suspiciously low for a sale (e.g. < 10,000) but looks like a weekly rent, correct listing_type to "rent".
+
+5. NULL out obviously wrong values:
+   - Postcodes that don't match Australian format (4 digits) → null.
+   - Negative or zero bedrooms/bathrooms/garages/sqm → null.
+   - Prices of 0 or negative → null.
+   - States that are not valid Australian states/territories → null.
+
+== OUTPUT SCHEMA ==
+
+Return a JSON array. Each element:
+{{
+  "title": "string — cleaned property title",
+  "listing_type": "sale | rent",
+  "status": "active | sold | leased | inactive",
+  "description": "cleaned string or null",
+  "price": float or null,
+  "price_display": "formatted string or null",
+  "currency": "AUD",
+  "street": "string or null",
+  "suburb": "string or null",
+  "state": "corrected 2–3 letter state code or null",
+  "postcode": "4-digit string or null",
+  "bedrooms": integer or null,
+  "bathrooms": integer or null,
+  "garages": integer or null,
+  "land_sqm": float or null,
+  "house_sqm": float or null,
+  "has_pool": true | false
+}}
+
+Return ONLY the JSON array. No explanation, no markdown, no extra text.
+
+TABLE DATA:
+"""
+
+# ~20 rows per LLM call keeps each request under ~3k tokens and well within
+# context limits while still amortizing the per-request overhead.
+_LLM_BATCH_SIZE = 20
+
+
+async def parse_listings_from_table(
+    rows: List[Dict[str, Any]],
+    openai_service: Any,
+    batch_size: int = _LLM_BATCH_SIZE,
+) -> List[Dict[str, Any]]:
+    """
+    Use the LLM to normalize and structure raw rows parsed from a CSV/Excel file.
+
+    Batching strategy:
+    - Each LLM call receives `batch_size` rows (default 20).
+    - All batches are fired concurrently with asyncio.gather so the total
+      wall-clock time is ~1 LLM call instead of N sequential calls.
+    - On failure for any batch, falls back to the raw parsed rows for that batch.
+    """
+    import asyncio
+    import json
+
+    if not rows:
+        return []
+
+    async def _call_llm(batch: List[Dict[str, Any]], batch_start: int) -> List[Dict[str, Any]]:
+        headers = list(batch[0].keys())
+        table_lines = ["\t".join(str(h) for h in headers)]
+        for row in batch:
+            table_lines.append("\t".join(str(row.get(h, "") or "") for h in headers))
+        table_text = "\n".join(table_lines)
+
+        prompt = _LISTING_FILE_PARSE_PROMPT.format(row_count=len(batch)) + table_text
+
+        try:
+            raw = await openai_service.openai_call_conversation(
+                messages=[{"role": "user", "content": prompt}],
+                system_instructions=(
+                    "You extract structured property listing data from tabular data. "
+                    "Return only valid JSON."
+                ),
+            )
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                logger.info(
+                    f"LLM parsed rows {batch_start}–{batch_start + len(batch)}: "
+                    f"{len(parsed)} listings"
+                )
+                return parsed
+
+            logger.warning(f"LLM returned non-list for rows {batch_start}, using raw")
+            return batch
+
+        except Exception as exc:
+            logger.error(
+                f"LLM parse error for rows {batch_start}–{batch_start + len(batch)}: {exc}. "
+                "Falling back to raw rows."
+            )
+            return batch
+
+    # Fire all batch calls concurrently
+    batches = [
+        (rows[i: i + batch_size], i)
+        for i in range(0, len(rows), batch_size)
+    ]
+    batch_results = await asyncio.gather(*[_call_llm(b, start) for b, start in batches])
+
+    # Flatten results preserving order
+    return [item for batch in batch_results for item in batch]
