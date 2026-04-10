@@ -5,6 +5,16 @@ import os
 from app.config.settings import get_settings
 from enum import Enum
 
+# Register all ORM models so SQLAlchemy mapper can resolve cross-module
+# relationships (e.g. TenantSubscription → Tenant) before any task runs.
+import app.modules.tenants.models      # noqa: F401
+import app.modules.auth.models         # noqa: F401
+import app.modules.users.models        # noqa: F401
+import app.modules.billing.models      # noqa: F401
+import app.modules.chatbot.models      # noqa: F401
+import app.modules.chat.models         # noqa: F401
+import app.modules.inquiries.models    # noqa: F401
+
 settings = get_settings()
 os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
 
@@ -24,19 +34,15 @@ if settings.ENV in ["PRODUCTION", "STAGING"]:
 celery_app.conf.update(
     broker_url=settings.REDIS_URL,
     result_backend=settings.REDIS_URL,
-
     # ✅ SSL for rediss:// on Heroku
     broker_use_ssl=ssl_config if ssl_config else None,
     redis_backend_use_ssl=ssl_config if ssl_config else None,
-
     broker_connection_retry_on_startup=True,
     task_track_started=settings.CELERY_TASK_TRACK_STARTED,
     task_serializer=settings.CELERY_TASK_SERIALIZER,
     result_expires=settings.CELERY_RESULT_EXPIRES,
-    task_routes={
-        "app.modules.knowledge.tasks": {"queue": "ingestion"},
-        "app.modules.chat.tasks": {"queue": "analysis"},
-    },
+    task_default_queue=QUEUEEnum.ANALYSIS,
+    task_routes={},
 )
 
 celery_app.conf.beat_schedule = {
@@ -70,13 +76,20 @@ celery_app.conf.beat_schedule = {
         "task": "tenants.sync_past_due_tenants",
         "schedule": crontab(minute=30),          # every hour at :30
     },
+    # Crawl recovery
+    "crawl-retry-stuck-jobs": {
+        "task": "app.modules.chatbot.tasks.retry_stuck_crawl_jobs",
+        "schedule": crontab(minute="*/10"),       # every 10 minutes
+    },
 }
 
-celery_app.autodiscover_tasks([
-    'app.modules.knowledge.tasks',
-    'app.modules.chat.tasks',
-    'app.modules.auth.tasks',
-    'app.modules.tenants.tasks',
-    'app.modules.tenants.corn_tasks',
-    'app.modules.billing.tasks',
-])
+celery_app.autodiscover_tasks(
+    [
+        "app.modules.chatbot.tasks",
+        "app.modules.chat.tasks",
+        "app.modules.auth.tasks",
+        "app.modules.tenants.tasks",
+        "app.modules.tenants.corn_tasks",
+        "app.modules.billing.tasks",
+    ]
+)

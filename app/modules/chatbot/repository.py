@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence
 
+from datetime import timedelta
+
 from sqlalchemy import and_, exists, func, select, update
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -371,6 +373,18 @@ async def get_crawl_job(
     return result.scalar_one_or_none()
 
 
+async def get_crawl_job_by_public_id(
+    db: AsyncSession, *, tenant_id: int, public_id: str
+) -> Optional[CrawlJob]:
+    result = await db.execute(
+        select(CrawlJob).where(
+            CrawlJob.public_id == public_id,
+            CrawlJob.tenant_id == tenant_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_crawl_jobs(
     db: AsyncSession, *, tenant_id: int, knowledge_source_id: int
 ) -> Sequence[CrawlJob]:
@@ -379,6 +393,43 @@ async def list_crawl_jobs(
             CrawlJob.tenant_id == tenant_id,
             CrawlJob.knowledge_source_id == knowledge_source_id,
         ).order_by(CrawlJob.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+async def get_stuck_crawl_jobs(
+    db: AsyncSession,
+    *,
+    queued_older_than_minutes: int = 5,
+    running_older_than_minutes: int = 30,
+) -> Sequence[CrawlJob]:
+    """
+    Returns crawl jobs that are stuck and need to be re-queued:
+      - status=queued  and created_at older than queued_older_than_minutes
+      - status=running and started_at older than running_older_than_minutes
+    Eagerly loads knowledge_source so the caller can read chatbot_config_id.
+    """
+    from sqlalchemy.orm import joinedload
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(CrawlJob)
+        .options(joinedload(CrawlJob.knowledge_source))
+        .where(
+            and_(
+                CrawlJob.status.in_([CrawlStatus.QUEUED, CrawlStatus.RUNNING]),
+            )
+        )
+        .where(
+            (
+                (CrawlJob.status == CrawlStatus.QUEUED) &
+                (CrawlJob.created_at < now - timedelta(minutes=queued_older_than_minutes))
+            ) | (
+                (CrawlJob.status == CrawlStatus.RUNNING) &
+                (CrawlJob.started_at < now - timedelta(minutes=running_older_than_minutes))
+            )
+        )
     )
     return result.scalars().all()
 

@@ -1,3 +1,5 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.config.settings import get_settings
 from contextlib import asynccontextmanager
@@ -28,6 +30,32 @@ def build_async_db_url() -> str:
 
 DATABASE_URL = build_async_db_url()
 
+
+def build_sync_db_url() -> str:
+    raw_url = settings.DATABASE_URL or ""
+    if raw_url.startswith("postgres://"):
+        raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+    elif raw_url.startswith("postgresql+asyncpg://"):
+        raw_url = raw_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return raw_url
+
+
+sync_connect_args = {}
+if settings.ENV != "DEVELOPMENT":
+    sync_connect_args = {"sslmode": "require"}
+
+sync_engine = create_engine(
+    build_sync_db_url(),
+    pool_pre_ping=True,
+    connect_args=sync_connect_args,
+)
+
+SyncSessionLocal = sessionmaker(
+    bind=sync_engine,
+    autocommit=False,
+    autoflush=False,
+    class_=Session,
+)
 
 
 # Module-level engine — ONLY for FastAPI routes (shares FastAPI's event loop)

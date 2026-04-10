@@ -58,6 +58,9 @@ from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.modules.chatbot import schemas, service
 from app.modules.chatbot import repository as repo
+from app.config.celery_worker import QUEUEEnum
+from app.modules.chatbot.tasks import crawl_and_embed
+from app.core.enums import CrawlStatus
 from app.modules.chatbot.parsers.pdf_parser import (
     _empty_result,
     _filename_from_path,
@@ -466,6 +469,62 @@ async def list_crawl_jobs(
         ks_public_id=ks_id,
     )
     return ApiResponse(success=True, message="OK", data=data)
+
+
+@router.post(
+    "/{tenant_public_id}/chatbots/{chatbot_id}/knowledge-sources/{ks_id}/crawl-jobs/{job_public_id}/retry",
+    response_model=ApiResponse[schemas.CrawlJobResponse],
+    summary="Retry a failed or stuck crawl job",
+)
+async def retry_crawl_job(
+    chatbot_id: str,
+    ks_id: str,
+    job_public_id: str,
+    db: DBDep,
+    ctx: CtxDep,
+) -> ApiResponse[schemas.CrawlJobResponse]:
+    require_write(ctx)
+
+    job = await repo.get_crawl_job_by_public_id(db, tenant_id=ctx.tenant.id, public_id=job_public_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Crawl job not found.")
+
+    if job.status == CrawlStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Crawl job is already running.")
+
+    ks = await repo.get_knowledge_source(db, tenant_id=ctx.tenant.id, source_id=job.knowledge_source_id)
+    if not ks:
+        raise HTTPException(status_code=404, detail="Knowledge source not found.")
+
+    await repo.update_crawl_job(
+        db, job=job,
+        status=CrawlStatus.QUEUED,
+        started_at=None,
+        completed_at=None,
+        error_message=None,
+        pages_found=0,
+        pages_processed=0,
+        pages_failed=0,
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    crawl_and_embed.apply_async(
+        kwargs=dict(
+            crawl_job_id=job.id,
+            tenant_id=job.tenant_id,
+            knowledge_source_id=job.knowledge_source_id,
+            chatbot_config_id=ks.chatbot_config_id,
+            base_url=job.base_url,
+        ),
+        queue=QUEUEEnum.ANALYSIS.value,
+    )
+
+    return ApiResponse(
+        success=True,
+        message="Crawl job re-queued.",
+        data=schemas.CrawlJobResponse.model_validate(job),
+    )
 
 
 # =============================================================================

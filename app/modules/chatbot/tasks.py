@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.celery_worker import celery_app, QUEUEEnum
 from app.config.settings import get_settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import get_task_db_session
 from app.core.enums import CrawlStatus, DocStatus, UsageMetric
 from app.modules.billing import repository as billing_repo
 from app.modules.chatbot import repository as repo
@@ -48,8 +48,19 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _run(coro):
-    """Run an async coroutine from a sync Celery task."""
-    return asyncio.run(coro)
+    """Run an async coroutine from a sync Celery task.
+
+    Always creates a brand-new event loop so that a closed loop from a
+    previous (failed) attempt never leaks into the retry.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
 
 
 async def _flip_rag_if_needed(
@@ -84,10 +95,10 @@ async def _increment_usage(
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.crawl_and_embed",
+    name="app.modules.chatbot.tasks.crawl_and_embed",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def crawl_and_embed(
     self,
@@ -136,7 +147,7 @@ async def _crawl_and_embed_async(
 ) -> None:
     from app.modules.open_ai import service as openai_service
 
-    async with AsyncSessionLocal() as db:
+    async with get_task_db_session() as db:
         # ── Step 1: Mark job running ──────────────────────────────────────
         job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
         if not job:
@@ -272,10 +283,10 @@ async def _crawl_and_embed_async(
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.process_document",
+    name="app.modules.chatbot.tasks.process_document",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def process_document(
     self,
@@ -319,7 +330,7 @@ async def _process_document_async(
 ) -> None:
     from app.modules.open_ai import service as openai_service
 
-    async with AsyncSessionLocal() as db:
+    async with get_task_db_session() as db:
         # ── Step 1: Fetch document ────────────────────────────────────────
         doc = await repo.get_document(db, tenant_id=tenant_id, document_id=document_id)
         if not doc:
@@ -456,10 +467,10 @@ async def _get_pdf_bytes(doc: Any) -> bytes:
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.process_manual_entry",
+    name="app.modules.chatbot.tasks.process_manual_entry",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def process_manual_entry(
     self,
@@ -499,7 +510,7 @@ async def _process_manual_entry_async(
 ) -> None:
     from app.modules.open_ai import service as openai_service
 
-    async with AsyncSessionLocal() as db:
+    async with get_task_db_session() as db:
         doc = await repo.get_document(db, tenant_id=tenant_id, document_id=document_id)
         if not doc:
             logger.error(f"Manual entry document {document_id} not found.")
@@ -576,10 +587,10 @@ async def _process_manual_entry_async(
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.embed_listing",
+    name="app.modules.chatbot.tasks.embed_listing",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def embed_listing(self, *, listing_id: int, tenant_id: int) -> str:
     """
@@ -602,7 +613,7 @@ def embed_listing(self, *, listing_id: int, tenant_id: int) -> str:
 async def _embed_listing_async(*, listing_id: int, tenant_id: int) -> None:
     from app.modules.open_ai import service as openai_service
 
-    async with AsyncSessionLocal() as db:
+    async with get_task_db_session() as db:
         listing = await repo.get_listing_by_id(
             db, tenant_id=tenant_id, listing_id=listing_id
         )
@@ -630,10 +641,10 @@ async def _embed_listing_async(*, listing_id: int, tenant_id: int) -> None:
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.clear_listing_embedding",
+    name="app.modules.chatbot.tasks.clear_listing_embedding",
     max_retries=2,
     default_retry_delay=5,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def clear_listing_embedding(self, *, listing_id: int, tenant_id: int) -> str:
     """
@@ -651,10 +662,74 @@ def clear_listing_embedding(self, *, listing_id: int, tenant_id: int) -> str:
 
 
 async def _clear_listing_embedding_async(*, listing_id: int, tenant_id: int) -> None:
-    async with AsyncSessionLocal() as db:
+    async with get_task_db_session() as db:
         await repo.clear_listing_embedding(db, tenant_id=tenant_id, listing_id=listing_id)
         await db.commit()
         logger.info(f"Listing {listing_id} embedding cleared.")
+
+
+# =============================================================================
+# TASK F — RECOVER STUCK CRAWL JOBS
+# =============================================================================
+
+
+@celery_app.task(
+    name="app.modules.chatbot.tasks.retry_stuck_crawl_jobs",
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def retry_stuck_crawl_jobs() -> str:
+    """
+    Beat task — runs every 10 minutes.
+    Finds crawl jobs stuck in 'queued' (≥5 min) or 'running' (≥30 min)
+    and re-dispatches crawl_and_embed for each one.
+    """
+    return _run(_retry_stuck_crawl_jobs_async())
+
+
+async def _retry_stuck_crawl_jobs_async() -> str:
+    async with get_task_db_session() as db:
+        stuck_jobs = await repo.get_stuck_crawl_jobs(db)
+
+        if not stuck_jobs:
+            logger.info("retry_stuck_crawl_jobs: no stuck jobs found.")
+            return "no stuck jobs"
+
+        requeued = 0
+        for job in stuck_jobs:
+            ks = job.knowledge_source
+            if not ks:
+                logger.warning(f"CrawlJob {job.id} has no knowledge_source — skipping.")
+                continue
+
+            # Reset to queued so the task starts clean
+            await repo.update_crawl_job(
+                db,
+                job=job,
+                status=CrawlStatus.QUEUED,
+                started_at=None,
+                error_message=None,
+                pages_found=0,
+                pages_processed=0,
+                pages_failed=0,
+            )
+            await db.commit()
+
+            crawl_and_embed.apply_async(
+                kwargs=dict(
+                    crawl_job_id=job.id,
+                    tenant_id=job.tenant_id,
+                    knowledge_source_id=job.knowledge_source_id,
+                    chatbot_config_id=ks.chatbot_config_id,
+                    base_url=job.base_url,
+                ),
+                queue=QUEUEEnum.ANALYSIS.value,
+            )
+            requeued += 1
+            logger.info(
+                f"retry_stuck_crawl_jobs: re-queued CrawlJob {job.id} (url={job.base_url!r})"
+            )
+
+        return f"requeued {requeued} stuck crawl jobs"
 
 
 # =============================================================================
@@ -663,10 +738,10 @@ async def _clear_listing_embedding_async(*, listing_id: int, tenant_id: int) -> 
 
 @celery_app.task(
     bind=True,
-    name="app.modules.knowledge.tasks.live_link_scrapper",
+    name="app.modules.chatbot.tasks.live_link_scrapper",
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
-    queue=QUEUEEnum.INGESTION.value,
+    queue=QUEUEEnum.ANALYSIS.value,
 )
 def live_link_scrapper(self, link: str) -> str:
     if not link:

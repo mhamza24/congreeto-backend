@@ -11,7 +11,7 @@ import app.modules.tenants.models        # noqa: F401
 import app.modules.models.tenant_user    # noqa: F401
 import app.modules.models.otp            # noqa: F401
 import app.modules.billing.models        # noqa: F401
-import app.modules.knowledge.models      # noqa: F401
+import app.modules.chatbot.models  # noqa: F401
 import app.modules.chat.models           # noqa: F401
 
 from app.core.database import AsyncSessionLocal
