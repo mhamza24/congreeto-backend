@@ -131,15 +131,17 @@ async def list_tenant_members(
     query = (
         select(TenantUser)
         .options(selectinload(TenantUser.user))
-        .join(User, User.id == TenantUser.user_id)
+        .join(User, (User.id == TenantUser.user_id) & (User.deleted_at.is_(None)))
         .where(TenantUser.tenant_id == tenant_id)
     )
     if role:
         query = query.where(TenantUser.role == role)
 
+    # Count only rows that have a live user attached (same join condition)
     total_result = await db.execute(
         select(func.count()).select_from(
             select(TenantUser)
+            .join(User, (User.id == TenantUser.user_id) & (User.deleted_at.is_(None)))
             .where(TenantUser.tenant_id == tenant_id)
             .subquery()
         )

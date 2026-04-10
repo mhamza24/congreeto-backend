@@ -206,7 +206,7 @@ async def list_members(
     return schemas.MemberListResponse(
         total=total,
         **seat_info,
-        members=[_build_member_response(m) for m in members],
+        members=[_build_member_response(m) for m in members if m.user is not None],
     )
 
 
