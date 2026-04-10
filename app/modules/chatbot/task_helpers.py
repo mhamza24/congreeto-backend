@@ -367,10 +367,14 @@ The table contains exactly {row_count} data row(s). Return exactly {row_count} e
 1. EXTRACT: Map each row to the output schema below.
 
 2. CLEAN text fields:
-   - Remove noise characters: `***`, `!!!`, `@@`, `##`, `---`, excessive punctuation, trailing numbers used as row IDs.
+   - Strip ALL noise from text: remove `***`, `!!!`, `@@`, `##`, `---`, excessive punctuation, trailing standalone numbers used as row IDs, and any random symbols.
+   - After stripping noise, keep only the meaningful words/sentences that remain. Examples:
+       "Nice place!!! needs cleanup @@ 5"  → "Nice place!"
+       "Great home ## 42"                  → "Great home"
+       "Spacious living --- @@@ test data" → "Spacious living"
    - Trim whitespace. Convert ALL CAPS titles to Title Case.
-   - If a description is clearly placeholder text (e.g. "needs cleanup", "test data", "lorem ipsum", random symbols), set it to null.
-   - If a title is placeholder/gibberish, set it to "Property Listing".
+   - If after cleaning nothing meaningful remains (e.g. the entire field was noise/placeholder like "test data", "lorem ipsum", random symbols only), set it to null.
+   - If a title is null or placeholder/gibberish after cleaning, set it to "Property Listing".
 
 3. FIX geographic inconsistencies:
    - If suburb and state are contradictory (e.g. suburb=Melbourne but state=NSW), correct the state to match the suburb using your knowledge of Australian geography.
