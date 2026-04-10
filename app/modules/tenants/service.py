@@ -296,6 +296,21 @@ async def invite_user(
         otp_id=otp_record.id,
         expires_at=expires_at,
     )
+
+    # Create a TenantUser row immediately so the invitee appears in the member list
+    # with status=INVITED before they accept.
+    existing_tu = await repo.get_tenant_user(db, tenant_id=tenant.id, user_id=invitee.id)
+    if not existing_tu:
+        db.add(
+            TenantUser(
+                tenant_id  = tenant.id,
+                user_id    = invitee.id,
+                role       = payload.role,
+                invited_by = caller_tu.user_id,
+                status     = TenantUserStatus.INVITED,
+            )
+        )
+
     await db.commit()
 
     invite_link = f"{settings.FRONTEND_URL}/invite/accept?code={raw_otp}"
@@ -376,12 +391,6 @@ async def accept_invite(
     # 6. Load the pre-created invited user
     user = await user_repo.get_user_by_id(db, id=user_id)
 
-    if await repo.is_member(db, tenant_id=tenant.id, user_id=user.id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="You are already a member of this team.",
-        )
-
     # 7. If user is still in INVITED state, activate them with submitted profile
     if user.status == UserStatus.INVITED:
         user.first_name        = payload.first_name
@@ -391,17 +400,28 @@ async def accept_invite(
         user.email_verified_at = datetime.now(timezone.utc)
         await db.flush()
 
-    # 8. Add to tenant
-    db.add(
-        TenantUser(
-            tenant_id  = tenant.id,
-            user_id    = user.id,
-            role       = role,
-            invited_by = invited_by_id,
-            status     = TenantUserStatus.ACTIVE,
-            joined_at  = datetime.now(timezone.utc),
+    # 8. Activate the pre-created TenantUser row (created at invite time)
+    existing_tu = await repo.get_tenant_user(db, tenant_id=tenant.id, user_id=user.id)
+    if existing_tu:
+        if existing_tu.status == TenantUserStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You are already a member of this team.",
+            )
+        existing_tu.status    = TenantUserStatus.ACTIVE
+        existing_tu.joined_at = datetime.now(timezone.utc)
+    else:
+        # Fallback: no pre-created row (e.g. legacy invites), create one now
+        db.add(
+            TenantUser(
+                tenant_id  = tenant.id,
+                user_id    = user.id,
+                role       = role,
+                invited_by = invited_by_id,
+                status     = TenantUserStatus.ACTIVE,
+                joined_at  = datetime.now(timezone.utc),
+            )
         )
-    )
 
     await db.commit()
     return schemas.AcceptInviteResponse(public_id=str(user.public_id))
