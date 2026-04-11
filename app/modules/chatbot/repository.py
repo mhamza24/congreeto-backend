@@ -523,6 +523,51 @@ async def update_crawl_job(
     return job
 
 
+async def atomic_increment_crawl_page(
+    db: AsyncSession,
+    *,
+    job_id: int,
+    success: bool,
+) -> tuple[int, int, int]:
+    """
+    Atomically increment pages_processed (success=True) or pages_failed (success=False).
+
+    Uses UPDATE ... RETURNING so the caller gets a consistent post-update view
+    without a second SELECT.  This is safe under concurrent per-page workers.
+
+    Returns:
+        (pages_processed, pages_failed, pages_found) after the update.
+        Returns (0, 0, 0) if the job row no longer exists.
+    """
+    if success:
+        stmt = (
+            update(CrawlJob)
+            .where(CrawlJob.id == job_id)
+            .values(pages_processed=CrawlJob.pages_processed + 1)
+            .returning(
+                CrawlJob.pages_processed,
+                CrawlJob.pages_failed,
+                CrawlJob.pages_found,
+            )
+        )
+    else:
+        stmt = (
+            update(CrawlJob)
+            .where(CrawlJob.id == job_id)
+            .values(pages_failed=CrawlJob.pages_failed + 1)
+            .returning(
+                CrawlJob.pages_processed,
+                CrawlJob.pages_failed,
+                CrawlJob.pages_found,
+            )
+        )
+    result = await db.execute(stmt)
+    row = result.fetchone()
+    if row is None:
+        return 0, 0, 0
+    return int(row[0]), int(row[1]), int(row[2])
+
+
 # =============================================================================
 # DOCUMENT
 # =============================================================================
@@ -1021,6 +1066,43 @@ async def get_listing_by_id(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_listings_by_ids(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    listing_ids: List[int],
+) -> List[Listing]:
+    """Fetch multiple listings by primary key in ONE query."""
+    if not listing_ids:
+        return []
+    result = await db.execute(
+        select(Listing).where(
+            Listing.tenant_id == tenant_id,
+            Listing.id.in_(listing_ids),
+            Listing.deleted_at.is_(None),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def bulk_update_listing_embeddings(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    id_to_embedding: dict,
+) -> None:
+    """Update embeddings for multiple listings in a single round-trip using bulk mappings."""
+    if not id_to_embedding:
+        return
+    await db.execute(
+        update(Listing),
+        [
+            {"id": listing_id, "tenant_id": tenant_id, "embedding": emb}
+            for listing_id, emb in id_to_embedding.items()
+        ],
+    )
 
 
 # =============================================================================

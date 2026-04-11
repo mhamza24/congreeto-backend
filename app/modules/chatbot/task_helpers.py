@@ -264,7 +264,9 @@ _LISTING_EXTRACT_PROMPT = """\
 You are a data extraction assistant for a real-estate platform.
 
 Given the text scraped from a property listing webpage, extract all property listings you can find.
-Return a JSON array. Each element must have these fields (use null when unknown):
+
+Return a JSON object with a single key "listings" whose value is an array.
+Each element in the array must have these fields (use null when unknown):
 {
   "title": "string — property title or address",
   "listing_type": "sale | rent",
@@ -285,11 +287,58 @@ Return a JSON array. Each element must have these fields (use null when unknown)
   "has_pool": true | false
 }
 
-If the page contains NO property listings, return an empty array: []
-Return ONLY the JSON array, no explanation.
+If the page contains NO property listings, return {"listings": []}.
 
 PAGE TEXT:
 """
+
+# Max tokens for a page extraction response — enough for ~15 listings with descriptions
+_EXTRACT_MAX_TOKENS = 1500
+
+
+def _try_parse_listings_json(raw: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Attempt to parse a listings JSON response robustly.
+
+    Tries, in order:
+      1. Direct json.loads (handles json_object mode: {"listings": [...]})
+      2. Strip markdown fences then json.loads
+      3. Regex extraction of the first [...] array in the string
+    Returns the list on success, None on total failure.
+    """
+    import json
+
+    text = raw.strip()
+
+    # ── Attempt 1: clean json.loads ───────────────────────────────────────
+    for candidate in (text, text.split("\n", 1)[-1].rsplit("```", 1)[0].strip() if text.startswith("```") else None):
+        if candidate is None:
+            continue
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                # json_object mode wraps in {"listings": [...]}
+                for key in ("listings", "results", "data", "properties"):
+                    if isinstance(parsed.get(key), list):
+                        return parsed[key]
+            return None
+        except json.JSONDecodeError:
+            continue
+
+    # ── Attempt 2: extract first [...] block with regex ───────────────────
+    import re
+    match = re.search(r"\[.*?\]", text, re.DOTALL)
+    if match:
+        try:
+            parsed = json.loads(match.group())
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 async def extract_listings_from_page(
@@ -299,31 +348,40 @@ async def extract_listings_from_page(
 ) -> List[Dict[str, Any]]:
     """
     Ask the LLM to extract structured listing data from a scraped page.
-    Returns a (possibly empty) list of listing dicts.
-    Failures are caught and logged — never raise, just return [].
+
+    Improvements over naive approach:
+    - Cleans HTML noise from the input before sending to the LLM
+    - Uses response_format=json_object to guarantee syntactically valid JSON
+    - Falls back to regex array extraction if the outer wrapper is mangled
+    - Never raises — returns [] on any failure
     """
     import json
 
-    # Don't waste tokens on very short pages
-    if len(page_text.strip()) < 100:
+    # Clean HTML noise (excess whitespace, nav debris) before tokenising
+    cleaned = clean_html_text(page_text)
+
+    if len(cleaned.strip()) < 100:
         return []
 
-    # Truncate to avoid hitting context limits (~12k chars ≈ 3k tokens)
-    truncated = page_text[:12000]
+    # Truncate to ~10k chars (~2500 tokens) — leaves headroom for the JSON response
+    truncated = cleaned[:10000]
     prompt = _LISTING_EXTRACT_PROMPT + truncated
 
     try:
-        raw = await openai_service.openai_call_conversation(
+        raw = await openai_service.openai_call_json(
             messages=[{"role": "user", "content": prompt}],
-            system_instructions="You extract structured property listing data from webpage text. Return only valid JSON.",
+            system_instructions=(
+                "You extract structured property listing data from webpage text. "
+                "Always return a JSON object with a 'listings' key."
+            ),
+            max_tokens=_EXTRACT_MAX_TOKENS,
         )
-        # Strip markdown code fences if present
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        listings = json.loads(raw)
-        if not isinstance(listings, list):
+        listings = _try_parse_listings_json(raw)
+        if listings is None:
+            logger.warning(
+                f"Listing extraction: unparseable JSON for {source_url}. raw={raw[:200]!r}"
+            )
             return []
 
         # Attach source_url for traceability
@@ -331,7 +389,9 @@ async def extract_listings_from_page(
             if source_url:
                 item.setdefault("raw_data", {})["source_url"] = source_url
 
-        logger.info(f"Listing extraction: found {len(listings)} listings from {source_url or 'page'}")
+        logger.info(
+            f"Listing extraction: found {len(listings)} listings from {source_url or 'page'}"
+        )
         return listings
 
     except Exception as exc:
@@ -455,19 +515,18 @@ async def parse_listings_from_table(
 
         prompt = _LISTING_FILE_PARSE_PROMPT.format(row_count=len(batch)) + table_text
 
+        # max_tokens: 20 rows × ~60 tokens/row of JSON ≈ 1200 + buffer
         try:
-            raw = await openai_service.openai_call_conversation(
+            raw = await openai_service.openai_call_json(
                 messages=[{"role": "user", "content": prompt}],
                 system_instructions=(
                     "You extract structured property listing data from tabular data. "
-                    "Return only valid JSON."
+                    "Return only a valid JSON object with a 'listings' key containing the array."
                 ),
+                max_tokens=1500,
             )
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-            parsed = json.loads(raw)
+            parsed = _try_parse_listings_json(raw)
             if isinstance(parsed, list):
                 logger.info(
                     f"LLM parsed rows {batch_start}–{batch_start + len(batch)}: "
@@ -475,7 +534,10 @@ async def parse_listings_from_table(
                 )
                 return parsed
 
-            logger.warning(f"LLM returned non-list for rows {batch_start}, using raw")
+            logger.warning(
+                f"LLM returned unparseable JSON for rows {batch_start}. "
+                f"raw={raw[:200]!r} — falling back to raw rows."
+            )
             return batch
 
         except Exception as exc:

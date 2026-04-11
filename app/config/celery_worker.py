@@ -38,11 +38,32 @@ celery_app.conf.update(
     broker_use_ssl=ssl_config if ssl_config else None,
     redis_backend_use_ssl=ssl_config if ssl_config else None,
     broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=None,  # retry forever on disconnect
     task_track_started=settings.CELERY_TASK_TRACK_STARTED,
     task_serializer=settings.CELERY_TASK_SERIALIZER,
     result_expires=settings.CELERY_RESULT_EXPIRES,
     task_default_queue=QUEUEEnum.ANALYSIS,
     task_routes={},
+    # ── Redis connection resilience ───────────────────────────────────────
+    # Keeps TCP connections alive through idle periods so long-running tasks
+    # (crawl, embed) don't hit "Connection reset by peer" mid-execution.
+    broker_transport_options={
+        "socket_keepalive": True,
+        "retry_on_timeout": True,
+        "socket_connect_timeout": 10,
+        "socket_timeout": 120,
+        "health_check_interval": 25,
+    },
+    redis_socket_timeout=120,
+    redis_socket_connect_timeout=10,
+    # ── Worker reliability ────────────────────────────────────────────────
+    # Acknowledge only after the task finishes — safe to retry on worker crash.
+    task_acks_late=True,
+    # Re-queue the task if the worker process is killed while running it.
+    task_reject_on_worker_lost=True,
+    # Fetch one task at a time per worker process — prevents long tasks from
+    # blocking other work and keeps Redis message throughput predictable.
+    worker_prefetch_multiplier=1,
 )
 
 celery_app.conf.beat_schedule = {

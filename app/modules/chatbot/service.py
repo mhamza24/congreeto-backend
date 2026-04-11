@@ -219,13 +219,19 @@ async def create_knowledge_source(
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
 
+    # For website sources, default extract_listings to True so every crawl
+    # automatically picks up and embeds listings found on the site.
+    config = dict(payload.config)
+    if payload.type == "website":
+        config.setdefault("extract_listings", True)
+
     source = await repo.create_knowledge_source(
         db,
         tenant_id=tenant_id,
         chatbot_config_id=chatbot.id,
         type=payload.type,
         name=payload.name,
-        config=payload.config,
+        config=config,
         public_id=_new_public_id(),
     )
     await db.commit()

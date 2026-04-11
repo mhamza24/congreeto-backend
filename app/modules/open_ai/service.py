@@ -46,6 +46,35 @@ async def openai_call_conversation(messages: list, system_instructions: str) -> 
     return content
 
 
+async def openai_call_json(
+    messages: list,
+    system_instructions: str,
+    max_tokens: int = 1500,
+) -> str:
+    """
+    Call the LLM with strict JSON output enforced via response_format.
+
+    Use this whenever the caller expects to json.loads() the response.
+    The API guarantees syntactically valid JSON — no markdown fences, no prose.
+
+    NOTE: The system_instructions or message content MUST contain the word
+    'JSON' (OpenAI requirement for json_object mode).
+
+    Returns the raw JSON string. Raises on API error so callers can handle
+    the fallback themselves.
+    """
+    params = {**OPENAI_CALL_PARAMS, "max_tokens": max_tokens}
+    response = await async_client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": system_instructions},
+            *messages,
+        ],
+        response_format={"type": "json_object"},
+        **params,
+    )
+    return response.choices[0].message.content or "{}"
+
+
 async def openai_call_with_usage(
     messages: list,
     system_instructions: str,

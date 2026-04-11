@@ -211,7 +211,6 @@ async def import_from_excel(
     filename: str,
 ) -> schemas.ListingImportResponse:
     from app.modules.chatbot.parsers.excel_parser import parse_excel_listings
-    from app.modules.chatbot.tasks import embed_listing
 
     try:
         rows = parse_excel_listings(file_bytes)
@@ -221,39 +220,66 @@ async def import_from_excel(
     if not rows:
         raise HTTPException(status_code=422, detail="No valid listing rows found in the file.")
 
+    from app.modules.chatbot.tasks import embed_listings_batch, _EMBED_BATCH_SIZE
+
+    _IMPORT_BATCH = 100
     imported = 0
-    for item in rows:
-        external_id = f"excel::{filename}::{item.get('title', '')}::{item.get('suburb', '')}"
-        existing = await repo.get_listing_by_external_id(
-            db, tenant_id=tenant_id, external_id=external_id
+
+    for batch_start in range(0, len(rows), _IMPORT_BATCH):
+        batch = rows[batch_start: batch_start + _IMPORT_BATCH]
+
+        # Build external_ids for the whole batch
+        external_ids = [
+            f"excel::{filename}::{item.get('title', '')}::{item.get('suburb', '')}"
+            for item in batch
+        ]
+
+        # ONE query for all existing listings in this batch
+        existing_map = await repo.get_listings_by_external_ids(
+            db, tenant_id=tenant_id, external_ids=external_ids
         )
-        listing, _ = await repo.upsert_listing(
-            db,
-            tenant_id=tenant_id,
-            external_id=external_id,
-            public_id=_new_public_id() if not existing else existing.public_id,
-            source=ListingSource.MANUAL.value,
-            title=item.get("title", "Untitled"),
-            listing_type=item.get("listing_type", "sale"),
-            status=item.get("status", "active"),
-            description=item.get("description"),
-            price=item.get("price"),
-            price_display=item.get("price_display"),
-            currency=item.get("currency", "AUD"),
-            street=item.get("street"),
-            suburb=item.get("suburb"),
-            state=item.get("state"),
-            postcode=item.get("postcode"),
-            bedrooms=item.get("bedrooms"),
-            bathrooms=item.get("bathrooms"),
-            garages=item.get("garages"),
-            land_sqm=item.get("land_sqm"),
-            house_sqm=item.get("house_sqm"),
-            has_pool=item.get("has_pool", False),
-            raw_data=item.get("raw_data", {}),
-        )
+
+        batch_listing_ids: List[int] = []
+        for item, external_id in zip(batch, external_ids):
+            existing = existing_map.get(external_id)
+            listing, _ = await repo.upsert_listing(
+                db,
+                tenant_id=tenant_id,
+                external_id=external_id,
+                public_id=_new_public_id() if not existing else existing.public_id,
+                source=ListingSource.MANUAL.value,
+                title=item.get("title", "Untitled"),
+                listing_type=item.get("listing_type", "sale"),
+                status=item.get("status", "active"),
+                description=item.get("description"),
+                price=item.get("price"),
+                price_display=item.get("price_display"),
+                currency=item.get("currency", "AUD"),
+                street=item.get("street"),
+                suburb=item.get("suburb"),
+                state=item.get("state"),
+                postcode=item.get("postcode"),
+                bedrooms=item.get("bedrooms"),
+                bathrooms=item.get("bathrooms"),
+                garages=item.get("garages"),
+                land_sqm=item.get("land_sqm"),
+                house_sqm=item.get("house_sqm"),
+                has_pool=item.get("has_pool", False),
+                raw_data=item.get("raw_data", {}),
+            )
+            batch_listing_ids.append(listing.id)
+            imported += 1
+
+        # ONE commit for the whole batch
         await db.commit()
-        embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
-        imported += 1
+
+        # ONE embed task per _EMBED_BATCH_SIZE chunk (avoids oversized payloads)
+        for i in range(0, len(batch_listing_ids), _EMBED_BATCH_SIZE):
+            embed_listings_batch.apply_async(
+                kwargs=dict(
+                    listing_ids=batch_listing_ids[i: i + _EMBED_BATCH_SIZE],
+                    tenant_id=tenant_id,
+                )
+            )
 
     return schemas.ListingImportResponse(imported=imported, filename=filename)

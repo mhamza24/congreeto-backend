@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,26 @@ async def get_listing_by_external_id(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_listings_by_external_ids(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    external_ids: List[str],
+) -> Dict[str, Listing]:
+    """Fetch multiple listings by external_id in ONE query.
+    Returns a dict keyed by external_id for O(1) lookup."""
+    if not external_ids:
+        return {}
+    result = await db.execute(
+        select(Listing).where(
+            Listing.tenant_id == tenant_id,
+            Listing.external_id.in_(external_ids),
+            Listing.deleted_at.is_(None),
+        )
+    )
+    return {lst.external_id: lst for lst in result.scalars().all()}
 
 
 async def list_listings(

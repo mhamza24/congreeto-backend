@@ -112,11 +112,16 @@ def crawl_and_embed(
     base_url: str,
 ) -> str:
     """
+    Orchestrator task — scrapes all pages under base_url then dispatches one
+    embed_crawled_page task per page.  Each per-page task runs independently
+    in a short-lived worker, keeping Redis connections brief and avoiding
+    broker disconnects on long crawls.
+
     1. Mark crawl_job → running
-    2. Scrape all pages under base_url
-    3. For each page: create document row → chunk → embed → write chunks
-    4. Mark crawl_job → completed (or failed)
-    5. Flip rag_enabled if needed
+    2. Scrape all pages (HTTP)
+    3. Update pages_found
+    4. Dispatch N embed_crawled_page tasks (fire-and-forget)
+    5. Per-page tasks atomically increment counters and the last one finalizes
     """
     try:
         _run(
@@ -128,7 +133,7 @@ def crawl_and_embed(
                 base_url=base_url,
             )
         )
-        return f"crawl_and_embed completed for job_id={crawl_job_id}"
+        return f"crawl_and_embed dispatched for job_id={crawl_job_id}"
 
     except Exception as exc:
         countdown = 2 ** self.request.retries
@@ -147,17 +152,16 @@ async def _crawl_and_embed_async(
     chatbot_config_id: int,
     base_url: str,
 ) -> None:
-    from app.modules.open_ai import service as openai_service
-
+    # ── Step 1: Mark job running (short DB session) ───────────────────────
     async with get_task_db_session() as db:
-        # ── Step 1: Mark job running ──────────────────────────────────────
         job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
         if not job:
             logger.error(f"CrawlJob {crawl_job_id} not found.")
             return
 
-        # Load KS config to check extract_listings flag
-        ks = await repo.get_knowledge_source(db, tenant_id=tenant_id, source_id=knowledge_source_id)
+        ks = await repo.get_knowledge_source(
+            db, tenant_id=tenant_id, source_id=knowledge_source_id
+        )
         extract_listings = bool(ks and ks.config.get("extract_listings", False))
 
         await repo.update_crawl_job(
@@ -168,148 +172,301 @@ async def _crawl_and_embed_async(
         )
         await db.commit()
 
-        # ── Step 2: Scrape ────────────────────────────────────────────────
-        try:
-            scraped: dict = await website_parser.scrape_websites(base_url)
-        except Exception as exc:
-            await repo.update_crawl_job(
-                db,
-                job=job,
-                status=CrawlStatus.FAILED,
-                error_message=str(exc),
-                completed_at=datetime.now(timezone.utc),
-            )
-            await db.commit()
-            raise
-
-        # scraped = { base_url: { page_url: page_text, ... } }
-        pages_dict: dict = scraped.get(base_url, {})
-        pages_found = len(pages_dict)
-
-        await repo.update_crawl_job(db, job=job, pages_found=pages_found)
-        await db.commit()
-
-        # ── Step 3: Process each page ─────────────────────────────────────
-        pages_processed = 0
-        pages_failed = 0
-
-        for page_url, page_text in pages_dict.items():
-            try:
-                import uuid
-                doc = await repo.create_document(
+    # ── Step 2: Scrape (long HTTP — outside any DB session) ───────────────
+    try:
+        scraped: dict = await website_parser.scrape_websites(base_url)
+    except Exception as exc:
+        async with get_task_db_session() as db:
+            job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
+            if job:
+                await repo.update_crawl_job(
                     db,
-                    knowledge_source_id=knowledge_source_id,
-                    tenant_id=tenant_id,
-                    file_name=page_url,
-                    file_type="html",
-                    file_size_bytes=len(page_text.encode()),
-                    public_id=uuid.uuid4().hex,
+                    job=job,
+                    status=CrawlStatus.FAILED,
+                    error_message=str(exc),
+                    completed_at=datetime.now(timezone.utc),
                 )
                 await db.commit()
+        raise
 
-                # ── 3a: RAG chunks (always) ───────────────────────────────
-                raw_chunks = chunk_plain_text(page_text, source_url=page_url)
+    pages_dict: dict = scraped.get(base_url, {})
+    pages_found = len(pages_dict)
 
-                if not raw_chunks:
-                    await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
-                    await db.commit()
-                    pages_processed += 1
-                else:
-                    embedded_chunks = await embed_chunks(raw_chunks, openai_service)
-                    chunk_rows = [
-                        DocumentChunk(
-                            document_id=doc.id,
-                            tenant_id=tenant_id,
-                            chunk_index=c["chunk_index"],
-                            content=c["content"],
-                            embedding=c["embedding"],
-                            chunk_metadata=c["metadata"],
-                        )
-                        for c in embedded_chunks
-                    ]
-                    await repo.bulk_create_chunks(db, chunks=chunk_rows)
-                    await repo.update_document(
-                        db, doc=doc, status=DocStatus.READY, chunk_count=len(chunk_rows)
-                    )
-                    await db.commit()
-                    pages_processed += 1
+    # ── Step 3: Record pages_found ────────────────────────────────────────
+    async with get_task_db_session() as db:
+        job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
+        if job:
+            await repo.update_crawl_job(db, job=job, pages_found=pages_found)
+            await db.commit()
 
-                # ── 3b: Listing extraction (only if flag set) ─────────────
-                if extract_listings:
-                    extracted = await extract_listings_from_page(
-                        page_text, openai_service, source_url=page_url
-                    )
-                    for item in extracted:
-                        external_id = f"{crawl_job_id}::{page_url}::{item.get('title', '')}"
-                        # Check existence first so we can assign public_id correctly
-                        existing = await repo.get_listing_by_external_id(
-                            db, tenant_id=tenant_id, external_id=external_id
-                        )
-                        listing, created = await repo.upsert_listing(
-                            db,
-                            tenant_id=tenant_id,
-                            external_id=external_id,
-                            crawl_job_id=crawl_job_id,
-                            source=ListingSource.CRAWLED.value,
-                            title=item.get("title") or page_url,
-                            listing_type=item.get("listing_type", "sale"),
-                            status=item.get("status", "active"),
-                            description=item.get("description"),
-                            price=item.get("price"),
-                            price_display=item.get("price_display"),
-                            currency=item.get("currency", "AUD"),
-                            street=item.get("street"),
-                            suburb=item.get("suburb"),
-                            state=item.get("state"),
-                            postcode=item.get("postcode"),
-                            bedrooms=item.get("bedrooms"),
-                            bathrooms=item.get("bathrooms"),
-                            garages=item.get("garages"),
-                            land_sqm=item.get("land_sqm"),
-                            house_sqm=item.get("house_sqm"),
-                            has_pool=item.get("has_pool", False),
-                            raw_data=item.get("raw_data", {}),
-                            public_id=_new_public_id() if not existing else existing.public_id,
-                        )
-                        await db.commit()
-                        embed_listing.apply_async(
-                            kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
-                            queue=QUEUEEnum.ANALYSIS.value,
-                        )
+    if pages_found == 0:
+        async with get_task_db_session() as db:
+            job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
+            if job:
+                await repo.update_crawl_job(
+                    db,
+                    job=job,
+                    status=CrawlStatus.COMPLETED,
+                    completed_at=datetime.now(timezone.utc),
+                )
+                await db.commit()
+        logger.info(f"CrawlJob {crawl_job_id}: 0 pages found, marked completed.")
+        return
 
-            except Exception as exc:
-                logger.error(f"Failed to process page {page_url}: {exc}")
-                pages_failed += 1
-
-        # ── Step 4: Finalize crawl job ────────────────────────────────────
-        final_status = (
-            CrawlStatus.COMPLETED if pages_failed == 0 else CrawlStatus.FAILED
+    # ── Step 4: Dispatch one short-lived task per page ────────────────────
+    for page_url, page_text in pages_dict.items():
+        embed_crawled_page.apply_async(
+            kwargs=dict(
+                page_url=page_url,
+                page_text=page_text,
+                crawl_job_id=crawl_job_id,
+                tenant_id=tenant_id,
+                knowledge_source_id=knowledge_source_id,
+                chatbot_config_id=chatbot_config_id,
+                extract_listings=extract_listings,
+                pages_found=pages_found,
+            ),
+            queue=QUEUEEnum.ANALYSIS.value,
         )
+
+    logger.info(
+        f"CrawlJob {crawl_job_id}: dispatched {pages_found} embed_crawled_page tasks."
+    )
+
+
+# =============================================================================
+# TASK A2 — EMBED ONE CRAWLED PAGE  (dispatched by crawl_and_embed)
+# =============================================================================
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.chatbot.tasks.embed_crawled_page",
+    max_retries=settings.CELERY_MAX_TRIES,
+    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def embed_crawled_page(
+    self,
+    *,
+    page_url: str,
+    page_text: str,
+    crawl_job_id: int,
+    tenant_id: int,
+    knowledge_source_id: int,
+    chatbot_config_id: int,
+    extract_listings: bool,
+    pages_found: int,
+) -> str:
+    """
+    Process a single crawled page: chunk → embed → write chunks → optional
+    listing extraction.  Atomically increments the crawl job counters and
+    finalizes the job when the last page completes.
+    """
+    try:
+        _run(
+            _embed_crawled_page_async(
+                page_url=page_url,
+                page_text=page_text,
+                crawl_job_id=crawl_job_id,
+                tenant_id=tenant_id,
+                knowledge_source_id=knowledge_source_id,
+                chatbot_config_id=chatbot_config_id,
+                extract_listings=extract_listings,
+                pages_found=pages_found,
+            )
+        )
+        return f"embed_crawled_page completed for {page_url}"
+
+    except Exception as exc:
+        if self.request.retries < self.max_retries:
+            countdown = 2 ** self.request.retries
+            logger.error(
+                f"embed_crawled_page failed for {page_url}: {exc}. "
+                f"Retrying in {countdown}s."
+            )
+            raise self.retry(exc=exc, countdown=countdown)
+
+        # All retries exhausted — count this page as failed and check finalization
+        logger.error(
+            f"embed_crawled_page: all retries exhausted for {page_url}: {exc}."
+        )
+        _run(
+            _on_page_done(
+                crawl_job_id=crawl_job_id,
+                tenant_id=tenant_id,
+                chatbot_config_id=chatbot_config_id,
+                pages_found=pages_found,
+                success=False,
+            )
+        )
+
+
+async def _embed_crawled_page_async(
+    *,
+    page_url: str,
+    page_text: str,
+    crawl_job_id: int,
+    tenant_id: int,
+    knowledge_source_id: int,
+    chatbot_config_id: int,
+    extract_listings: bool,
+    pages_found: int,
+) -> None:
+    import uuid
+    from app.modules.open_ai import service as openai_service
+
+    async with get_task_db_session() as db:
+        doc = await repo.create_document(
+            db,
+            knowledge_source_id=knowledge_source_id,
+            tenant_id=tenant_id,
+            file_name=page_url,
+            file_type="html",
+            file_size_bytes=len(page_text.encode()),
+            public_id=uuid.uuid4().hex,
+        )
+        await db.commit()
+
+        # ── RAG chunks ────────────────────────────────────────────────────
+        raw_chunks = chunk_plain_text(page_text, source_url=page_url)
+
+        if not raw_chunks:
+            await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
+            await db.commit()
+        else:
+            embedded_chunks = await embed_chunks(raw_chunks, openai_service)
+            chunk_rows = [
+                DocumentChunk(
+                    document_id=doc.id,
+                    tenant_id=tenant_id,
+                    chunk_index=c["chunk_index"],
+                    content=c["content"],
+                    embedding=c["embedding"],
+                    chunk_metadata=c["metadata"],
+                )
+                for c in embedded_chunks
+            ]
+            await repo.bulk_create_chunks(db, chunks=chunk_rows)
+            await repo.update_document(
+                db, doc=doc, status=DocStatus.READY, chunk_count=len(chunk_rows)
+            )
+            await db.commit()
+
+        # ── Optional listing extraction ───────────────────────────────────
+        if extract_listings:
+            extracted = await extract_listings_from_page(
+                page_text, openai_service, source_url=page_url
+            )
+            if extracted:
+                page_external_ids = [
+                    f"{crawl_job_id}::{page_url}::{item.get('title', '')}"
+                    for item in extracted
+                ]
+                existing_map = await repo.get_listings_by_external_ids(
+                    db, tenant_id=tenant_id, external_ids=page_external_ids,
+                )
+                page_listing_ids: list[int] = []
+                for item, external_id in zip(extracted, page_external_ids):
+                    existing = existing_map.get(external_id)
+                    listing, _ = await repo.upsert_listing(
+                        db,
+                        tenant_id=tenant_id,
+                        external_id=external_id,
+                        crawl_job_id=crawl_job_id,
+                        source=ListingSource.CRAWLED.value,
+                        title=item.get("title") or page_url,
+                        listing_type=item.get("listing_type", "sale"),
+                        status=item.get("status", "active"),
+                        description=item.get("description"),
+                        price=item.get("price"),
+                        price_display=item.get("price_display"),
+                        currency=item.get("currency", "AUD"),
+                        street=item.get("street"),
+                        suburb=item.get("suburb"),
+                        state=item.get("state"),
+                        postcode=item.get("postcode"),
+                        bedrooms=item.get("bedrooms"),
+                        bathrooms=item.get("bathrooms"),
+                        garages=item.get("garages"),
+                        land_sqm=item.get("land_sqm"),
+                        house_sqm=item.get("house_sqm"),
+                        has_pool=item.get("has_pool", False),
+                        raw_data=item.get("raw_data", {}),
+                        public_id=_new_public_id() if not existing else existing.public_id,
+                    )
+                    page_listing_ids.append(listing.id)
+                await db.commit()
+
+                for i in range(0, len(page_listing_ids), _EMBED_BATCH_SIZE):
+                    batch_ids = page_listing_ids[i: i + _EMBED_BATCH_SIZE]
+                    embed_listings_batch.apply_async(
+                        kwargs=dict(listing_ids=batch_ids, tenant_id=tenant_id),
+                        queue=QUEUEEnum.ANALYSIS.value,
+                    )
+
+    # ── Atomically record success and check finalization ──────────────────
+    await _on_page_done(
+        crawl_job_id=crawl_job_id,
+        tenant_id=tenant_id,
+        chatbot_config_id=chatbot_config_id,
+        pages_found=pages_found,
+        success=True,
+    )
+
+
+async def _on_page_done(
+    *,
+    crawl_job_id: int,
+    tenant_id: int,
+    chatbot_config_id: int,
+    pages_found: int,
+    success: bool,
+) -> None:
+    """
+    Atomically increment the crawl job page counter, then finalize the job
+    if this is the last page.  Safe to call concurrently from many workers.
+    """
+    async with get_task_db_session() as db:
+        processed, failed, found = await repo.atomic_increment_crawl_page(
+            db, job_id=crawl_job_id, success=success
+        )
+        await db.commit()
+
+    # Use pages_found passed by the orchestrator (DB value may lag on first
+    # page to complete if the orchestrator hasn't flushed yet).
+    effective_found = max(found, pages_found)
+    if processed + failed < effective_found:
+        return
+
+    # Last page — finalize the job (check status first for idempotency)
+    async with get_task_db_session() as db:
+        job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
+        if not job or job.status in (CrawlStatus.COMPLETED, CrawlStatus.FAILED):
+            return  # already finalized by a concurrent task
+
+        final_status = CrawlStatus.COMPLETED if failed == 0 else CrawlStatus.FAILED
         await repo.update_crawl_job(
             db,
             job=job,
             status=final_status,
-            pages_processed=pages_processed,
-            pages_failed=pages_failed,
             completed_at=datetime.now(timezone.utc),
         )
         await db.commit()
 
-        # ── Step 5: Flip rag_enabled ──────────────────────────────────────
-        if pages_processed > 0:
+        if processed > 0:
             await _flip_rag_if_needed(
                 db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id
             )
             await _increment_usage(
                 db, tenant_id=tenant_id,
                 metric=UsageMetric.PAGES_CRAWLED,
-                amount=pages_processed,
+                amount=processed,
             )
 
-        logger.info(
-            f"CrawlJob {crawl_job_id} done. "
-            f"processed={pages_processed} failed={pages_failed}"
-        )
+    logger.info(
+        f"CrawlJob {crawl_job_id} finalized. "
+        f"processed={processed} failed={failed}"
+    )
 
 
 # =============================================================================
@@ -671,6 +828,91 @@ async def _embed_listing_async(*, listing_id: int, tenant_id: int) -> None:
 
 
 # =============================================================================
+# TASK D2 — EMBED LISTINGS BATCH  (bulk import / crawl)
+# =============================================================================
+
+_EMBED_BATCH_SIZE = 100  # max listings per OpenAI embeddings call
+
+
+@celery_app.task(
+    bind=True,
+    name="app.modules.chatbot.tasks.embed_listings_batch",
+    max_retries=settings.CELERY_MAX_TRIES,
+    default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def embed_listings_batch(self, *, listing_ids: list[int], tenant_id: int) -> str:
+    """
+    Compute and store embeddings for a batch of listings in one OpenAI call.
+
+    Used instead of individual embed_listing tasks whenever listings are
+    created in bulk (file upload, crawl extraction).  Each invocation handles
+    at most _EMBED_BATCH_SIZE listings so the OpenAI payload stays bounded.
+
+    Enqueue from bulk-create paths:
+        embed_listings_batch.apply_async(
+            kwargs=dict(listing_ids=[...], tenant_id=tenant_id),
+            queue=QUEUEEnum.ANALYSIS.value,
+        )
+    """
+    try:
+        _run(_embed_listings_batch_async(listing_ids=listing_ids, tenant_id=tenant_id))
+        return f"embed_listings_batch completed for {len(listing_ids)} listings"
+    except Exception as exc:
+        countdown = 2 ** self.request.retries
+        logger.error(
+            f"embed_listings_batch failed for tenant={tenant_id} "
+            f"ids={listing_ids}: {exc}. Retrying in {countdown}s."
+        )
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+async def _embed_listings_batch_async(
+    *, listing_ids: list[int], tenant_id: int
+) -> None:
+    from app.modules.open_ai import service as openai_service
+
+    async with get_task_db_session() as db:
+        listings = await repo.get_listings_by_ids(
+            db, tenant_id=tenant_id, listing_ids=listing_ids
+        )
+        if not listings:
+            logger.warning(
+                f"embed_listings_batch: none of listing_ids={listing_ids} found."
+            )
+            return
+
+        # Build embed texts; skip listings with empty text
+        to_embed = []
+        for lst in listings:
+            text = build_listing_embed_text(lst)
+            if text.strip():
+                to_embed.append((lst.id, text))
+
+        if not to_embed:
+            logger.warning(
+                f"embed_listings_batch: all listings produced empty embed text "
+                f"(tenant={tenant_id}, ids={listing_ids})."
+            )
+            return
+
+        # ── Single OpenAI call for the whole batch ────────────────────────────
+        ids, texts = zip(*to_embed)
+        embeddings = await openai_service.embed_texts(list(texts))
+
+        # ── One bulk UPDATE round-trip ─────────────────────────────────────────
+        id_to_embedding = dict(zip(ids, embeddings))
+        await repo.bulk_update_listing_embeddings(
+            db, tenant_id=tenant_id, id_to_embedding=id_to_embedding
+        )
+        await db.commit()
+        logger.info(
+            f"embed_listings_batch: embedded {len(id_to_embedding)} listings "
+            f"(tenant={tenant_id})."
+        )
+
+
+# =============================================================================
 # TASK E — CLEAR LISTING EMBEDDING  (called on soft-delete / archive)
 # =============================================================================
 
@@ -879,12 +1121,12 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
             await db.flush()
             await db.commit()
 
-            # ── 4e: Queue embed tasks after commit (ids are stable) ───────
-            for listing in upserted_listings:
-                embed_listing.apply_async(
-                    kwargs=dict(listing_id=listing.id, tenant_id=tenant_id),
-                    queue=QUEUEEnum.ANALYSIS.value,
-                )
+            # ── 4e: Queue ONE batch embed task per batch (ids are stable) ──
+            batch_listing_ids = [lst.id for lst in upserted_listings]
+            embed_listings_batch.apply_async(
+                kwargs=dict(listing_ids=batch_listing_ids, tenant_id=tenant_id),
+                queue=QUEUEEnum.ANALYSIS.value,
+            )
 
             await repo.update_listing_upload_job(db, job=job, processed_rows=processed)
             await db.commit()
