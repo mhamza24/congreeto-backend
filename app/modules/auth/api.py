@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import InvalidOTPError
 from app.core.response import ApiResponse
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_superadmin
 from . import schemas,service
 from app.modules.chat.models import ConversationStatus
 
@@ -87,6 +87,65 @@ async def login_endpoint(
         raise                      
     except Exception:
         logger.exception("Unexpected error in user login")
+        sentry_sdk.capture_exception(Exception)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Login successful.",
+        data=reply,
+    )
+
+
+@router.post(
+    "/admin/signup",
+    response_model=ApiResponse[schemas.AdminSignupResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new superadmin account (requires existing superadmin)",
+)
+async def admin_signup_endpoint(
+    payload: schemas.AdminSignupRequest,
+    db: DBDep,
+    _: object = Depends(require_superadmin),
+) -> ApiResponse[schemas.AdminSignupResponse]:
+    try:
+        reply = await service.create_admin_user(db, payload=payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error in admin signup")
+        sentry_sdk.capture_exception(Exception)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Admin account created successfully.",
+        data=reply,
+    )
+
+
+@router.post(
+    "/admin/login",
+    response_model=ApiResponse[schemas.LoginResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Admin portal login — validates credentials and superadmin role",
+)
+async def admin_login_endpoint(
+    payload: schemas.LoginRequest,
+    db: DBDep,
+) -> ApiResponse[schemas.LoginResponse]:
+    try:
+        reply = await service.login_admin_user(db, payload=payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error in admin login")
         sentry_sdk.capture_exception(Exception)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

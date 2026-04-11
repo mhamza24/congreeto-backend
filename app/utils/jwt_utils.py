@@ -70,10 +70,10 @@ def get_subject_from_token(token: str) -> dict[str, Any]:
 
 def get_token_subject(user: User) -> dict[str, Any]:
     """Builds the JWT subject dict from a User model instance."""
-    
-    is_verified = user.email_verified_at is not None  # ← correct check
 
-    base = {
+    is_verified = user.email_verified_at is not None
+
+    return {
         "id":             int(user.id),
         "email":          user.email,
         "public_id":      str(user.public_id),
@@ -82,15 +82,7 @@ def get_token_subject(user: User) -> dict[str, Any]:
         "status":         user.status.value if hasattr(user.status, "value") else user.status,
         "avatar_url":     user.avatar_url,
         "email_verified": is_verified,
-        "last_login":      user.last_login_at.isoformat() if user.last_login_at else None,
+        "is_superadmin":  user.is_superadmin,
+        "last_login":     user.last_login_at.isoformat() if user.last_login_at else None,
         "created_at":     user.created_at.isoformat(),
     }
-    return base
-    if is_verified:
-        # user is verified — include extra claims like roles/permissions
-        base.update({
-            "role":        user.role,          # add whatever verified-only fields you have
-            "permissions": user.permissions,
-        })
-
-    return base

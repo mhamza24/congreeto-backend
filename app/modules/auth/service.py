@@ -197,6 +197,77 @@ async def verify_email(
     )
 
 
+async def create_admin_user(
+    db: AsyncSession,
+    *,
+    payload: schemas.AdminSignupRequest,
+) -> schemas.AdminSignupResponse:
+
+    # 1. Reject duplicate emails
+    existing = await user_repo.get_user_by_email(db, email=payload.email)
+    if existing:
+        raise EmailAlreadyExistsError(payload.email)
+
+    # 2. Build the user — mark as superadmin, active, and already verified
+    overrides = {
+        "email": payload.email.lower(),
+        "password_hash": hashing_utils.hash_password(payload.password),
+        "is_superadmin": True,
+        "status": UserStatus.ACTIVE,
+        "email_verified_at": datetime.now(timezone.utc),
+    }
+
+    user = user_models.User.from_schema(payload, **overrides)
+
+    # 3. Persist — no OTP, no email
+    user = await user_repo.create_user(db, user=user)
+    await db.commit()
+
+    return schemas.AdminSignupResponse(
+        public_id=user.public_id,
+    )
+
+
+async def login_admin_user(
+    db: AsyncSession,
+    *,
+    payload: schemas.LoginRequest,
+) -> schemas.LoginResponse:
+
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+
+    # Check 1: user exists
+    if existing_user is None:
+        raise InvalidCredentialsError()
+
+    # Check 2: password valid — do this before the superadmin check to keep
+    # timing consistent and avoid leaking whether the account exists
+    is_password_valid = hashing_utils.verify_password(
+        payload.password, existing_user.password_hash
+    )
+    if not is_password_valid:
+        raise InvalidCredentialsError()
+
+    # Check 3: must be a superadmin — same generic error to prevent enumeration
+    if not existing_user.is_superadmin:
+        raise InvalidCredentialsError()
+
+    # Check 4: account must not be suspended or inactive
+    if existing_user.status in (UserStatus.SUSPENDED, UserStatus.INACTIVE):
+        raise InvalidCredentialsError()
+
+    await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
+
+    jwt_subject = get_token_subject(existing_user)
+
+    return schemas.LoginResponse(
+        tokens=schemas.TokenPair(
+            access_token=create_access_token(jwt_subject),
+            refresh_token=create_refresh_token(jwt_subject),
+        ),
+    )
+
+
 async def get_resend_otp_status(
     *,
     current_user: user_models.User,

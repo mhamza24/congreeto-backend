@@ -123,3 +123,32 @@ class ResendOTPStatusResponse(BaseModel):
     remaining_seconds: Optional[int] = None
     remaining_minutes: Optional[float] = None
     remaining_hours: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# Admin auth schemas
+# ---------------------------------------------------------------------------
+
+class AdminSignupRequest(BaseModel):
+    email: EmailStr = Field(..., description="Must be unique. Lowercased before insert.")
+    password: str = Field(..., min_length=8, max_length=100)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit.")
+        return v
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class AdminSignupResponse(BaseModel):
+    public_id: str
+    message: str = "Admin account created successfully."
+
+    model_config = ConfigDict(from_attributes=True)
