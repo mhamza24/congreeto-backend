@@ -55,8 +55,12 @@ _BILLING_LIMIT_MESSAGE = (
     "Please reach out through the contact details on this page and we will get back to you shortly."
 )
 
-# RAG: number of knowledge-base chunks to retrieve per user message
-_RAG_TOP_K = 8
+# RAG: number of knowledge-base chunks to retrieve per user message.
+# Higher = more context for near-match suggestions; lower = faster + cheaper.
+# 10 doc chunks + 8 listing slots gives the LLM enough range to suggest alternatives
+# without drowning the context window in noise.
+_RAG_TOP_K = 10
+_LISTING_TOP_K = 8
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +165,7 @@ async def create_or_continue_chat(
                     chatbot_public_id=chatbot.public_id,
                     query=payload.message,
                     top_k=_RAG_TOP_K,
+                    listing_top_k=_LISTING_TOP_K,
                 )
             rag_chunk_texts = [c.content for c in rag_response.chunks if c.content]
             logger.info(f"[rag] Retrieved {len(rag_chunk_texts)} chunks for tenant {tenant_db_id}")

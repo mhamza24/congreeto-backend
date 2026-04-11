@@ -41,12 +41,11 @@ def build_static_system_prompt(
     """
     parts: list[str] = []
 
-    # ── 1. Personality (ARIA rules, tone, QA pairs, etc.) ────────────────────
+    # ── 1. Personality — rendered as structured text, NOT raw JSON ───────────
+    # Raw JSON dumps bury rules in nested keys the LLM has to mentally parse.
+    # Rendering as prose puts the most critical instructions front and centre.
     if personality_content:
-        parts.append(
-            "## PERSONALITY AND BEHAVIOUR RULES\n"
-            + json.dumps(personality_content, ensure_ascii=False)
-        )
+        parts.append(_render_personality(personality_content))
 
     # ── 2. Company profile (tenant-specific context) ──────────────────────────
     profile_text = _render_company_profile(company_profile)
@@ -59,6 +58,131 @@ def build_static_system_prompt(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _render_personality(personality_content: dict[str, Any]) -> str:
+    """
+    Render personality_content JSON as structured natural-language instructions.
+
+    The ARIA personality JSON has the shape:
+        {"SystemPrompt": {"Identity": {...}, "HardRules": [...], ...}}
+
+    We extract the key sections and write them out as explicit, clearly labelled
+    prose so the LLM doesn't have to mentally parse nested JSON to find the rules.
+    Sections are ordered by behavioural priority: role → hard rules →
+    conversation flow → formatting → lead capture → other details.
+    """
+    sp: dict[str, Any] = personality_content.get("SystemPrompt", personality_content)
+
+    sections: list[str] = []
+
+    # ── Role and identity ────────────────────────────────────────────────────
+    identity = sp.get("Identity", {})
+    role_lines: list[str] = []
+    if identity.get("Role"):
+        role_lines.append(identity["Role"])
+    if identity.get("ToneRule"):
+        role_lines.append(f"Tone: {identity['ToneRule']}")
+    if identity.get("VoiceRule"):
+        role_lines.append(f"Voice: {identity['VoiceRule']}")
+    if identity.get("SelfIntroductionRule"):
+        role_lines.append(f"Introduction rule: {identity['SelfIntroductionRule']}")
+    if identity.get("GreetingRule"):
+        role_lines.append(f"Greeting rule: {identity['GreetingRule']}")
+    if role_lines:
+        sections.append("## IDENTITY AND ROLE\n" + "\n\n".join(role_lines))
+
+    # ── Hard rules (non-negotiable) — most important, read first ────────────
+    hard_rules = sp.get("HardRules", [])
+    if hard_rules:
+        rules_text = "\n".join(f"{i + 1}. {r}" for i, r in enumerate(hard_rules))
+        sections.append(
+            "## HARD RULES — FOLLOW WITHOUT EXCEPTION\n"
+            "These rules override everything else. Violating any one of them is a failure.\n\n"
+            + rules_text
+        )
+
+    # ── Conversation philosophy and flow ─────────────────────────────────────
+    philosophy = sp.get("ConversationPhilosophy", "")
+    if philosophy:
+        sections.append(
+            "## CONVERSATION FLOW — THIS IS THE REQUIRED ORDER\n"
+            + philosophy
+            + "\n\nStep 1 is always CONNECTION. Never jump straight to qualification questions "
+            "like 'Are you looking to rent or buy?' on the first exchange. "
+            "Start with a warm, open question that invites the visitor to share what is on their mind. "
+            "Only move to qualification (budget, bedrooms, suburb) once you have established warmth and context."
+        )
+
+    # ── Australian language style ────────────────────────────────────────────
+    aus = sp.get("AustralianLanguageStyle", {})
+    aus_lines: list[str] = []
+    if aus.get("Spelling"):
+        aus_lines.append(aus["Spelling"])
+    if aus.get("ConversationStyle"):
+        aus_lines.append(aus["ConversationStyle"])
+    banned_phrases = aus.get("BannedAmericanPhrases", [])
+    if banned_phrases:
+        flat = banned_phrases if isinstance(banned_phrases, str) else " / ".join(
+            p if isinstance(p, str) else str(p) for p in banned_phrases
+        )
+        aus_lines.append(f"Banned American phrases: {flat}")
+    if aus_lines:
+        sections.append("## AUSTRALIAN LANGUAGE STYLE\n" + "\n".join(aus_lines))
+
+    # ── Formatting rules ─────────────────────────────────────────────────────
+    fmt = sp.get("FormattingRules", {})
+    fmt_lines: list[str] = []
+    for key in ("NoEmojiRule", "NoBulletRule", "NoDashRule", "ResponseLength",
+                "ShortInputShortOutput", "NoPadding"):
+        val = fmt.get(key)
+        if val:
+            fmt_lines.append(val)
+    if fmt_lines:
+        sections.append("## FORMATTING RULES\n" + "\n".join(fmt_lines))
+
+    # ── Lead capture ─────────────────────────────────────────────────────────
+    lc = sp.get("LeadCapture", {})
+    lc_lines: list[str] = []
+    if lc.get("PrimaryGoal"):
+        lc_lines.append(lc["PrimaryGoal"])
+    order = lc.get("OrderOfCapture", [])
+    if order:
+        lc_lines.append("Order of capture: " + " → ".join(order if isinstance(order, list) else [order]))
+    if lc.get("FramingRule"):
+        lc_lines.append(lc["FramingRule"])
+    if lc.get("DeclineRule"):
+        lc_lines.append(lc["DeclineRule"])
+    banned_lc = lc.get("BANNED", [])
+    if banned_lc:
+        lc_lines.append("Never: " + " / ".join(banned_lc if isinstance(banned_lc, list) else [banned_lc]))
+    if lc_lines:
+        sections.append("## LEAD CAPTURE\n" + "\n".join(lc_lines))
+
+    # ── Viewing and booking policy ────────────────────────────────────────────
+    vbp = sp.get("ViewingAndBookingPolicy", {})
+    if vbp.get("CriticalRule"):
+        sections.append("## VIEWING AND BOOKING POLICY\n" + vbp["CriticalRule"])
+
+    # ── Time awareness ────────────────────────────────────────────────────────
+    ta = sp.get("TimeAwareness", {})
+    if ta.get("Rule"):
+        sections.append("## TIME AWARENESS\n" + ta["Rule"])
+
+    # ── Fallback: any top-level keys not handled above ────────────────────────
+    _handled = {
+        "Identity", "HardRules", "ConversationPhilosophy", "AustralianLanguageStyle",
+        "FormattingRules", "LeadCapture", "ViewingAndBookingPolicy", "TimeAwareness",
+        "Version", "UseCaseName", "DeploymentContext",
+    }
+    extras: list[str] = []
+    for key, val in sp.items():
+        if key not in _handled:
+            extras.append(f"{key}: {json.dumps(val, ensure_ascii=False)}")
+    if extras:
+        sections.append("## ADDITIONAL RULES\n" + "\n".join(extras))
+
+    return "\n\n".join(sections)
+
 
 _PROFILE_KEYS = [
     ("company_name",        "Company Name"),
@@ -128,14 +252,49 @@ def build_dynamic_context(
 
     # ── RAG knowledge context ────────────────────────────────────────────────
     if rag_chunks:
-        context_block = "\n\n---\n\n".join(rag_chunks)
-        parts.append(
-            "## RELEVANT KNOWLEDGE BASE CONTEXT\n"
-            "Use the information below to answer the visitor's question. "
-            "Only reference details that are directly relevant. "
-            "Do not invent information not present here.\n\n"
-            + context_block
-        )
+        # Separate listing chunks (marked with source_type=listing) from KB chunks.
+        # Listing chunks start with "**" (the title bold marker from _listing_to_context)
+        # or contain "Type: sale/rent" — we use a simple heuristic: any chunk that
+        # contains "Status: active" or "Type: sale" or "Type: rent" is a listing.
+        listing_chunks = [
+            c for c in rag_chunks
+            if "Status: active" in c or "Type: sale" in c or "Type: rent" in c
+        ]
+        kb_chunks = [c for c in rag_chunks if c not in listing_chunks]
+
+        if listing_chunks:
+            listing_block = "\n\n---\n\n".join(listing_chunks)
+            parts.append(
+                "## AVAILABLE PROPERTY LISTINGS\n"
+                "The following are REAL, CURRENT listings from the database. "
+                "Only reference details that appear here. Do not invent or hallucinate listings.\n\n"
+                "LISTING PRESENTATION RULES:\n"
+                "1. Never say 'no results found' or 'I don't have any listings'. "
+                "If an exact match is not available, present the closest 2-3 options and briefly explain "
+                "why they are worth considering (value, location, features).\n"
+                "2. When a visitor mentions a budget or bedroom count, if no exact match exists, "
+                "suggest the nearest options — typically within 10-20% of their stated budget or "
+                "one bedroom above/below — and frame it naturally, not as a push: "
+                "'The closest we have at the moment is...' not 'You should upgrade your budget'.\n"
+                "3. Always highlight what makes a listing valuable: price per feature, location lifestyle, "
+                "standout features (pool, garage, land size). Give the visitor a reason to be interested.\n"
+                "4. Present the top 2-3 most relevant options when possible — give the visitor choice.\n"
+                "5. When a visitor shows genuine interest in a listing, move the conversation toward "
+                "next steps naturally: offer more details or let them know the team can arrange a "
+                "walkthrough. Do not push — just open the door.\n"
+                "6. Stay in the ARIA tone — warm, Aussie, unhurried. This is guidance, not a hard sell.\n\n"
+                + listing_block
+            )
+
+        if kb_chunks:
+            context_block = "\n\n---\n\n".join(kb_chunks)
+            parts.append(
+                "## RELEVANT KNOWLEDGE BASE CONTEXT\n"
+                "Use the information below to answer the visitor's question. "
+                "Only reference details that are directly relevant. "
+                "Do not invent information not present here.\n\n"
+                + context_block
+            )
 
     # ── Time awareness ───────────────────────────────────────────────────────
     if time_prompt:

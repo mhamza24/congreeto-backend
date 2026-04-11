@@ -495,7 +495,8 @@ async def rag_search(
     tenant_id: int,
     chatbot_public_id: str,
     query: str,
-    top_k: int = 8,
+    top_k: int = 10,
+    listing_top_k: int = 8,
 ) -> schemas.RAGQueryResponse:
     """
     Hybrid RAG retrieval: dense vector (HNSW cosine) + sparse FTS (tsvector),
@@ -540,12 +541,14 @@ async def rag_search(
     ]
 
     # ── Leg 2: semantic search on listings (live data, no stale chunks) ───────
+    print(f"[RAG-DEBUG] rag_search: starting listing search for tenant_id={tenant_id} query={query!r}")
     listings = await repo.listing_similarity_search(
         db,
         tenant_id=tenant_id,
         query_embedding=query_embedding,
-        top_k=5,
+        top_k=listing_top_k,
     )
+    print(f"[RAG-DEBUG] rag_search: listing search returned {len(listings)} listing(s)")
 
     listing_results = [
         schemas.RAGChunkResult(
@@ -561,6 +564,10 @@ async def rag_search(
         )
         for listing in listings
     ]
+
+    print(f"[RAG-DEBUG] rag_search: doc chunks={len(chunk_results)} listing chunks={len(listing_results)} total={len(chunk_results) + len(listing_results)}")
+    for i, lr in enumerate(listing_results):
+        print(f"[RAG-DEBUG]   listing_chunk[{i}] content preview: {lr.content[:120]!r}")
 
     all_results = chunk_results + listing_results
     return schemas.RAGQueryResponse(chunks=all_results, total=len(all_results))

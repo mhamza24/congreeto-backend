@@ -27,7 +27,7 @@ from app.modules.chatbot.models import (
     PromptPersonality,
     WidgetTheme,
 )
-from app.core.enums import CrawlStatus, DocStatus, ChatbotStatus
+from app.core.enums import CrawlStatus, DocStatus, ChatbotStatus, ListingStatus
 
 logger = logging.getLogger(__name__)
 
@@ -931,21 +931,51 @@ async def listing_similarity_search(
 ) -> Sequence[Listing]:
     """
     Semantic search on the listings table.
-    Excludes soft-deleted (deleted_at IS NOT NULL) and archived listings.
-    Used as a parallel search leg alongside hybrid_search on document_chunks.
+    Only returns ACTIVE, non-deleted listings.
+
+    Falls back to the most-recent active listings when none have embeddings yet
+    (e.g. Celery worker hasn't run, or embed_listing task is still pending).
     """
-    result = await db.execute(
+    _active_scope = (
+        Listing.tenant_id == tenant_id,
+        Listing.deleted_at.is_(None),
+        Listing.status == ListingStatus.ACTIVE,
+    )
+
+    # ── Primary: vector similarity search (requires embedding) ────────────────
+    vec_result = await db.execute(
         select(Listing)
-        .where(
-            Listing.tenant_id == tenant_id,
-            Listing.deleted_at.is_(None),
-            Listing.status != "archived",
-            Listing.embedding.isnot(None),
-        )
+        .where(*_active_scope, Listing.embedding.isnot(None))
         .order_by(Listing.embedding.cosine_distance(query_embedding))
         .limit(top_k)
     )
-    return result.scalars().all()
+    listings = list(vec_result.scalars().all())
+
+    print(f"[RAG-DEBUG] listing_similarity_search: vector search returned {len(listings)} listing(s) for tenant_id={tenant_id}")
+
+    # ── Fallback: no embeddings exist yet → return most-recent active listings ─
+    if not listings:
+        fallback_result = await db.execute(
+            select(Listing)
+            .where(*_active_scope)
+            .order_by(Listing.updated_at.desc())
+            .limit(top_k)
+        )
+        listings = list(fallback_result.scalars().all())
+        print(
+            f"[RAG-DEBUG] listing_similarity_search: vector fallback used — "
+            f"returned {len(listings)} most-recent active listing(s). "
+            f"Run embed_listing task to enable semantic ranking."
+        )
+
+    for lst in listings:
+        print(
+            f"[RAG-DEBUG]   listing id={lst.id} public_id={lst.public_id} "
+            f"title={lst.title!r} status={lst.status} "
+            f"embedding={'set' if lst.embedding is not None else 'NULL'}"
+        )
+
+    return listings
 
 
 async def update_listing_embedding(
