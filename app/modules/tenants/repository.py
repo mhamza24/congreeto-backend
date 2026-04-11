@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.tenants.models import Tenant, TenantInvite
 from app.modules.models.tenant_user import TenantUser
-from app.core.enums import TenantStatus, TenantRole, TenantUserStatus
+from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, ChatbotStatus, DocStatus, CrawlStatus
 
 
 # =============================================================================
@@ -260,6 +260,106 @@ async def get_invite_by_otp_id(
 async def consume_invite(db: AsyncSession, *, invite: TenantInvite) -> None:
     invite.consumed_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+# =============================================================================
+# ADMIN — CROSS-TENANT COUNTS (super-admin only)
+# =============================================================================
+
+async def count_members_by_status(
+    db: AsyncSession, *, tenant_id: int
+) -> dict:
+    """Returns counts of TenantUser rows broken down by status."""
+    result = await db.execute(
+        select(TenantUser.status, func.count(TenantUser.id))
+        .where(TenantUser.tenant_id == tenant_id)
+        .group_by(TenantUser.status)
+    )
+    rows = result.all()
+    counts = {r[0]: r[1] for r in rows}
+    total = sum(counts.values())
+    return {
+        "total":     total,
+        "active":    counts.get(TenantUserStatus.ACTIVE, 0),
+        "invited":   counts.get(TenantUserStatus.INVITED, 0),
+        "suspended": counts.get(TenantUserStatus.SUSPENDED, 0),
+    }
+
+
+async def count_chatbots_by_status(
+    db: AsyncSession, *, tenant_id: int
+) -> dict:
+    """Returns counts of ChatbotConfig rows broken down by status."""
+    from app.modules.chatbot.models import ChatbotConfig  # avoid circular import
+    result = await db.execute(
+        select(ChatbotConfig.status, func.count(ChatbotConfig.id))
+        .where(ChatbotConfig.tenant_id == tenant_id)
+        .group_by(ChatbotConfig.status)
+    )
+    rows = result.all()
+    counts = {r[0]: r[1] for r in rows}
+    total = sum(counts.values())
+    return {
+        "total":    total,
+        "active":   counts.get(ChatbotStatus.ACTIVE, 0),
+        "draft":    counts.get(ChatbotStatus.DRAFT, 0),
+        "inactive": counts.get(ChatbotStatus.INACTIVE, 0),
+    }
+
+
+async def count_documents_by_status(
+    db: AsyncSession, *, tenant_id: int
+) -> dict:
+    """Returns counts of Document rows broken down by status."""
+    from app.modules.chatbot.models import Document  # avoid circular import
+    result = await db.execute(
+        select(Document.status, func.count(Document.id))
+        .where(Document.tenant_id == tenant_id)
+        .group_by(Document.status)
+    )
+    rows = result.all()
+    counts = {r[0]: r[1] for r in rows}
+    total = sum(counts.values())
+    return {
+        "total":      total,
+        "ready":      counts.get(DocStatus.READY, 0),
+        "processing": counts.get(DocStatus.PROCESSING, 0),
+        "uploading":  counts.get(DocStatus.UPLOADING, 0),
+        "failed":     counts.get(DocStatus.FAILED, 0),
+    }
+
+
+async def count_pending_crawl_jobs(
+    db: AsyncSession, *, tenant_id: int
+) -> dict:
+    """Returns counts of in-flight CrawlJob and Document rows for the tenant."""
+    from app.modules.chatbot.models import CrawlJob, Document  # avoid circular import
+    crawl_result = await db.execute(
+        select(CrawlJob.status, func.count(CrawlJob.id))
+        .where(
+            CrawlJob.tenant_id == tenant_id,
+            CrawlJob.status.in_([CrawlStatus.QUEUED, CrawlStatus.RUNNING]),
+        )
+        .group_by(CrawlJob.status)
+    )
+    crawl_counts = {r[0]: r[1] for r in crawl_result.all()}
+
+    doc_result = await db.execute(
+        select(Document.status, func.count(Document.id))
+        .where(
+            Document.tenant_id == tenant_id,
+            Document.status.in_([DocStatus.UPLOADING, DocStatus.PROCESSING]),
+        )
+        .group_by(Document.status)
+    )
+    doc_counts = {r[0]: r[1] for r in doc_result.all()}
+
+    return {
+        "crawl_jobs_queued":    crawl_counts.get(CrawlStatus.QUEUED, 0),
+        "crawl_jobs_running":   crawl_counts.get(CrawlStatus.RUNNING, 0),
+        "documents_processing": doc_counts.get(DocStatus.PROCESSING, 0),
+        "documents_uploading":  doc_counts.get(DocStatus.UPLOADING, 0),
+    }
 
 
 async def get_pending_invites_without_membership(

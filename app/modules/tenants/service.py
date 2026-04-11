@@ -634,6 +634,232 @@ def _check_invite_rate_limit(recent_invites: list) -> None:
             ),
         )
 
+# =============================================================================
+# ADMIN OPERATIONS — SUPER ADMIN ONLY
+# =============================================================================
+
+
+async def admin_update_tenant(
+    db: AsyncSession,
+    *,
+    payload: schemas.TenantUpdateRequest,
+    tenant_public_id: str,
+) -> schemas.TenantResponse:
+    """Super-admin can edit any tenant's profile directly, without being a member."""
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(tenant, field, value)
+    await db.commit()
+    await db.refresh(tenant)
+    return schemas.TenantResponse.model_validate(tenant)
+
+
+async def admin_delete_tenant(
+    db: AsyncSession,
+    *,
+    tenant_public_id: str,
+) -> None:
+    """Super-admin soft-deletes a tenant. All data is retained but access is blocked."""
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    await repo.soft_delete_tenant(db, tenant=tenant)
+    await db.commit()
+
+
+async def admin_update_member_role(
+    db: AsyncSession,
+    *,
+    tenant_public_id: str,
+    member_public_id: str,
+    payload: schemas.UpdateMemberRoleRequest,
+) -> schemas.TenantMemberResponse:
+    """Super-admin changes a member's role, bypassing the caller_tu ownership check."""
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    target_tu = await repo.get_tenant_user_by_public_id(db, public_id=member_public_id)
+    if not target_tu or target_tu.tenant_id != tenant.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+    if target_tu.is_primary_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change the primary owner's role.",
+        )
+    target_tu.role = payload.role
+    await db.commit()
+    await db.refresh(target_tu)
+    return _build_member_response(target_tu)
+
+
+async def admin_update_member_status(
+    db: AsyncSession,
+    *,
+    tenant_public_id: str,
+    member_public_id: str,
+    payload: schemas.UpdateMemberStatusRequest,
+) -> schemas.TenantMemberResponse:
+    """Super-admin suspends or reactivates a member, bypassing seat-limit enforcement."""
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    target_tu = await repo.get_tenant_user_by_public_id(db, public_id=member_public_id)
+    if not target_tu or target_tu.tenant_id != tenant.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+    if target_tu.is_primary_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change the primary owner's status.",
+        )
+    target_tu.status = payload.status
+    await db.commit()
+    await db.refresh(target_tu)
+    return _build_member_response(target_tu)
+
+
+async def admin_remove_member(
+    db: AsyncSession,
+    *,
+    tenant_public_id: str,
+    member_public_id: str,
+) -> schemas.RemoveMemberResponse:
+    """Super-admin removes any member from a tenant without role restrictions."""
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    target_tu = await repo.get_tenant_user_by_public_id(db, public_id=member_public_id)
+    if not target_tu or target_tu.tenant_id != tenant.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found.")
+    if target_tu.is_primary_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The primary owner cannot be removed from the tenant.",
+        )
+    await db.delete(target_tu)
+    await db.commit()
+    return schemas.RemoveMemberResponse()
+
+
+async def admin_list_tenants(
+    db: AsyncSession,
+    *,
+    status: Optional[TenantStatus] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> schemas.AdminTenantListResponse:
+    tenants, total = await repo.list_tenants(db, status=status, skip=skip, limit=limit)
+
+    items = []
+    for tenant in tenants:
+        member_count = await repo.count_active_members(db, tenant_id=tenant.id)
+        sub = await billing_repo.get_active_subscription(db, tenant_id=tenant.id)
+        items.append(
+            schemas.AdminTenantListItem(
+                public_id=tenant.public_id,
+                name=tenant.name,
+                slug=tenant.slug,
+                status=tenant.status,
+                industry=tenant.industry,
+                created_at=tenant.created_at,
+                updated_at=tenant.updated_at,
+                member_count=member_count,
+                plan_name=sub.plan.name if sub else None,
+                subscription_status=sub.status.value if sub else None,
+            )
+        )
+    return schemas.AdminTenantListResponse(total=total, tenants=items)
+
+
+async def admin_get_tenant_detail(
+    db: AsyncSession,
+    *,
+    tenant_public_id: str,
+) -> schemas.AdminTenantDetail:
+    import asyncio
+
+    tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+
+    # Run all independent aggregation queries concurrently
+    (
+        sub,
+        addons,
+        member_counts,
+        chatbot_counts,
+        doc_counts,
+        pending_tasks,
+    ) = await asyncio.gather(
+        billing_repo.get_active_subscription(db, tenant_id=tenant.id),
+        billing_repo.list_tenant_addons(db, tenant_id=tenant.id),
+        repo.count_members_by_status(db, tenant_id=tenant.id),
+        repo.count_chatbots_by_status(db, tenant_id=tenant.id),
+        repo.count_documents_by_status(db, tenant_id=tenant.id),
+        repo.count_pending_crawl_jobs(db, tenant_id=tenant.id),
+    )
+
+    # Members — full list (no caller context needed for super-admin)
+    members, _ = await repo.list_tenant_members(db, tenant_id=tenant.id, skip=0, limit=200)
+    member_responses = [_build_member_response(m) for m in members if m.user is not None]
+
+    # Usage for current month
+    from datetime import datetime, timezone
+    period_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    usage_records = await billing_repo.get_all_usage_for_period(
+        db, tenant_id=tenant.id, period_month=period_month
+    )
+
+    # Build subscription detail
+    sub_detail = None
+    if sub:
+        sub_detail = schemas.AdminSubscriptionInfo(
+            public_id=sub.public_id,
+            plan_name=sub.plan.name,
+            plan_slug=sub.plan.slug,
+            status=sub.status.value,
+            billing_interval=sub.plan.billing_interval.value,
+            price_aud_cents=sub.plan.price_aud_cents,
+            currency=sub.currency,
+            current_period_start=sub.current_period_start,
+            current_period_end=sub.current_period_end,
+            trial_ends_at=sub.trial_ends_at,
+            cancel_at_period_end=sub.cancel_at_period_end,
+            cancelled_at=sub.cancelled_at,
+            notes=sub.notes,
+        )
+
+    # Build addon list
+    addon_details = [
+        schemas.AdminAddonInfo(
+            addon_name=tas.addon.name,
+            addon_type=tas.addon.type.value,
+            quantity=tas.quantity,
+            status=tas.status.value,
+        )
+        for tas in addons
+    ]
+
+    # Build usage list
+    usage_items = [
+        schemas.AdminUsageItem(
+            metric=u.metric.value,
+            quantity=u.quantity,
+            period_month=u.period_month,
+        )
+        for u in usage_records
+    ]
+
+    return schemas.AdminTenantDetail(
+        public_id=tenant.public_id,
+        name=tenant.name,
+        slug=tenant.slug,
+        industry=tenant.industry,
+        status=tenant.status,
+        settings=tenant.settings,
+        trial_ends_at=tenant.trial_ends_at,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+        subscription=sub_detail,
+        addons=addon_details,
+        current_usage=usage_items,
+        member_summary=schemas.AdminMemberSummary(**member_counts),
+        members=member_responses,
+        chatbot_summary=schemas.AdminChatbotSummary(**chatbot_counts),
+        document_summary=schemas.AdminDocumentSummary(**doc_counts),
+        pending_tasks=schemas.AdminPendingTasks(**pending_tasks),
+    )
+
+
 async def _get_tenant_or_404(db: AsyncSession, *, public_id: str) -> Tenant:
     tenant = await repo.get_tenant_by_public_id(db, public_id=public_id)
     if not tenant:

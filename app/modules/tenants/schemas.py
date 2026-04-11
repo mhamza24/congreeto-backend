@@ -223,3 +223,122 @@ class UserTenantItem(BaseModel):
 class UserTenantsResponse(BaseModel):
     total:   int
     tenants: List[UserTenantItem]
+
+
+# =============================================================================
+# ADMIN — SUPER ADMIN ONLY
+# =============================================================================
+
+class AdminSubscriptionInfo(BaseModel):
+    public_id:            str
+    plan_name:            str
+    plan_slug:            str
+    status:               str
+    billing_interval:     str
+    price_aud_cents:      int
+    currency:             str
+    current_period_start: Optional[datetime]
+    current_period_end:   Optional[datetime]
+    trial_ends_at:        Optional[datetime]
+    cancel_at_period_end: bool
+    cancelled_at:         Optional[datetime]
+    notes:                Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminAddonInfo(BaseModel):
+    addon_name: str
+    addon_type: str
+    quantity:   int
+    status:     str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUsageItem(BaseModel):
+    metric:       str
+    quantity:     int
+    period_month: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminMemberSummary(BaseModel):
+    total:     int
+    active:    int
+    invited:   int
+    suspended: int
+
+
+class AdminChatbotSummary(BaseModel):
+    total:    int
+    active:   int
+    draft:    int
+    inactive: int
+
+
+class AdminDocumentSummary(BaseModel):
+    total:      int
+    ready:      int
+    processing: int
+    uploading:  int
+    failed:     int
+
+
+class AdminPendingTasks(BaseModel):
+    crawl_jobs_queued:    int
+    crawl_jobs_running:   int
+    documents_processing: int
+    documents_uploading:  int
+
+
+class AdminTenantListItem(BaseModel):
+    public_id:           str
+    name:                str
+    slug:                str
+    status:              TenantStatus
+    industry:            str
+    created_at:          datetime
+    updated_at:          datetime
+    member_count:        int
+    plan_name:           Optional[str]
+    subscription_status: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminTenantListResponse(BaseModel):
+    total:   int
+    tenants: List[AdminTenantListItem]
+
+
+class AdminTenantDetail(BaseModel):
+    # Core identity
+    public_id:     str
+    name:          str
+    slug:          str
+    industry:      str
+    status:        TenantStatus
+    settings:      dict
+    trial_ends_at: Optional[datetime]
+    created_at:    datetime
+    updated_at:    datetime
+
+    # Billing
+    subscription:  Optional[AdminSubscriptionInfo]
+    addons:        List[AdminAddonInfo]
+    current_usage: List[AdminUsageItem]
+
+    # People
+    member_summary: AdminMemberSummary
+    members:        List[TenantMemberResponse]
+
+    # Chatbot & knowledge activity
+    chatbot_summary:  AdminChatbotSummary
+    document_summary: AdminDocumentSummary
+
+    # Pending background work
+    pending_tasks: AdminPendingTasks
+
+    model_config = ConfigDict(from_attributes=True)

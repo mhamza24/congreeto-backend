@@ -7,12 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import ApiResponse
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.core.database import get_db
 from app.dependencies.user import get_verified_user
 from app.modules.tenants import schemas, service
-from app.core.enums import TenantRole
+from app.core.enums import TenantRole, TenantStatus
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ async def update_tenant_status(
     tenant_public_id: str,
     payload: schemas.TenantStatusUpdateRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
+    _=Depends(require_superadmin),
 ) -> ApiResponse[schemas.TenantResponse]:
     try:
         result = await service.update_tenant_status(
@@ -315,6 +315,230 @@ async def remove_member(
         raise
     except Exception:
         logger.exception("Unexpected error removing member")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not remove member. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Member removed successfully.", data=result)
+
+
+# =============================================================================
+# ADMIN ENDPOINTS — SUPER ADMIN ONLY
+# =============================================================================
+
+@router.get(
+    "/admin/",
+    response_model=ApiResponse[schemas.AdminTenantListResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] List all tenants across the platform",
+)
+async def admin_list_tenants(
+    db: DBDep,
+    _=Depends(require_superadmin),
+    tenant_status: Optional[TenantStatus] = Query(None, alias="status", description="Filter by tenant status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> ApiResponse[schemas.AdminTenantListResponse]:
+    try:
+        result = await service.admin_list_tenants(
+            db, status=tenant_status, skip=skip, limit=limit
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error listing all tenants (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not fetch tenants. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenants fetched successfully.", data=result)
+
+
+@router.get(
+    "/admin/{tenant_public_id}",
+    response_model=ApiResponse[schemas.AdminTenantDetail],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Get full detail of a specific tenant",
+)
+async def admin_get_tenant_detail(
+    tenant_public_id: str,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.AdminTenantDetail]:
+    try:
+        result = await service.admin_get_tenant_detail(db, tenant_public_id=tenant_public_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error fetching tenant detail (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not fetch tenant detail. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenant detail fetched successfully.", data=result)
+
+
+# ----- Tenant mutations -------------------------------------------------------
+
+@router.patch(
+    "/admin/{tenant_public_id}",
+    response_model=ApiResponse[schemas.TenantResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Update a tenant's profile",
+)
+async def admin_update_tenant(
+    tenant_public_id: str,
+    payload: schemas.TenantUpdateRequest,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.TenantResponse]:
+    try:
+        result = await service.admin_update_tenant(
+            db, payload=payload, tenant_public_id=tenant_public_id
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error updating tenant (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update tenant. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenant updated successfully.", data=result)
+
+
+@router.patch(
+    "/admin/{tenant_public_id}/status",
+    response_model=ApiResponse[schemas.TenantResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Change a tenant's status (activate, suspend, cancel, etc.)",
+)
+async def admin_update_tenant_status(
+    tenant_public_id: str,
+    payload: schemas.TenantStatusUpdateRequest,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.TenantResponse]:
+    try:
+        result = await service.update_tenant_status(
+            db, payload=payload, tenant_public_id=tenant_public_id
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error updating tenant status (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update tenant status. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenant status updated.", data=result)
+
+
+@router.delete(
+    "/admin/{tenant_public_id}",
+    response_model=ApiResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Soft-delete a tenant (data retained, access blocked)",
+)
+async def admin_delete_tenant(
+    tenant_public_id: str,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[None]:
+    try:
+        await service.admin_delete_tenant(db, tenant_public_id=tenant_public_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error deleting tenant (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not delete tenant. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Tenant deleted successfully.", data=None)
+
+
+# ----- Member mutations (bypass tenant-context — super admin is never a member) -----
+
+@router.patch(
+    "/admin/{tenant_public_id}/members/{member_public_id}/role",
+    response_model=ApiResponse[schemas.TenantMemberResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Change a member's role",
+)
+async def admin_update_member_role(
+    tenant_public_id: str,
+    member_public_id: str,
+    payload: schemas.UpdateMemberRoleRequest,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.TenantMemberResponse]:
+    try:
+        result = await service.admin_update_member_role(
+            db, tenant_public_id=tenant_public_id,
+            member_public_id=member_public_id, payload=payload,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error updating member role (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update member role. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Member role updated.", data=result)
+
+
+@router.patch(
+    "/admin/{tenant_public_id}/members/{member_public_id}/status",
+    response_model=ApiResponse[schemas.TenantMemberResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Suspend or reactivate a member",
+)
+async def admin_update_member_status(
+    tenant_public_id: str,
+    member_public_id: str,
+    payload: schemas.UpdateMemberStatusRequest,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.TenantMemberResponse]:
+    try:
+        result = await service.admin_update_member_status(
+            db, tenant_public_id=tenant_public_id,
+            member_public_id=member_public_id, payload=payload,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error updating member status (admin)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update member status. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Member status updated.", data=result)
+
+
+@router.delete(
+    "/admin/{tenant_public_id}/members/{member_public_id}",
+    response_model=ApiResponse[schemas.RemoveMemberResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Remove a member from a tenant",
+)
+async def admin_remove_member(
+    tenant_public_id: str,
+    member_public_id: str,
+    db: DBDep,
+    _=Depends(require_superadmin),
+) -> ApiResponse[schemas.RemoveMemberResponse]:
+    try:
+        result = await service.admin_remove_member(
+            db, tenant_public_id=tenant_public_id,
+            member_public_id=member_public_id,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error removing member (admin)")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not remove member. Please try again later.",
