@@ -19,6 +19,7 @@ from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, UserStatu
 from app.utils.hashing_utils import hash_password, hash_identity, hash_otp
 from app.config.settings import get_settings
 from app.modules.billing import repository as billing_repo
+from app.core.response import PaginationMeta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -738,7 +739,7 @@ async def admin_list_tenants(
     status: Optional[TenantStatus] = None,
     skip: int = 0,
     limit: int = 50,
-) -> schemas.AdminTenantListResponse:
+) -> tuple[schemas.AdminTenantListResponse, PaginationMeta]:
     tenants, total = await repo.list_tenants(db, status=status, skip=skip, limit=limit)
 
     items = []
@@ -759,7 +760,15 @@ async def admin_list_tenants(
                 subscription_status=sub.status.value if sub else None,
             )
         )
-    return schemas.AdminTenantListResponse(total=total, tenants=items)
+
+    meta = PaginationMeta(
+        total=total,
+        limit=limit,
+        offset=skip,
+        has_next=(skip + limit) < total,
+        has_prev=skip > 0,
+    )
+    return schemas.AdminTenantListResponse(tenants=items), meta
 
 
 async def admin_get_tenant_detail(

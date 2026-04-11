@@ -6,7 +6,7 @@ from typing import Optional, Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.response import ApiResponse
+from app.core.response import ApiResponse, PagedApiResponse
 from app.dependencies.auth import get_current_user, require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.core.database import get_db
@@ -328,7 +328,7 @@ async def remove_member(
 
 @router.get(
     "/admin/",
-    response_model=ApiResponse[schemas.AdminTenantListResponse],
+    response_model=PagedApiResponse[schemas.AdminTenantListResponse],
     status_code=status.HTTP_200_OK,
     summary="[Admin] List all tenants across the platform",
 )
@@ -338,9 +338,9 @@ async def admin_list_tenants(
     tenant_status: Optional[TenantStatus] = Query(None, alias="status", description="Filter by tenant status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-) -> ApiResponse[schemas.AdminTenantListResponse]:
+) -> PagedApiResponse[schemas.AdminTenantListResponse]:
     try:
-        result = await service.admin_list_tenants(
+        result, meta = await service.admin_list_tenants(
             db, status=tenant_status, skip=skip, limit=limit
         )
     except HTTPException:
@@ -351,7 +351,7 @@ async def admin_list_tenants(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenants. Please try again later.",
         )
-    return ApiResponse(success=True, message="Tenants fetched successfully.", data=result)
+    return PagedApiResponse(success=True, message="Tenants fetched successfully.", data=result, meta=meta)
 
 
 @router.get(

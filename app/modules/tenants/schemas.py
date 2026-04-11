@@ -309,7 +309,6 @@ class AdminTenantListItem(BaseModel):
 
 
 class AdminTenantListResponse(BaseModel):
-    total:   int
     tenants: List[AdminTenantListItem]
 
 
