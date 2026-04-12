@@ -1,7 +1,10 @@
 # app/modules/billing/repository.py
 from __future__ import annotations
 
+import logging
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession

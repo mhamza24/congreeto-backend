@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from pydantic import EmailStr
 from sqlalchemy import and_, func, or_, select, update

@@ -22,12 +22,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.database import get_db
 from app.core.response import ApiResponse
 from app.modules.chat import schemas, service
 from app.modules.chat.models import ConversationStatus
 
 logger = logging.getLogger(__name__)
+_settings = get_settings()
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -163,7 +165,7 @@ async def chat_complete_endpoint(
 async def list_conversations_endpoint(
     db: DBDep,
     tenant_id: TenantDep,
-    page_size: int  = Query(default=20, ge=1, le=100, description="Number of results per page."),
+    page_size: int  = Query(default=_settings.CHAT_PAGE_SIZE_DEFAULT, ge=1, le=_settings.CHAT_PAGE_SIZE_MAX, description="Number of results per page."),
     cursor:    Optional[str] = Query(default=None, description="Pagination cursor from previous response."),
     status_filter: Optional[ConversationStatus] = Query(
         default=None,

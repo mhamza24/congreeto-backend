@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Annotated
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +43,7 @@ async def create_tenant(
         raise
     except Exception:
         logger.exception("Unexpected error creating tenant")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create tenant. Please try again later.",
@@ -65,11 +67,43 @@ async def get_my_tenants(
         raise
     except Exception:
         logger.exception("Unexpected error fetching user tenants")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenants. Please try again later.",
         )
     return ApiResponse(success=True, message="Tenants fetched successfully.", data=result)
+
+
+@router.get(
+    "/{tenant_public_id}/onboarding",
+    response_model=ApiResponse[schemas.OnboardingResponse | schemas.TenantOverviewResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get onboarding checklist (owner/admin) or tenant overview (agent/viewer)",
+)
+async def get_onboarding(
+    db: DBDep,
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(get_current_user),
+) -> ApiResponse[schemas.OnboardingResponse | schemas.TenantOverviewResponse]:
+    try:
+        result = await service.get_onboarding_status(
+            db,
+            tenant=ctx.tenant,
+            membership=ctx.membership,
+            current_user=current_user,
+            subscription=ctx.subscription,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error fetching onboarding status tenant=%s", ctx.tenant.public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not fetch onboarding status. Please try again later.",
+        )
+    return ApiResponse(success=True, message="Onboarding status fetched.", data=result)
 
 
 @router.get(
@@ -92,6 +126,7 @@ async def get_my_tenant(
         raise
     except Exception:
         logger.exception("Unexpected error fetching tenant context")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenant. Please try again later.",
@@ -119,6 +154,7 @@ async def update_tenant(
         raise
     except Exception:
         logger.exception("Unexpected error updating tenant")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update tenant. Please try again later.",
@@ -146,6 +182,7 @@ async def update_tenant_status(
         raise
     except Exception:
         logger.exception("Unexpected error updating tenant status")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update tenant status. Please try again later.",
@@ -180,6 +217,7 @@ async def list_members(
         raise
     except Exception:
         logger.exception("Unexpected error listing members")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch members. Please try again later.",
@@ -207,6 +245,7 @@ async def invite_user(
         raise
     except Exception:
         logger.exception("Unexpected error sending invite")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not send invite. Please try again later.",
@@ -230,6 +269,7 @@ async def accept_invite(
         raise
     except Exception:
         logger.exception("Unexpected error accepting invite")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process invite. Please try again later.",
@@ -259,6 +299,7 @@ async def update_member_role(
         raise
     except Exception:
         logger.exception("Unexpected error updating member role")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update member role. Please try again later.",
@@ -288,6 +329,7 @@ async def update_member_status(
         raise
     except Exception:
         logger.exception("Unexpected error updating member status")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update member status. Please try again later.",
@@ -315,6 +357,7 @@ async def remove_member(
         raise
     except Exception:
         logger.exception("Unexpected error removing member")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not remove member. Please try again later.",
@@ -347,6 +390,7 @@ async def admin_list_tenants(
         raise
     except Exception:
         logger.exception("Unexpected error listing all tenants (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenants. Please try again later.",
@@ -371,6 +415,7 @@ async def admin_get_tenant_detail(
         raise
     except Exception:
         logger.exception("Unexpected error fetching tenant detail (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenant detail. Please try again later.",
@@ -400,6 +445,7 @@ async def admin_update_tenant(
         raise
     except Exception:
         logger.exception("Unexpected error updating tenant (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update tenant. Please try again later.",
@@ -427,6 +473,7 @@ async def admin_update_tenant_status(
         raise
     except Exception:
         logger.exception("Unexpected error updating tenant status (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update tenant status. Please try again later.",
@@ -451,6 +498,7 @@ async def admin_delete_tenant(
         raise
     except Exception:
         logger.exception("Unexpected error deleting tenant (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not delete tenant. Please try again later.",
@@ -482,6 +530,7 @@ async def admin_update_member_role(
         raise
     except Exception:
         logger.exception("Unexpected error updating member role (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update member role. Please try again later.",
@@ -511,6 +560,7 @@ async def admin_update_member_status(
         raise
     except Exception:
         logger.exception("Unexpected error updating member status (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update member status. Please try again later.",
@@ -539,6 +589,7 @@ async def admin_remove_member(
         raise
     except Exception:
         logger.exception("Unexpected error removing member (admin)")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not remove member. Please try again later.",

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select, update
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chatbot.models import Listing

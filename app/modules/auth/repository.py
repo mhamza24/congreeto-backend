@@ -1,8 +1,11 @@
 # app/modules/auth/otp_repository.py
 
 import hmac
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession

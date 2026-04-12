@@ -1,8 +1,12 @@
 # app/modules/inquiries/repository.py
+import logging
 from typing import List, Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
+
+logger = logging.getLogger(__name__)
 from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, InquiryStatus,AffiliationInquiry
 
 

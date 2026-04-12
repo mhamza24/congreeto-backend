@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Annotated, List, Optional
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,7 @@ from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.modules.listings import schemas, service
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/listings", tags=["Listings"])
 
@@ -53,15 +56,22 @@ async def list_listings(
     limit: int = 50,
     offset: int = 0,
 ) -> PagedApiResponse[List[schemas.ListingResponse]]:
-    data, total = await service.list_listings(
-        db,
-        tenant_id=ctx.tenant.id,
-        suburb=suburb,
-        listing_type=listing_type,
-        status_filter=status_filter,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        data, total = await service.list_listings(
+            db,
+            tenant_id=ctx.tenant.id,
+            suburb=suburb,
+            listing_type=listing_type,
+            status_filter=status_filter,
+            limit=limit,
+            offset=offset,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error listing listings tenant=%s", tenant_public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch listings. Please try again later.")
     return PagedApiResponse(
         success=True,
         message="OK",
@@ -89,7 +99,14 @@ async def create_listing(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingResponse]:
     require_write(ctx)
-    data = await service.create_listing(db, tenant_id=ctx.tenant.id, payload=payload)
+    try:
+        data = await service.create_listing(db, tenant_id=ctx.tenant.id, payload=payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error creating listing tenant=%s", tenant_public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not create listing. Please try again later.")
     return ApiResponse(success=True, message="Listing created.", data=data)
 
 
@@ -138,13 +155,23 @@ async def upload_listing_file(
             detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB limit.",
         )
 
-    data = await service.queue_listing_file_import(
-        db,
-        tenant_id=ctx.tenant.id,
-        file_bytes=file_bytes,
-        filename=filename,
-        file_type=file_type,
-    )
+    try:
+        data = await service.queue_listing_file_import(
+            db,
+            tenant_id=ctx.tenant.id,
+            file_bytes=file_bytes,
+            filename=filename,
+            file_type=file_type,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error uploading listing file tenant=%s filename=%s",
+            tenant_public_id, filename,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not queue listing file. Please try again later.")
     return ApiResponse(
         success=True,
         message=f"'{filename}' queued for processing. Use public_id to poll status.",
@@ -167,14 +194,21 @@ async def list_listing_upload_jobs(
 ) -> PagedApiResponse[List[schemas.ListingUploadJobResponse]]:
     from app.modules.chatbot import repository as chatbot_repo
 
-    jobs, total = await asyncio.gather(
-        chatbot_repo.list_listing_upload_jobs(
-            db, tenant_id=ctx.tenant.id, status=status_filter, limit=limit, offset=offset
-        ),
-        chatbot_repo.count_listing_upload_jobs(
-            db, tenant_id=ctx.tenant.id, status=status_filter
-        ),
-    )
+    try:
+        jobs, total = await asyncio.gather(
+            chatbot_repo.list_listing_upload_jobs(
+                db, tenant_id=ctx.tenant.id, status=status_filter, limit=limit, offset=offset
+            ),
+            chatbot_repo.count_listing_upload_jobs(
+                db, tenant_id=ctx.tenant.id, status=status_filter
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error listing upload jobs tenant=%s", tenant_public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch upload jobs. Please try again later.")
     return PagedApiResponse(
         success=True,
         message="OK",
@@ -202,9 +236,19 @@ async def get_listing_upload_job(
 ) -> ApiResponse[schemas.ListingUploadJobResponse]:
     from app.modules.chatbot import repository as chatbot_repo
 
-    job = await chatbot_repo.get_listing_upload_job_by_public_id(
-        db, tenant_id=ctx.tenant.id, public_id=job_id
-    )
+    try:
+        job = await chatbot_repo.get_listing_upload_job_by_public_id(
+            db, tenant_id=ctx.tenant.id, public_id=job_id
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error fetching upload job tenant=%s job_id=%s",
+            tenant_public_id, job_id,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch upload job. Please try again later.")
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload job not found.")
     return ApiResponse(
@@ -227,9 +271,19 @@ async def retry_listing_upload_job(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingUploadJobResponse]:
     require_write(ctx)
-    data = await service.retry_listing_upload_job(
-        db, tenant_id=ctx.tenant.id, job_public_id=job_id
-    )
+    try:
+        data = await service.retry_listing_upload_job(
+            db, tenant_id=ctx.tenant.id, job_public_id=job_id
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error retrying upload job tenant=%s job_id=%s",
+            tenant_public_id, job_id,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not retry upload job. Please try again later.")
     return ApiResponse(
         success=True,
         message="Job re-queued for processing.",
@@ -252,7 +306,17 @@ async def get_listing(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingResponse]:
-    data = await service.get_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+    try:
+        data = await service.get_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error fetching listing tenant=%s listing_id=%s",
+            tenant_public_id, listing_id,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch listing. Please try again later.")
     return ApiResponse(success=True, message="OK", data=data)
 
 
@@ -269,9 +333,19 @@ async def update_listing(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingResponse]:
     require_write(ctx)
-    data = await service.update_listing(
-        db, tenant_id=ctx.tenant.id, public_id=listing_id, payload=payload
-    )
+    try:
+        data = await service.update_listing(
+            db, tenant_id=ctx.tenant.id, public_id=listing_id, payload=payload
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error updating listing tenant=%s listing_id=%s",
+            tenant_public_id, listing_id,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not update listing. Please try again later.")
     return ApiResponse(success=True, message="Listing updated.", data=data)
 
 
@@ -288,5 +362,15 @@ async def delete_listing(
     ctx: CtxDep,
 ) -> ApiResponse[dict]:
     require_write(ctx)
-    await service.delete_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+    try:
+        await service.delete_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error deleting listing tenant=%s listing_id=%s",
+            tenant_public_id, listing_id,
+        )
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not delete listing. Please try again later.")
     return ApiResponse(success=True, message="Listing deleted.", data={})

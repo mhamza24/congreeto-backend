@@ -1,5 +1,5 @@
 """
-app/modules/email/email.py
+app/modules/email/service.py
 ──────────────────────────
 All outbound email logic for Veloce.
 
@@ -31,11 +31,15 @@ Sections
 """
 
 from __future__ import annotations
+
+import logging
 from typing import Any
 
 from fastapi_mail import FastMail, MessageSchema, MessageType
 from app.config.email import conf as email_config
 from app.config.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 import logging
 

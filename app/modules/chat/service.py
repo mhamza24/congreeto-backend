@@ -40,11 +40,14 @@ from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
 
+from app.config.settings import get_settings
+
 from . import repository as repo
 from . import schemas
 from .models import ConversationStatus, Message, MessageRole
 
 logger = logging.getLogger(__name__)
+_settings = get_settings()
 
 # ---------------------------------------------------------------------------
 # Billing limit message — shown to widget visitors when the tenant quota runs out
@@ -55,12 +58,9 @@ _BILLING_LIMIT_MESSAGE = (
     "Please reach out through the contact details on this page and we will get back to you shortly."
 )
 
-# RAG: number of knowledge-base chunks to retrieve per user message.
-# Higher = more context for near-match suggestions; lower = faster + cheaper.
-# 10 doc chunks + 8 listing slots gives the LLM enough range to suggest alternatives
-# without drowning the context window in noise.
-_RAG_TOP_K = 10
-_LISTING_TOP_K = 8
+# RAG retrieval sizes — controlled via settings.py so they can be tuned per-env.
+_RAG_TOP_K = _settings.RAG_TOP_K
+_LISTING_TOP_K = _settings.RAG_LISTING_TOP_K
 
 
 # ---------------------------------------------------------------------------

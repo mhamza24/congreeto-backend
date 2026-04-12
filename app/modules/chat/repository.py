@@ -21,8 +21,11 @@ Design principles
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,9 +95,11 @@ async def get_or_create_conversation(
         )
         conversation = result.scalar_one_or_none()
         if conversation is None:
+            logger.warning("[chat] get_or_create_conversation not found public_id=%s tenant=%s", conversation_public_id, tenant_id)
             raise ValueError(
                 f"Conversation '{conversation_public_id}' not found for this tenant."
             )
+        logger.debug("[chat] get_or_create_conversation existing public_id=%s tenant=%s", conversation_public_id, tenant_id)
         return conversation, False
 
     # New conversation — flush so we get the generated id/public_id immediately
@@ -104,6 +109,7 @@ async def get_or_create_conversation(
     )
     db.add(conversation)
     await db.flush()
+    logger.info("[chat] conversation created public_id=%s tenant=%s", conversation.public_id, tenant_id)
     return conversation, True
 
 
@@ -144,6 +150,7 @@ async def update_conversation_status(
         conversation__id: str,
         tenant_id: str,
         status: ConversationStatus) -> None:
+    logger.info("[chat] conversation status updated tenant=%s new_status=%s", tenant_id, status)
     await db.execute(
         update(Conversation)
         .where(Conversation.id == conversation__id, Conversation.tenant_id == tenant_id)
@@ -216,6 +223,7 @@ async def get_conversations(
         .where(and_(*count_filters))
     )
     total: int = total_result.scalar_one()
+    logger.debug("[chat] get_conversations tenant=%s total=%d page_size=%d cursor=%s", tenant_id, total, page_size, bool(cursor))
 
     # ── Page query ────────────────────────────────────────────────────────────
     # Fetch page_size + 1 to know whether a next page exists without a
@@ -473,6 +481,7 @@ async def upsert_conversation_insights(
 
     # ── 3. Commit both together ──────────────────────────────────────────────
     await db.commit()
+    logger.info("[chat] insights upserted tenant=%s is_lead=%s lead_score=%s", tenant_id, lead_data and all([lead_data.get("name"), lead_data.get("email"), lead_data.get("phone")]), insights.get("lead_score"))
     return saved
 
 
@@ -610,6 +619,7 @@ async def upsert_website_conversation_insights(
 
     # ── 3. Commit both together ──────────────────────────────────────────────
     await db.commit()
+    logger.info("[chat] website insights upserted tenant=%s is_lead=%s lead_score=%s", tenant_id, lead_data and all([lead_data.get("name"), lead_data.get("email"), lead_data.get("phone")]), insights.get("lead_score"))
     return saved
 
 
@@ -653,7 +663,9 @@ async def get_idle_conversations(
             Conversation.last_activity_at < idle_before,
         )
     )
-    return result.all()
+    rows = result.all()
+    logger.debug("[chat] get_idle_conversations found count=%d idle_before=%s", len(rows), idle_before.isoformat())
+    return rows
 
 
 async def get_idle_conversations_batch(
@@ -672,4 +684,6 @@ async def get_idle_conversations_batch(
         .order_by(Conversation.id)        # must order for keyset to be stable
         .limit(limit)
     )
-    return result.all()
+    rows = result.all()
+    logger.debug("[chat] get_idle_conversations_batch found count=%d limit=%d", len(rows), limit)
+    return rows

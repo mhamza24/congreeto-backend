@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +44,7 @@ async def list_listings(
             status_filter=status_filter,
         ),
     )
+    logger.debug("[listings] list_listings total=%d limit=%d offset=%d", total, limit, offset)
     return [schemas.ListingResponse.model_validate(lst) for lst in listings], total
 
 
@@ -49,7 +53,9 @@ async def get_listing(
 ) -> schemas.ListingResponse:
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
+        logger.warning("[listings] get_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+    logger.debug("[listings] get_listing found public_id=%s", public_id)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -90,6 +96,7 @@ async def create_listing(
     await db.refresh(listing)
 
     embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
+    logger.info("[listings] listing created public_id=%s title=%s", listing.public_id, listing.title)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -104,14 +111,17 @@ async def update_listing(
 
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
+        logger.warning("[listings] update_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
 
+    changed_fields = list(payload.model_dump(exclude_none=True).keys())
     for key, value in payload.model_dump(exclude_none=True).items():
         setattr(listing, key, value)
     await db.commit()
     await db.refresh(listing)
 
     embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
+    logger.info("[listings] listing updated public_id=%s fields=%s", listing.public_id, changed_fields)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -122,12 +132,14 @@ async def delete_listing(
 
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
+        logger.warning("[listings] delete_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
 
     listing.deleted_at = datetime.now(timezone.utc)
     await db.commit()
 
     clear_listing_embedding.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
+    logger.info("[listings] listing soft-deleted public_id=%s", listing.public_id)
 
 
 async def queue_listing_file_import(
@@ -162,6 +174,7 @@ async def queue_listing_file_import(
         kwargs=dict(job_id=job.id, tenant_id=tenant_id),
         queue=QUEUEEnum.ANALYSIS.value,
     )
+    logger.info("[listings] upload job queued public_id=%s filename=%s file_type=%s", job.public_id, filename, file_type)
 
     return schemas.ListingUploadJobResponse.model_validate(job)
 
@@ -181,9 +194,11 @@ async def retry_listing_upload_job(
         db, tenant_id=tenant_id, public_id=job_public_id
     )
     if not job:
+        logger.warning("[listings] retry_job not found public_id=%s", job_public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload job not found.")
 
     if job.status not in (UploadJobStatus.FAILED, UploadJobStatus.QUEUED):
+        logger.warning("[listings] retry_job invalid status public_id=%s status=%s", job.public_id, job.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Job is currently '{job.status}'. Only failed or queued jobs can be retried.",
@@ -199,6 +214,7 @@ async def retry_listing_upload_job(
         kwargs=dict(job_id=job.id, tenant_id=tenant_id),
         queue=QUEUEEnum.ANALYSIS.value,
     )
+    logger.info("[listings] upload job re-queued public_id=%s", job.public_id)
 
     return schemas.ListingUploadJobResponse.model_validate(job)
 

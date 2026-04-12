@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +33,12 @@ DBDep  = Annotated[AsyncSession, Depends(get_db)]
 )
 async def list_plans(db: DBDep) -> ApiResponse[list[schemas.PlanResponse]]:
     """Shown on the plan selection page during onboarding."""
-    result = await service.list_public_plans(db)
+    try:
+        result = await service.list_public_plans(db)
+    except Exception:
+        logger.exception("Error fetching public plans")
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch plans.")
     return ApiResponse(success=True, message="Plans fetched.", data=result)
 
 
@@ -42,7 +48,12 @@ async def list_plans(db: DBDep) -> ApiResponse[list[schemas.PlanResponse]]:
     summary="List available addons (public)",
 )
 async def list_addons(db: DBDep) -> ApiResponse[list[schemas.AddonResponse]]:
-    result = await service.list_addons(db)
+    try:
+        result = await service.list_addons(db)
+    except Exception:
+        logger.exception("Error fetching addons")
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch addons.")
     return ApiResponse(success=True, message="Addons fetched.", data=result)
 
 
@@ -67,6 +78,7 @@ async def get_billing_overview(
         raise
     except Exception:
         logger.exception("Error fetching billing overview")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not fetch billing overview.")
     return ApiResponse(success=True, message="Billing overview fetched.", data=result)
 
@@ -91,6 +103,7 @@ async def check_limit(
         raise
     except Exception:
         logger.exception("Error checking limit")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not check limit.")
     return ApiResponse(success=True, message="Limit checked.", data=result)
 
@@ -109,7 +122,12 @@ async def admin_list_plans(
     current_user=Depends(require_superadmin),
     # TODO: swap → get_super_admin
 ) -> ApiResponse[list[schemas.PlanResponse]]:
-    result = await service.list_all_plans(db)
+    try:
+        result = await service.list_all_plans(db)
+    except Exception:
+        logger.exception("Error fetching all plans (admin)")
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch plans.")
     return ApiResponse(success=True, message="All plans fetched.", data=result)
 
 
@@ -130,6 +148,7 @@ async def create_plan(
         raise
     except Exception:
         logger.exception("Error creating plan")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not create plan.")
     return ApiResponse(success=True, message="Plan created.", data=result)
 
@@ -153,6 +172,7 @@ async def update_plan(
         raise
     except Exception:
         logger.exception("Error updating plan")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not update plan.")
     return ApiResponse(success=True, message="Plan updated.", data=result)
 
@@ -178,6 +198,7 @@ async def create_addon(
         raise
     except Exception:
         logger.exception("Error creating addon")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not create addon.")
     return ApiResponse(success=True, message="Addon created.", data=result)
 
@@ -209,6 +230,7 @@ async def activate_subscription(
         raise
     except Exception:
         logger.exception("Error activating subscription")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not activate subscription.")
     return ApiResponse(success=True, message="Subscription activated.", data=result)
 
@@ -232,6 +254,7 @@ async def change_plan(
         raise
     except Exception:
         logger.exception("Error changing plan")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not change plan.")
     return ApiResponse(success=True, message="Plan changed.", data=result)
 
@@ -255,6 +278,7 @@ async def cancel_subscription(
         raise
     except Exception:
         logger.exception("Error cancelling subscription")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not cancel subscription.")
     return ApiResponse(success=True, message="Subscription cancelled.", data=result)
 
@@ -283,6 +307,7 @@ async def mark_past_due(
         raise
     except Exception:
         logger.exception("Error marking subscription past_due")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not update subscription.")
     return ApiResponse(success=True, message="Subscription marked past_due.", data=result)
 
@@ -311,6 +336,7 @@ async def mark_active(
         raise
     except Exception:
         logger.exception("Error marking subscription active")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not update subscription.")
     return ApiResponse(success=True, message="Subscription restored to active.", data=result)
 
@@ -334,6 +360,7 @@ async def add_addon(
         raise
     except Exception:
         logger.exception("Error adding addon")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not add addon.")
     return ApiResponse(success=True, message="Addon added.", data=result)
 
@@ -357,5 +384,6 @@ async def remove_addon(
         raise
     except Exception:
         logger.exception("Error removing addon")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not remove addon.")
     return ApiResponse(success=True, message="Addon removed.", data=result)

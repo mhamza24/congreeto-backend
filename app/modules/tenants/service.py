@@ -74,7 +74,9 @@ async def create_tenant(
     Owner immediately consumes 1 of the DEFAULT_SEAT_LIMIT seats.
     Status starts as pending_plan — frontend redirects to billing.
     """
+    logger.info("[tenants] create_tenant attempt slug=%s owner=%s", payload.slug, owner.public_id)
     if await repo.slug_exists(db, slug=payload.slug):
+        logger.warning("[tenants] create_tenant slug conflict slug=%s", payload.slug)
         raise SlugExistError()
 
     tenant = Tenant.from_schema(payload, status=TenantStatus.PENDING_PLAN)
@@ -93,6 +95,7 @@ async def create_tenant(
 
     await db.commit()
     await db.refresh(tenant)
+    logger.info("[tenants] tenant created public_id=%s slug=%s owner=%s", tenant.public_id, tenant.slug, owner.public_id)
     return schemas.TenantResponse.model_validate(tenant)
 
 
@@ -159,16 +162,19 @@ async def update_tenant(
     caller_tu: TenantUser,
 ) -> schemas.TenantResponse:
     if not caller_tu.is_owner_or_admin:
+        logger.warning("[tenants] update_tenant forbidden tenant=%s caller_role=%s", tenant.public_id, caller_tu.role)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins and owners can update tenant details.",
         )
 
+    changed_fields = list(payload.model_dump(exclude_unset=True).keys())
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(tenant, field, value)
 
     await db.commit()
     await db.refresh(tenant)
+    logger.info("[tenants] tenant updated tenant=%s fields=%s", tenant.public_id, changed_fields)
     return schemas.TenantResponse.model_validate(tenant)
 
 
@@ -180,9 +186,11 @@ async def update_tenant_status(
 ) -> schemas.TenantResponse:
     """Super-admin only."""
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+    old_status = tenant.status
     tenant.status = payload.status
     await db.commit()
     await db.refresh(tenant)
+    logger.info("[tenants] tenant status changed tenant=%s old=%s new=%s", tenant.public_id, old_status, payload.status)
     return schemas.TenantResponse.model_validate(tenant)
 
 
@@ -274,9 +282,11 @@ async def invite_user(
             detail="Only admins and owners can invite users.",
         )
 
+    logger.info("[tenants] invite_user attempt tenant=%s email=%s role=%s", tenant.public_id, payload.email, payload.role)
     # Gate 3 — seat limit check
     seat_info = await _get_seat_info(db, tenant_id=tenant.id)
     if seat_info["seats_remaining"] <= 0:
+        logger.warning("[tenants] invite_user seat limit reached tenant=%s used=%d total=%d", tenant.public_id, seat_info["seats_used"], seat_info["seats_total"])
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=(
@@ -361,7 +371,7 @@ async def invite_user(
         invite_link  = invite_link,
         role         = payload.role.value,
     )
-    logger.info(f"Invite email enqueued: task={celery_task.id} recipient={payload.email}")
+    logger.info("[tenants] invite sent tenant=%s email=%s role=%s task=%s", tenant.public_id, payload.email, payload.role, celery_task.id)
 
     return schemas.InviteResponse(
         email=payload.email,
@@ -376,12 +386,14 @@ async def accept_invite(
     *,
     payload: schemas.AcceptInviteRequest,
 ) -> schemas.AcceptInviteResponse:
+    logger.info("[tenants] accept_invite attempt")
     # 1. Look up OTP record by hash — no Redis needed
     otp_hash = hash_otp(payload.code)
     otp_record = await auth_repo.get_active_otp_by_hash(
         db, code_hash=otp_hash, purpose=OTPPurpose.TENANT_INVITE
     )
     if otp_record is None:
+        logger.warning("[tenants] accept_invite invalid or expired code")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired invite link.",
@@ -463,6 +475,7 @@ async def accept_invite(
         )
 
     await db.commit()
+    logger.info("[tenants] invite accepted user=%s tenant=%s role=%s", user.public_id, tenant.public_id, role)
     return schemas.AcceptInviteResponse(public_id=str(user.public_id))
 
 
@@ -490,9 +503,11 @@ async def update_member_role(
             detail="Cannot change the primary owner's role.",
         )
 
+    old_role = target_tu.role
     target_tu.role = payload.role
     await db.commit()
     await db.refresh(target_tu)
+    logger.info("[tenants] member role changed tenant=%s member=%s old=%s new=%s", tenant.public_id, member_public_id, old_role, payload.role)
     return _build_member_response(target_tu)
 
 
@@ -538,6 +553,7 @@ async def update_member_status(
     if payload.status == TenantUserStatus.ACTIVE:
         seat_info = await _get_seat_info(db, tenant_id=tenant.id)
         if seat_info["seats_remaining"] <= 0:
+            logger.warning("[tenants] update_member_status seat limit reached tenant=%s member=%s used=%d total=%d", tenant.public_id, member_public_id, seat_info["seats_used"], seat_info["seats_total"])
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail=(
@@ -547,9 +563,11 @@ async def update_member_status(
                 ),
             )
 
+    old_status = target_tu.status
     target_tu.status = payload.status
     await db.commit()
     await db.refresh(target_tu)
+    logger.info("[tenants] member status changed tenant=%s member=%s old=%s new=%s", tenant.public_id, member_public_id, old_status, payload.status)
     return _build_member_response(target_tu)
 
 
@@ -580,6 +598,7 @@ async def remove_member(
 
     await db.delete(target_tu)
     await db.commit()
+    logger.info("[tenants] member removed tenant=%s member=%s by_self=%s", tenant.public_id, member_public_id, is_self)
     return schemas.RemoveMemberResponse()
 
 
@@ -664,6 +683,7 @@ async def admin_delete_tenant(
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     await repo.soft_delete_tenant(db, tenant=tenant)
     await db.commit()
+    logger.info("[tenants] tenant soft-deleted tenant=%s", tenant.public_id)
 
 
 async def admin_update_member_role(
@@ -683,9 +703,11 @@ async def admin_update_member_role(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot change the primary owner's role.",
         )
+    old_role = target_tu.role
     target_tu.role = payload.role
     await db.commit()
     await db.refresh(target_tu)
+    logger.info("[tenants] admin role changed tenant=%s member=%s old=%s new=%s", tenant_public_id, member_public_id, old_role, payload.role)
     return _build_member_response(target_tu)
 
 
@@ -706,9 +728,11 @@ async def admin_update_member_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot change the primary owner's status.",
         )
+    old_status = target_tu.status
     target_tu.status = payload.status
     await db.commit()
     await db.refresh(target_tu)
+    logger.info("[tenants] admin status changed tenant=%s member=%s old=%s new=%s", tenant_public_id, member_public_id, old_status, payload.status)
     return _build_member_response(target_tu)
 
 
@@ -730,6 +754,7 @@ async def admin_remove_member(
         )
     await db.delete(target_tu)
     await db.commit()
+    logger.info("[tenants] admin removed member tenant=%s member=%s", tenant_public_id, member_public_id)
     return schemas.RemoveMemberResponse()
 
 
@@ -925,4 +950,117 @@ def _build_member_response(tu: TenantUser) -> schemas.TenantMemberResponse:
         first_name=user.first_name,
         last_name=user.last_name,
         avatar_url=user.avatar_url,
+    )
+
+
+# =============================================================================
+# ONBOARDING
+# =============================================================================
+
+async def get_onboarding_status(
+    db: AsyncSession,
+    *,
+    tenant: Tenant,
+    membership: TenantUser,
+    current_user: User,
+    subscription,
+) -> schemas.OnboardingResponse | schemas.TenantOverviewResponse:
+    """
+    For owner/admin: return a checklist of setup steps with completion state.
+    For agent/viewer: return a brief tenant overview instead.
+    """
+    from app.modules.chatbot import repository as chatbot_repo
+    from sqlalchemy import select, func
+    from app.modules.chatbot.models import ChatbotConfig
+    from app.core.enums import ChatbotStatus
+
+    # ── Non-owner members get an overview, not a checklist ───────────────────
+    if membership.role in (TenantRole.AGENT, TenantRole.VIEWER):
+        total_chatbots = await chatbot_repo.count_chatbots_for_tenant(db, tenant_id=tenant.id)
+        total_documents = await chatbot_repo.count_documents_for_tenant(db, tenant_id=tenant.id)
+
+        active_result = await db.execute(
+            select(func.count()).select_from(ChatbotConfig).where(
+                ChatbotConfig.tenant_id == tenant.id,
+                ChatbotConfig.status == ChatbotStatus.ACTIVE,
+            )
+        )
+        active_chatbots = active_result.scalar_one()
+
+        plan_name = subscription.plan.name if subscription and subscription.plan else None
+
+        logger.debug("[tenants] onboarding overview tenant=%s user=%s role=%s", tenant.public_id, current_user.public_id, membership.role)
+        return schemas.TenantOverviewResponse(
+            role=membership.role.value,
+            tenant_name=tenant.name,
+            tenant_public_id=tenant.public_id,
+            plan_name=plan_name,
+            total_chatbots=total_chatbots,
+            active_chatbots=active_chatbots,
+            total_documents=total_documents,
+            member_since=membership.joined_at,
+        )
+
+    # ── Owner/admin: compute step completion ─────────────────────────────────
+    total_chatbots = await chatbot_repo.count_chatbots_for_tenant(db, tenant_id=tenant.id)
+    total_documents = await chatbot_repo.count_documents_for_tenant(db, tenant_id=tenant.id)
+
+    # Has any chatbot been configured (system_prompt_template rendered)?
+    configured_result = await db.execute(
+        select(func.count()).select_from(ChatbotConfig).where(
+            ChatbotConfig.tenant_id == tenant.id,
+            ChatbotConfig.system_prompt_template.isnot(None),
+        )
+    )
+    configured_chatbots = configured_result.scalar_one()
+
+    active_result = await db.execute(
+        select(func.count()).select_from(ChatbotConfig).where(
+            ChatbotConfig.tenant_id == tenant.id,
+            ChatbotConfig.status == ChatbotStatus.ACTIVE,
+        )
+    )
+    active_chatbots = active_result.scalar_one()
+
+    steps = [
+        schemas.OnboardingStep(
+            key="email_verified",
+            label="Verify your email address",
+            completed=current_user.email_verified_at is not None,
+        ),
+        schemas.OnboardingStep(
+            key="plan_selected",
+            label="Select a subscription plan",
+            completed=subscription is not None,
+        ),
+        schemas.OnboardingStep(
+            key="tenant_created",
+            label="Register your company",
+            completed=True,  # they're on this endpoint — tenant exists
+        ),
+        schemas.OnboardingStep(
+            key="chatbot_configured",
+            label="Configure your chatbot",
+            completed=configured_chatbots > 0,
+        ),
+        schemas.OnboardingStep(
+            key="content_uploaded",
+            label="Upload documents or connect a data source",
+            completed=total_documents > 0,
+        ),
+        schemas.OnboardingStep(
+            key="chatbot_activated",
+            label="Activate your chatbot",
+            completed=active_chatbots > 0,
+        ),
+    ]
+
+    completed_count = sum(1 for s in steps if s.completed)
+    logger.info("[tenants] onboarding status tenant=%s user=%s completed=%d/%d", tenant.public_id, current_user.public_id, completed_count, len(steps))
+
+    return schemas.OnboardingResponse(
+        role=membership.role.value,
+        steps=steps,
+        completed_count=completed_count,
+        total_steps=len(steps),
     )

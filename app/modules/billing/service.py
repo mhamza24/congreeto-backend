@@ -1,8 +1,11 @@
 # app/modules/billing/service.py
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,11 +44,13 @@ METRIC_CONFIG: dict[UsageMetric, tuple[str, int]] = {
 
 async def list_public_plans(db: AsyncSession) -> list[schemas.PlanResponse]:
     plans = await repo.list_public_plans(db)
+    logger.debug("[billing] list_public_plans count=%d", len(plans))
     return [schemas.PlanResponse.from_plan(p) for p in plans]
 
 
 async def list_all_plans(db: AsyncSession) -> list[schemas.PlanResponse]:
     plans = await repo.list_all_plans(db)
+    logger.debug("[billing] list_all_plans count=%d", len(plans))
     return [schemas.PlanResponse.from_plan(p) for p in plans]
 
 
@@ -53,6 +58,7 @@ async def create_plan(
     db: AsyncSession, *, payload: schemas.PlanCreateRequest
 ) -> schemas.PlanResponse:
     if await repo.get_plan_by_slug(db, slug=payload.slug):
+        logger.warning("[billing] create_plan conflict slug=%s", payload.slug)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Plan with slug '{payload.slug}' already exists.",
@@ -70,6 +76,7 @@ async def create_plan(
     )
     plan = await repo.create_plan(db, plan=plan)
     await db.commit()
+    logger.info("[billing] plan created slug=%s public_id=%s", plan.slug, plan.public_id)
     return schemas.PlanResponse.from_plan(plan)
 
 
@@ -77,6 +84,7 @@ async def update_plan(
     db: AsyncSession, *, plan_public_id: str, payload: schemas.PlanUpdateRequest
 ) -> schemas.PlanResponse:
     plan = await _get_plan_or_404(db, public_id=plan_public_id)
+    changed_fields = list(payload.model_dump(exclude_unset=True).keys())
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "limits" and value is not None:
             setattr(plan, field, value if isinstance(value, dict) else value.model_dump())
@@ -84,6 +92,7 @@ async def update_plan(
             setattr(plan, field, value)
     await db.commit()
     await db.refresh(plan)
+    logger.info("[billing] plan updated public_id=%s fields=%s", plan_public_id, changed_fields)
     return schemas.PlanResponse.from_plan(plan)
 
 
@@ -112,6 +121,7 @@ async def create_addon(
     await db.flush()
     await db.refresh(addon)
     await db.commit()
+    logger.info("[billing] addon created slug=%s public_id=%s", addon.slug, addon.public_id)
     return schemas.AddonResponse.from_addon(addon)
 
 
@@ -123,6 +133,7 @@ async def activate_subscription(
     db: AsyncSession, *, tenant_public_id: str,
     payload: schemas.ActivateSubscriptionRequest,
 ) -> schemas.SubscriptionResponse:
+    logger.info("[billing] activating subscription tenant=%s plan=%s", tenant_public_id, payload.plan_public_id)
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     plan   = await _get_plan_or_404(db, public_id=payload.plan_public_id)
     sub    = await contracts.activate_subscription(
@@ -131,6 +142,7 @@ async def activate_subscription(
         notes=payload.notes,
     )
     await db.commit()
+    logger.info("[billing] subscription activated tenant=%s plan=%s sub=%s", tenant_public_id, plan.slug, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
 
 
@@ -138,6 +150,7 @@ async def change_plan(
     db: AsyncSession, *, tenant_public_id: str,
     payload: schemas.ChangePlanRequest,
 ) -> schemas.SubscriptionResponse:
+    logger.info("[billing] changing plan tenant=%s new_plan=%s", tenant_public_id, payload.plan_public_id)
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     plan   = await _get_plan_or_404(db, public_id=payload.plan_public_id)
     sub    = await contracts.change_plan(
@@ -145,6 +158,7 @@ async def change_plan(
         currency=payload.currency, notes=payload.notes,
     )
     await db.commit()
+    logger.info("[billing] plan changed tenant=%s new_plan=%s sub=%s", tenant_public_id, plan.slug, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
 
 
@@ -152,31 +166,37 @@ async def cancel_subscription(
     db: AsyncSession, *, tenant_public_id: str,
     payload: schemas.CancelSubscriptionRequest,
 ) -> schemas.SubscriptionResponse:
+    logger.info("[billing] cancelling subscription tenant=%s immediately=%s", tenant_public_id, payload.immediately)
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     sub    = await contracts.cancel_subscription(
         db, tenant=tenant, immediately=payload.immediately, notes=payload.notes,
     )
     if not sub:
+        logger.warning("[billing] cancel_subscription no active sub found tenant=%s", tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active subscription found.",
         )
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    logger.info("[billing] subscription cancelled tenant=%s sub=%s", tenant_public_id, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
 
 
 async def mark_past_due(
     db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
 ) -> schemas.SubscriptionResponse:
+    logger.warning("[billing] marking subscription past_due tenant=%s", tenant_public_id)
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
+        logger.warning("[billing] mark_past_due no active sub found tenant=%s", tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active subscription found.",
         )
     if sub.status == SubscriptionStatus.PAST_DUE:
+        logger.warning("[billing] mark_past_due already past_due tenant=%s sub=%s", tenant_public_id, sub.public_id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Subscription is already past_due.",
@@ -184,20 +204,24 @@ async def mark_past_due(
     sub = await contracts.mark_past_due(db, tenant=tenant, notes=notes)
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    logger.info("[billing] subscription marked past_due tenant=%s sub=%s", tenant_public_id, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
 
 
 async def mark_active(
     db: AsyncSession, *, tenant_public_id: str, notes: str | None = None,
 ) -> schemas.SubscriptionResponse:
+    logger.info("[billing] restoring subscription to active tenant=%s", tenant_public_id)
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
+        logger.warning("[billing] mark_active no sub found tenant=%s", tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No subscription found.",
         )
     if sub.status != SubscriptionStatus.PAST_DUE:
+        logger.warning("[billing] mark_active sub not past_due tenant=%s status=%s", tenant_public_id, sub.status.value)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot mark active — subscription is currently '{sub.status.value}', not past_due.",
@@ -205,6 +229,7 @@ async def mark_active(
     sub = await contracts.mark_active(db, tenant=tenant, notes=notes)
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+    logger.info("[billing] subscription restored to active tenant=%s sub=%s", tenant_public_id, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
 
 
@@ -215,14 +240,17 @@ async def add_addon(
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     addon  = await repo.get_addon_by_public_id(db, public_id=payload.addon_public_id)
     if not addon:
+        logger.warning("[billing] add_addon not found addon=%s tenant=%s", payload.addon_public_id, tenant_public_id)
         raise HTTPException(status_code=404, detail="Addon not found.")
     if not addon.is_active:
+        logger.warning("[billing] add_addon inactive addon=%s tenant=%s", addon.slug, tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This addon is no longer available.",
         )
     sub = await repo.get_active_subscription(db, tenant_id=tenant.id)
     if not sub:
+        logger.warning("[billing] add_addon no active subscription tenant=%s", tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Activate a plan before adding addons.",
@@ -233,6 +261,7 @@ async def add_addon(
         currency=payload.currency, notes=payload.notes,
     )
     await db.commit()
+    logger.info("[billing] addon added tenant=%s addon=%s qty=%s", tenant_public_id, addon.slug, payload.quantity)
     return _build_addon_response(addon_sub, addon=addon)
 
 
@@ -243,19 +272,23 @@ async def remove_addon(
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     addon  = await repo.get_addon_by_public_id(db, public_id=payload.addon_public_id)
     if not addon:
+        logger.warning("[billing] remove_addon not found addon=%s tenant=%s", payload.addon_public_id, tenant_public_id)
         raise HTTPException(status_code=404, detail="Addon not found.")
     existing = await repo.get_tenant_addon(db, tenant_id=tenant.id, addon_id=addon.id)
     if not existing:
+        logger.warning("[billing] remove_addon not assigned addon=%s tenant=%s", addon.slug, tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="This addon is not assigned to the tenant.",
         )
     if existing.status == SubscriptionStatus.CANCELLED:
+        logger.warning("[billing] remove_addon already cancelled addon=%s tenant=%s", addon.slug, tenant_public_id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This addon is already cancelled.",
         )
     if payload.quantity is not None and payload.quantity > existing.quantity:
+        logger.warning("[billing] remove_addon qty exceeds owned addon=%s requested=%s owned=%s", addon.slug, payload.quantity, existing.quantity)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot remove {payload.quantity} units — tenant only has {existing.quantity}.",
@@ -265,6 +298,7 @@ async def remove_addon(
         quantity=payload.quantity, notes=payload.notes,
     )
     await db.commit()
+    logger.info("[billing] addon removed tenant=%s addon=%s qty=%s", tenant_public_id, addon.slug, payload.quantity)
     return {"message": "Addon removed successfully."}
 
 
@@ -286,6 +320,11 @@ async def check_limit(
     )
     pct     = round((used / limit * 100), 2) if limit > 0 else 100.0
     allowed = lim_status != LimitStatus.EXCEEDED
+
+    if not allowed:
+        logger.warning("[billing] limit exceeded metric=%s used=%d limit=%d", metric, used, limit)
+    elif pct >= 80:
+        logger.info("[billing] limit approaching metric=%s used=%d limit=%d pct=%.1f%%", metric, used, limit, pct)
 
     return schemas.LimitCheckResponse(
         metric=metric, used=used, limit=limit,

@@ -11,11 +11,14 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.config.settings import get_settings
+
+_settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# ── Chunk settings ────────────────────────────────────────────────────────────
-CHUNK_SIZE = 500  # tokens (approximate — we use word count as proxy)
-CHUNK_OVERLAP = 50  # words of overlap between consecutive chunks
+# ── Chunk settings (sourced from settings.py — change there, not here) ────────
+CHUNK_SIZE = _settings.CHUNK_SIZE
+CHUNK_OVERLAP = _settings.CHUNK_OVERLAP
 
 
 # =============================================================================
@@ -167,7 +170,7 @@ def _tables_to_text(tables: List[List[List[str]]]) -> str:
 async def embed_chunks(
     chunks: List[Dict[str, Any]],
     openai_service: Any,
-    batch_size: int = 100,
+    batch_size: int = _settings.EMBED_BATCH_SIZE,
 ) -> List[Dict[str, Any]]:
     """
     Add 'embedding' key to each chunk dict.
@@ -293,7 +296,7 @@ PAGE TEXT:
 """
 
 # Max tokens for a page extraction response — enough for ~15 listings with descriptions
-_EXTRACT_MAX_TOKENS = 1500
+_EXTRACT_MAX_TOKENS = _settings.LLM_EXTRACT_MAX_TOKENS
 
 
 def _try_parse_listings_json(raw: str) -> Optional[List[Dict[str, Any]]]:
@@ -481,9 +484,8 @@ Return ONLY the JSON array. No explanation, no markdown, no extra text.
 TABLE DATA:
 """
 
-# ~20 rows per LLM call keeps each request under ~3k tokens and well within
-# context limits while still amortizing the per-request overhead.
-_LLM_BATCH_SIZE = 20
+# Rows per LLM call — keeps each request under ~3k tokens.
+_LLM_BATCH_SIZE = _settings.LLM_FILE_PARSE_BATCH_SIZE
 
 
 async def parse_listings_from_table(

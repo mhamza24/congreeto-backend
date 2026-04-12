@@ -306,7 +306,13 @@ async def submit_crawl_jobs(
 ) -> List[schemas.CrawlJobResponse]:
     """
     Create one crawl_job row per URL and enqueue Celery tasks.
+    Pre-flight check: enforce the tenant's monthly pages_crawled quota before
+    queuing anything — prevents over-crawling and gives a clear 402 response.
     """
+    from datetime import date
+    from app.modules.billing.task_helpers import check_and_enforce_limit
+    from app.core.enums import UsageMetric, LimitStatus
+
     source = await repo.get_knowledge_source_by_public_id(
         db, tenant_id=tenant_id, public_id=ks_public_id
     )
@@ -318,6 +324,41 @@ async def submit_crawl_jobs(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Crawl jobs can only be created on a 'website' knowledge source.",
         )
+
+    # ── Billing pre-flight: check pages_crawled quota ─────────────────────
+    used, limit, limit_status = await check_and_enforce_limit(
+        db,
+        tenant_id=tenant_id,
+        metric=UsageMetric.PAGES_CRAWLED,
+        metric_key="max_pages_crawled",
+        default_limit=50,
+    )
+    if limit_status == LimitStatus.EXCEEDED:
+        today = date.today()
+        reset_month = today.month % 12 + 1
+        reset_year = today.year + (today.month // 12)
+        reset_date = date(reset_year, reset_month, 1)
+        logger.warning(
+            "submit_crawl_jobs: tenant %d blocked — pages_crawled limit reached (%d/%d)",
+            tenant_id, used, limit,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"Monthly page crawl limit reached ({used}/{limit} pages used). "
+                f"Your quota resets on {reset_date.strftime('%B 1, %Y')}. "
+                "Upgrade your plan or purchase additional pages to continue crawling."
+            ),
+        )
+
+    remaining = max(0, limit - used)
+    if len(payload.urls) > remaining:
+        logger.info(
+            "submit_crawl_jobs: tenant %d trimming %d URLs to %d remaining quota",
+            tenant_id, len(payload.urls), remaining,
+        )
+        # Trim URLs to the remaining budget rather than blocking entirely
+        payload = payload.model_copy(update={"urls": payload.urls[:remaining]})
 
     created_jobs = []
     for url in payload.urls:
@@ -342,7 +383,7 @@ async def submit_crawl_jobs(
             chatbot_config_id=source.chatbot_config_id,
             base_url=job.base_url,
         )
-        logger.info(f"Enqueued crawl task for job_id={job.id} url={job.base_url}")
+        logger.info("Enqueued crawl task job_public_id=%s url=%s", job.public_id, job.base_url)
 
     return [schemas.CrawlJobResponse.model_validate(j) for j in created_jobs]
 

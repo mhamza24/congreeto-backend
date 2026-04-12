@@ -56,7 +56,7 @@ async def signup_endpoint(
         raise                          
     except Exception:
         logger.exception("Unexpected error in user signup")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -87,7 +87,7 @@ async def login_endpoint(
         raise                      
     except Exception:
         logger.exception("Unexpected error in user login")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -117,7 +117,7 @@ async def admin_signup_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error in admin signup")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -146,7 +146,7 @@ async def admin_login_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error in admin login")
-        sentry_sdk.capture_exception(Exception)
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -176,6 +176,7 @@ async def refresh_token_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error during token refresh")
+        sentry_sdk.capture_exception()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     return ApiResponse(
@@ -202,6 +203,7 @@ async def verify_email_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error during email verification")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -229,6 +231,7 @@ async def resend_otp_status_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error checking OTP resend status")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",
@@ -258,6 +261,7 @@ async def resend_otp_endpoint(
         raise
     except Exception:
         logger.exception("Unexpected error during OTP resend")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not process your request. Please try again later.",

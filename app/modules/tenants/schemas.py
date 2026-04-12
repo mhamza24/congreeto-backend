@@ -341,3 +341,33 @@ class AdminTenantDetail(BaseModel):
     pending_tasks: AdminPendingTasks
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# ONBOARDING
+# =============================================================================
+
+class OnboardingStep(BaseModel):
+    key:       str
+    label:     str
+    completed: bool
+
+
+class OnboardingResponse(BaseModel):
+    """Returned to owner/admin — shows which setup steps have been completed."""
+    role:            str
+    steps:           List[OnboardingStep]
+    completed_count: int
+    total_steps:     int
+
+
+class TenantOverviewResponse(BaseModel):
+    """Returned to agent/viewer — a brief snapshot of the tenant they joined."""
+    role:             str
+    tenant_name:      str
+    tenant_public_id: str
+    plan_name:        Optional[str]
+    total_chatbots:   int
+    active_chatbots:  int
+    total_documents:  int
+    member_since:     Optional[datetime]

@@ -14,6 +14,7 @@ import app.modules.billing.models      # noqa: F401
 import app.modules.chatbot.models      # noqa: F401
 import app.modules.chat.models         # noqa: F401
 import app.modules.inquiries.models    # noqa: F401
+import app.modules.audit.models        # noqa: F401
 
 settings = get_settings()
 os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
@@ -50,12 +51,12 @@ celery_app.conf.update(
     broker_transport_options={
         "socket_keepalive": True,
         "retry_on_timeout": True,
-        "socket_connect_timeout": 10,
-        "socket_timeout": 120,
-        "health_check_interval": 25,
+        "socket_connect_timeout": settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+        "socket_timeout": settings.REDIS_SOCKET_TIMEOUT,
+        "health_check_interval": settings.REDIS_HEALTH_CHECK_INTERVAL,
     },
-    redis_socket_timeout=120,
-    redis_socket_connect_timeout=10,
+    redis_socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+    redis_socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
     # ── Worker reliability ────────────────────────────────────────────────
     # Acknowledge only after the task finishes — safe to retry on worker crash.
     task_acks_late=True,
@@ -101,6 +102,11 @@ celery_app.conf.beat_schedule = {
     "crawl-retry-stuck-jobs": {
         "task": "app.modules.chatbot.tasks.retry_stuck_crawl_jobs",
         "schedule": crontab(minute="*/10"),       # every 10 minutes
+    },
+    # Document recovery — re-queue FAILED or orphaned PROCESSING documents
+    "chatbot-retry-failed-documents": {
+        "task": "app.modules.chatbot.tasks.retry_failed_documents",
+        "schedule": crontab(minute="*/15"),       # every 15 minutes
     },
 }
 

@@ -136,11 +136,11 @@ def crawl_and_embed(
         return f"crawl_and_embed dispatched for job_id={crawl_job_id}"
 
     except Exception as exc:
+        import sentry_sdk
         countdown = 2 ** self.request.retries
-        logger.error(
-            f"crawl_and_embed failed for job_id={crawl_job_id}: {exc}. "
-            f"Retrying in {countdown}s."
-        )
+        logger.error("crawl_and_embed failed error=%s retry_in=%ds", exc, countdown)
+        if self.request.retries >= self.max_retries:
+            sentry_sdk.capture_exception(exc)
         raise self.retry(exc=exc, countdown=countdown)
 
 
@@ -210,15 +210,63 @@ async def _crawl_and_embed_async(
                     completed_at=datetime.now(timezone.utc),
                 )
                 await db.commit()
-        logger.info(f"CrawlJob {crawl_job_id}: 0 pages found, marked completed.")
+        logger.info("CrawlJob %d: 0 pages found, marked completed.", crawl_job_id)
         return
 
-    # ── Step 4: Dispatch one short-lived task per page ────────────────────
+    # ── Step 4: Batch-embed ALL pages in ONE OpenAI call ─────────────────
+    # Chunk every page in memory (pure Python, no I/O), collect all texts,
+    # then call embed_texts once across everything.
+    # Result: 1 API call instead of N (one per page).
+    from app.modules.open_ai import service as openai_service
+
+    # {page_url: [chunk_dict, ...]} — chunk_dict has chunk_index/content/metadata
+    # Order is preserved: all_texts[i] corresponds to page_chunks[url][j] in iteration order.
+    page_chunks: dict[str, list[dict]] = {}
+    all_texts: list[str] = []
+
     for page_url, page_text in pages_dict.items():
+        chunks = chunk_plain_text(page_text, source_url=page_url)
+        page_chunks[page_url] = chunks
+        for chunk in chunks:
+            all_texts.append(chunk["content"])
+
+    embeddings: list[list[float]] = []
+    if all_texts:
+        try:
+            # embed_texts handles internal batching at EMBED_BATCH_SIZE (from settings)
+            embeddings = await openai_service.embed_texts(all_texts)
+            logger.info(
+                "CrawlJob %d: batch-embedded %d chunks across %d pages in 1 API call",
+                crawl_job_id, len(all_texts), pages_found,
+            )
+        except Exception as exc:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+            logger.error(
+                "CrawlJob %d: batch embedding failed (%s) — falling back to per-page embed",
+                crawl_job_id, exc,
+            )
+            embeddings = []  # per-page tasks will embed themselves on fallback
+
+    # Distribute embeddings back to per-page chunk dicts
+    if embeddings and len(embeddings) == len(all_texts):
+        text_idx = 0
+        for page_url, chunks in page_chunks.items():
+            for chunk in chunks:
+                chunk["embedding"] = embeddings[text_idx]
+                text_idx += 1
+        pre_embedded = True
+    else:
+        pre_embedded = False
+
+    # ── Step 5: Dispatch one short-lived task per page ────────────────────
+    for page_url, page_text in pages_dict.items():
+        chunks_for_page = page_chunks.get(page_url, [])
         embed_crawled_page.apply_async(
             kwargs=dict(
                 page_url=page_url,
                 page_text=page_text,
+                pre_embedded_chunks=chunks_for_page if pre_embedded else [],
                 crawl_job_id=crawl_job_id,
                 tenant_id=tenant_id,
                 knowledge_source_id=knowledge_source_id,
@@ -230,7 +278,8 @@ async def _crawl_and_embed_async(
         )
 
     logger.info(
-        f"CrawlJob {crawl_job_id}: dispatched {pages_found} embed_crawled_page tasks."
+        "CrawlJob %d: dispatched %d embed_crawled_page tasks (pre_embedded=%s).",
+        crawl_job_id, pages_found, pre_embedded,
     )
 
 
@@ -250,6 +299,7 @@ def embed_crawled_page(
     *,
     page_url: str,
     page_text: str,
+    pre_embedded_chunks: list,
     crawl_job_id: int,
     tenant_id: int,
     knowledge_source_id: int,
@@ -258,15 +308,21 @@ def embed_crawled_page(
     pages_found: int,
 ) -> str:
     """
-    Process a single crawled page: chunk → embed → write chunks → optional
-    listing extraction.  Atomically increments the crawl job counters and
-    finalizes the job when the last page completes.
+    Process a single crawled page: write pre-embedded chunks to DB (or embed
+    them inline on fallback) → optional listing extraction → atomically
+    increment crawl job counters and finalize when the last page completes.
+
+    pre_embedded_chunks: list of {chunk_index, content, metadata, embedding}
+        dicts computed by the orchestrator in one batch call.  Empty list
+        triggers per-page fallback embedding (used when batch embedding fails).
     """
+    import sentry_sdk
     try:
         _run(
             _embed_crawled_page_async(
                 page_url=page_url,
                 page_text=page_text,
+                pre_embedded_chunks=pre_embedded_chunks,
                 crawl_job_id=crawl_job_id,
                 tenant_id=tenant_id,
                 knowledge_source_id=knowledge_source_id,
@@ -281,15 +337,14 @@ def embed_crawled_page(
         if self.request.retries < self.max_retries:
             countdown = 2 ** self.request.retries
             logger.error(
-                f"embed_crawled_page failed for {page_url}: {exc}. "
-                f"Retrying in {countdown}s."
+                "embed_crawled_page failed for %s: %s. Retrying in %ds.",
+                page_url, exc, countdown,
             )
             raise self.retry(exc=exc, countdown=countdown)
 
-        # All retries exhausted — count this page as failed and check finalization
-        logger.error(
-            f"embed_crawled_page: all retries exhausted for {page_url}: {exc}."
-        )
+        # All retries exhausted — capture in Sentry, count page as failed
+        sentry_sdk.capture_exception(exc)
+        logger.error("embed_crawled_page: all retries exhausted for %s: %s.", page_url, exc)
         _run(
             _on_page_done(
                 crawl_job_id=crawl_job_id,
@@ -305,6 +360,7 @@ async def _embed_crawled_page_async(
     *,
     page_url: str,
     page_text: str,
+    pre_embedded_chunks: list,
     crawl_job_id: int,
     tenant_id: int,
     knowledge_source_id: int,
@@ -312,9 +368,23 @@ async def _embed_crawled_page_async(
     extract_listings: bool,
     pages_found: int,
 ) -> None:
+    """
+    Checkpoint-session pattern for large SaaS:
+
+      Session 1 (tiny):  INSERT document, status=PROCESSING → commit → release connection
+      [No session held]:  All external I/O (OpenAI embed + LLM extract)
+      Session 2 (tiny):  INSERT chunks + listings + status=READY → single commit
+      Session 3 (on err): UPDATE status=FAILED → commit
+
+    Never holds a DB connection during the OpenAI calls — keeps the connection
+    pool healthy even when many pages are processed concurrently.
+    """
     import uuid
     from app.modules.open_ai import service as openai_service
 
+    doc_id: int | None = None
+
+    # ── Checkpoint 1: create document placeholder (PROCESSING) ───────────
     async with get_task_db_session() as db:
         doc = await repo.create_document(
             db,
@@ -325,48 +395,90 @@ async def _embed_crawled_page_async(
             file_size_bytes=len(page_text.encode()),
             public_id=uuid.uuid4().hex,
         )
+        await repo.update_document(db, doc=doc, status=DocStatus.PROCESSING)
         await db.commit()
+        doc_id = doc.id
+        logger.debug("embed_crawled_page: doc %d created (PROCESSING) for %s", doc_id, page_url)
 
-        # ── RAG chunks ────────────────────────────────────────────────────
-        raw_chunks = chunk_plain_text(page_text, source_url=page_url)
-
-        if not raw_chunks:
-            await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
-            await db.commit()
-        else:
-            embedded_chunks = await embed_chunks(raw_chunks, openai_service)
-            chunk_rows = [
-                DocumentChunk(
-                    document_id=doc.id,
-                    tenant_id=tenant_id,
-                    chunk_index=c["chunk_index"],
-                    content=c["content"],
-                    embedding=c["embedding"],
-                    chunk_metadata=c["metadata"],
-                )
-                for c in embedded_chunks
-            ]
-            await repo.bulk_create_chunks(db, chunks=chunk_rows)
-            await repo.update_document(
-                db, doc=doc, status=DocStatus.READY, chunk_count=len(chunk_rows)
+    # ── External I/O (no DB session held) ────────────────────────────────
+    try:
+        if pre_embedded_chunks:
+            # Fast path: orchestrator already batched the embeddings
+            embedded_chunks = pre_embedded_chunks
+            logger.debug(
+                "embed_crawled_page: using %d pre-embedded chunks for %s",
+                len(embedded_chunks), page_url,
             )
-            await db.commit()
+        else:
+            # Fallback: embed this page individually (used when batch embed failed)
+            raw_chunks = chunk_plain_text(page_text, source_url=page_url)
+            embedded_chunks = await embed_chunks(raw_chunks, openai_service) if raw_chunks else []
+            logger.debug(
+                "embed_crawled_page: fallback-embedded %d chunks for %s",
+                len(embedded_chunks), page_url,
+            )
 
-        # ── Optional listing extraction ───────────────────────────────────
+        extracted_listings: list[dict] = []
         if extract_listings:
-            extracted = await extract_listings_from_page(
+            extracted_listings = await extract_listings_from_page(
                 page_text, openai_service, source_url=page_url
             )
-            if extracted:
+    except Exception as exc:
+        # External I/O failed — mark document FAILED in its own tiny session
+        logger.error("embed_crawled_page: I/O error for %s: %s", page_url, exc)
+        async with get_task_db_session() as db:
+            doc = await repo.get_document(db, tenant_id=tenant_id, document_id=doc_id)
+            if doc:
+                await repo.update_document(
+                    db, doc=doc,
+                    status=DocStatus.FAILED,
+                    error_message=f"Embed/extract error: {exc}",
+                )
+                await db.commit()
+        raise  # re-raise so Celery retries / calls _on_page_done(success=False)
+
+    # ── Checkpoint 2: write all results atomically (single commit) ────────
+    try:
+        async with get_task_db_session() as db:
+            doc = await repo.get_document(db, tenant_id=tenant_id, document_id=doc_id)
+            if not doc:
+                logger.error("embed_crawled_page: doc %d disappeared for %s", doc_id, page_url)
+                return
+
+            # Chunks
+            if not embedded_chunks:
+                await repo.update_document(db, doc=doc, status=DocStatus.READY, chunk_count=0)
+            else:
+                chunk_rows = [
+                    DocumentChunk(
+                        document_id=doc.id,
+                        tenant_id=tenant_id,
+                        chunk_index=c["chunk_index"],
+                        content=c["content"],
+                        embedding=c["embedding"],
+                        chunk_metadata=c["metadata"],
+                    )
+                    for c in embedded_chunks
+                ]
+                await repo.bulk_create_chunks(db, chunks=chunk_rows)
+                await repo.update_document(
+                    db, doc=doc, status=DocStatus.READY, chunk_count=len(chunk_rows)
+                )
+                logger.info(
+                    "embed_crawled_page: %d chunks written for %s", len(chunk_rows), page_url
+                )
+
+            # Listings (same commit — atomically tied to chunks)
+            page_listing_ids: list[int] = []
+            if extracted_listings:
                 page_external_ids = [
                     f"{crawl_job_id}::{page_url}::{item.get('title', '')}"
-                    for item in extracted
+                    for item in extracted_listings
                 ]
                 existing_map = await repo.get_listings_by_external_ids(
                     db, tenant_id=tenant_id, external_ids=page_external_ids,
                 )
-                page_listing_ids: list[int] = []
-                for item, external_id in zip(extracted, page_external_ids):
+                for item, external_id in zip(extracted_listings, page_external_ids):
                     existing = existing_map.get(external_id)
                     listing, _ = await repo.upsert_listing(
                         db,
@@ -395,14 +507,34 @@ async def _embed_crawled_page_async(
                         public_id=_new_public_id() if not existing else existing.public_id,
                     )
                     page_listing_ids.append(listing.id)
-                await db.commit()
 
-                for i in range(0, len(page_listing_ids), _EMBED_BATCH_SIZE):
-                    batch_ids = page_listing_ids[i: i + _EMBED_BATCH_SIZE]
-                    embed_listings_batch.apply_async(
-                        kwargs=dict(listing_ids=batch_ids, tenant_id=tenant_id),
-                        queue=QUEUEEnum.ANALYSIS.value,
-                    )
+            # Single commit — chunks + listings land together or not at all
+            await db.commit()
+            logger.info(
+                "embed_crawled_page: committed doc=%d chunks=%d listings=%d for %s",
+                doc_id, len(embedded_chunks), len(page_listing_ids), page_url,
+            )
+
+        # Dispatch listing embed tasks after the commit is stable
+        for i in range(0, len(page_listing_ids), _EMBED_BATCH_SIZE):
+            batch_ids = page_listing_ids[i: i + _EMBED_BATCH_SIZE]
+            embed_listings_batch.apply_async(
+                kwargs=dict(listing_ids=batch_ids, tenant_id=tenant_id),
+                queue=QUEUEEnum.ANALYSIS.value,
+            )
+
+    except Exception as exc:
+        logger.error("embed_crawled_page: DB write failed for %s: %s", page_url, exc)
+        async with get_task_db_session() as db:
+            doc = await repo.get_document(db, tenant_id=tenant_id, document_id=doc_id)
+            if doc:
+                await repo.update_document(
+                    db, doc=doc,
+                    status=DocStatus.FAILED,
+                    error_message=f"DB write error: {exc}",
+                )
+                await db.commit()
+        raise
 
     # ── Atomically record success and check finalization ──────────────────
     await _on_page_done(
@@ -1218,6 +1350,78 @@ async def _retry_stuck_crawl_jobs_async() -> str:
             )
 
         return f"requeued {requeued} stuck crawl jobs"
+
+
+# =============================================================================
+# TASK H — RETRY FAILED DOCUMENTS
+# Scans all documents stuck in FAILED or PROCESSING state and re-queues them.
+# Runs every 15 minutes via Celery Beat.
+# =============================================================================
+
+
+@celery_app.task(
+    name="app.modules.chatbot.tasks.retry_failed_documents",
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def retry_failed_documents() -> str:
+    """
+    Beat task — runs every 15 minutes.
+    Finds documents stuck in FAILED or PROCESSING state (>10 min old)
+    and re-dispatches the appropriate ingestion task.
+
+    PROCESSING documents that are >10 min old are considered orphaned
+    (the worker crashed before finishing) and are safe to re-queue.
+    """
+    return _run(_retry_failed_documents_async())
+
+
+async def _retry_failed_documents_async() -> str:
+    import sentry_sdk
+    from datetime import timedelta
+
+    async with get_task_db_session() as db:
+        stale_docs = await repo.get_stale_documents(
+            db,
+            failed_or_processing_older_than_minutes=10,
+        )
+
+        if not stale_docs:
+            logger.info("retry_failed_documents: no stale documents found.")
+            return "no stale documents"
+
+        requeued = 0
+        for doc in stale_docs:
+            try:
+                # Reset so the task starts clean
+                await repo.update_document(
+                    db,
+                    doc=doc,
+                    status=DocStatus.PENDING,
+                    error_message=None,
+                )
+                await db.commit()
+
+                process_document.apply_async(
+                    kwargs=dict(
+                        document_id=doc.id,
+                        tenant_id=doc.tenant_id,
+                        chatbot_config_id=doc.knowledge_source.chatbot_config_id,
+                    ),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+                requeued += 1
+                logger.info(
+                    "retry_failed_documents: re-queued Document %d (type=%s tenant=%d)",
+                    doc.id, doc.file_type, doc.tenant_id,
+                )
+            except Exception as exc:
+                sentry_sdk.capture_exception(exc)
+                logger.error(
+                    "retry_failed_documents: failed to re-queue Document %d: %s",
+                    doc.id, exc,
+                )
+
+        return f"requeued {requeued} stale documents"
 
 
 # =============================================================================

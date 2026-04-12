@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import TSVECTOR
@@ -649,6 +649,37 @@ async def update_document(
         setattr(doc, key, value)
     await db.flush()
     return doc
+
+
+async def get_stale_documents(
+    db: AsyncSession,
+    *,
+    failed_or_processing_older_than_minutes: int = 10,
+) -> Sequence[Document]:
+    """
+    Return documents stuck in FAILED or PROCESSING state for longer than
+    the given threshold.
+
+    PROCESSING documents older than the threshold are treated as orphaned —
+    the Celery worker processing them likely crashed before finishing.
+    FAILED documents are candidates for automatic retry.
+
+    Eagerly loads knowledge_source so callers can read chatbot_config_id.
+    """
+    from sqlalchemy.orm import joinedload
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=failed_or_processing_older_than_minutes)
+    result = await db.execute(
+        select(Document)
+        .options(joinedload(Document.knowledge_source))
+        .where(
+            Document.status.in_([DocStatus.FAILED, DocStatus.PROCESSING]),
+            Document.created_at < cutoff,
+        )
+        .order_by(Document.created_at)
+        .limit(50)  # cap per run to avoid thundering herd on startup
+    )
+    return result.scalars().all()
 
 
 # =============================================================================

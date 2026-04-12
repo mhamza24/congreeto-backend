@@ -80,11 +80,40 @@ class Settings(BaseSettings):
     CHAT_IDLE_THRESHOLD_MINUTES: int = 15
     CHAT_IDLE_BATCH_SIZE: int = 100
     CHAT_PREVIOUS_CONVERSATION_SESSION_LIMIT: int = 5
-    
-    
+    # Pagination defaults for the chat/conversation list API
+    CHAT_PAGE_SIZE_DEFAULT: int = 20
+    CHAT_PAGE_SIZE_MAX: int = 100
+
     DEFAULT_SEAT_LIMIT: int = 3
 
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # ── RAG retrieval ─────────────────────────────────────────────────────────
+    # Number of knowledge-base chunks injected into each LLM call.
+    RAG_TOP_K: int = 10
+    # Number of listing slots injected alongside RAG chunks.
+    RAG_LISTING_TOP_K: int = 8
+
+    # ── Knowledge ingestion pipeline ─────────────────────────────────────────
+    # Word-based chunking for crawled pages and uploaded documents.
+    CHUNK_SIZE: int = 500         # max words per chunk
+    CHUNK_OVERLAP: int = 50       # word overlap between adjacent chunks
+    # Max texts per OpenAI embeddings API call (API hard limit is 2048).
+    EMBED_BATCH_SIZE: int = 100
+    # Max output tokens for listing extraction LLM calls.
+    LLM_EXTRACT_MAX_TOKENS: int = 1500
+    # Rows sent to the LLM per batch when parsing Excel/CSV listing files.
+    LLM_FILE_PARSE_BATCH_SIZE: int = 20
+    # Listings per embed_listings_batch Celery task dispatch.
+    CRAWL_LISTING_EMBED_BATCH_SIZE: int = 100
+    # Documents that have been FAILED/PROCESSING for this many minutes
+    # will be picked up by the retry_failed_documents beat task.
+    STALE_DOCUMENT_THRESHOLD_MINUTES: int = 10
+
+    # ── Celery / Redis transport ───────────────────────────────────────────────
+    REDIS_SOCKET_TIMEOUT: int = 120
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = 10
+    REDIS_HEALTH_CHECK_INTERVAL: int = 25
 
     class Config:
         env_file = ENV_FILES.get(ENV, ".env.development")

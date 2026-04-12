@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, List, Optional
 
+import sentry_sdk
 from fastapi import (
     APIRouter,
     Depends,
@@ -146,12 +147,15 @@ async def create_chatbot(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
-    data = await service.create_chatbot(
-        db,
-        tenant_id=ctx.tenant.id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Chatbot created.", data=data)
+    try:
+        data = await service.create_chatbot(db, tenant_id=ctx.tenant.id, payload=payload)
+        return ApiResponse(success=True, message="Chatbot created.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("create_chatbot failed")
+        raise HTTPException(status_code=500, detail="Could not create chatbot.")
 
 
 @router.get(
@@ -163,8 +167,15 @@ async def list_chatbots(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.ChatbotResponse]]:
-    data = await service.list_chatbots(db, tenant_id=ctx.tenant.id)
-    return ApiResponse(success=True, message="chatbot(s) retrieved", data=data)
+    try:
+        data = await service.list_chatbots(db, tenant_id=ctx.tenant.id)
+        return ApiResponse(success=True, message="chatbot(s) retrieved", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_chatbots failed")
+        raise HTTPException(status_code=500, detail="Could not list chatbots.")
 
 
 @router.get(
@@ -177,8 +188,15 @@ async def get_chatbot(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
-    data = await service.get_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id)
-    return ApiResponse(success=True, message="OK", data=data)
+    try:
+        data = await service.get_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("get_chatbot failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not retrieve chatbot.")
 
 
 @router.patch(
@@ -193,13 +211,15 @@ async def update_chatbot(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
-    data = await service.update_chatbot(
-        db,
-        tenant_id=ctx.tenant.id,
-        public_id=chatbot_id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Chatbot updated.", data=data)
+    try:
+        data = await service.update_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id, payload=payload)
+        return ApiResponse(success=True, message="Chatbot updated.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("update_chatbot failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not update chatbot.")
 
 
 @router.post(
@@ -213,10 +233,15 @@ async def activate_chatbot(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
-    data = await service.activate_chatbot(
-        db, tenant_id=ctx.tenant.id, public_id=chatbot_id
-    )
-    return ApiResponse(success=True, message="Chatbot is now active.", data=data)
+    try:
+        data = await service.activate_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id)
+        return ApiResponse(success=True, message="Chatbot is now active.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("activate_chatbot failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not activate chatbot.")
 
 
 # =============================================================================
@@ -234,10 +259,15 @@ async def list_themes(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.ThemeResponse]]:
-    data = await service.list_themes(
-        db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id
-    )
-    return ApiResponse(success=True, message="OK", data=data)
+    try:
+        data = await service.list_themes(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_themes failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not list themes.")
 
 
 @router.post(
@@ -253,13 +283,15 @@ async def create_theme(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ThemeResponse]:
     require_write(ctx)
-    data = await service.create_theme(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Theme created.", data=data)
+    try:
+        data = await service.create_theme(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id, payload=payload)
+        return ApiResponse(success=True, message="Theme created.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("create_theme failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not create theme.")
 
 
 @router.patch(
@@ -275,14 +307,15 @@ async def update_theme(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ThemeResponse]:
     require_write(ctx)
-    data = await service.update_theme(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        theme_public_id=theme_id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Theme updated.", data=data)
+    try:
+        data = await service.update_theme(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id, theme_public_id=theme_id, payload=payload)
+        return ApiResponse(success=True, message="Theme updated.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("update_theme failed theme_id=%s", theme_id)
+        raise HTTPException(status_code=500, detail="Could not update theme.")
 
 
 @router.post(
@@ -297,13 +330,15 @@ async def activate_theme(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ThemeResponse]:
     require_write(ctx)
-    data = await service.activate_theme(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        theme_public_id=theme_id,
-    )
-    return ApiResponse(success=True, message="Theme activated.", data=data)
+    try:
+        data = await service.activate_theme(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id, theme_public_id=theme_id)
+        return ApiResponse(success=True, message="Theme activated.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("activate_theme failed theme_id=%s", theme_id)
+        raise HTTPException(status_code=500, detail="Could not activate theme.")
 
 
 # =============================================================================
@@ -337,19 +372,26 @@ async def upload_asset(
             detail="Uploaded file is empty.",
         )
 
-    base_url = str(request.base_url).rstrip("/")
-    data = await service.upload_chatbot_asset(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        asset_type=asset_type,
-        file_name=file.filename or f"{asset_type}.bin",
-        content_type=file.content_type or "application/octet-stream",
-        file_size_bytes=len(image_bytes),
-        file_data=image_bytes,
-        base_url=base_url,
-    )
-    return ApiResponse(success=True, message="Asset uploaded.", data=data)
+    try:
+        base_url = str(request.base_url).rstrip("/")
+        data = await service.upload_chatbot_asset(
+            db,
+            tenant_id=ctx.tenant.id,
+            chatbot_public_id=chatbot_id,
+            asset_type=asset_type,
+            file_name=file.filename or f"{asset_type}.bin",
+            content_type=file.content_type or "application/octet-stream",
+            file_size_bytes=len(image_bytes),
+            file_data=image_bytes,
+            base_url=base_url,
+        )
+        return ApiResponse(success=True, message="Asset uploaded.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("upload_asset failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not upload asset.")
 
 
 @router.get(
@@ -365,20 +407,24 @@ async def serve_asset(
     No auth required — the public_id is the access token.
     Widget iframe can load logo/avatar/banner directly via this URL.
     """
-    asset = await repo.get_asset_by_public_id(db, public_id=asset_public_id)
-    if not asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found."
+    try:
+        asset = await repo.get_asset_by_public_id(db, public_id=asset_public_id)
+        if not asset:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+        return Response(
+            content=bytes(asset.file_data),
+            media_type=asset.content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Content-Disposition": f'inline; filename="{asset.file_name}"',
+            },
         )
-
-    return Response(
-        content=bytes(asset.file_data),
-        media_type=asset.content_type,
-        headers={
-            "Cache-Control": "public, max-age=86400",  # 24h browser cache
-            "Content-Disposition": f'inline; filename="{asset.file_name}"',
-        },
-    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("serve_asset failed asset_public_id=%s", asset_public_id)
+        raise HTTPException(status_code=500, detail="Could not serve asset.")
 
 
 # =============================================================================
@@ -399,13 +445,15 @@ async def create_knowledge_source(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.KnowledgeSourceResponse]:
     require_write(ctx)
-    data = await service.create_knowledge_source(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Knowledge source created.", data=data)
+    try:
+        data = await service.create_knowledge_source(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id, payload=payload)
+        return ApiResponse(success=True, message="Knowledge source created.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("create_knowledge_source failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not create knowledge source.")
 
 
 @router.get(
@@ -418,12 +466,15 @@ async def list_knowledge_sources(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.KnowledgeSourceResponse]]:
-    data = await service.list_knowledge_sources(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-    )
-    return ApiResponse(success=True, message="OK", data=data)
+    try:
+        data = await service.list_knowledge_sources(db, tenant_id=ctx.tenant.id, chatbot_public_id=chatbot_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_knowledge_sources failed chatbot_id=%s", chatbot_id)
+        raise HTTPException(status_code=500, detail="Could not list knowledge sources.")
 
 
 @router.patch(
@@ -439,13 +490,15 @@ async def update_knowledge_source(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.KnowledgeSourceResponse]:
     require_write(ctx)
-    data = await service.update_knowledge_source(
-        db,
-        tenant_id=ctx.tenant.id,
-        ks_public_id=ks_id,
-        payload=payload,
-    )
-    return ApiResponse(success=True, message="Knowledge source updated.", data=data)
+    try:
+        data = await service.update_knowledge_source(db, tenant_id=ctx.tenant.id, ks_public_id=ks_id, payload=payload)
+        return ApiResponse(success=True, message="Knowledge source updated.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("update_knowledge_source failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not update knowledge source.")
 
 
 @router.delete(
@@ -460,12 +513,15 @@ async def delete_knowledge_source(
     ctx: CtxDep,
 ) -> ApiResponse[None]:
     require_write(ctx)
-    await service.delete_knowledge_source(
-        db,
-        tenant_id=ctx.tenant.id,
-        ks_public_id=ks_id,
-    )
-    return ApiResponse(success=True, message="Knowledge source deleted.", data=None)
+    try:
+        await service.delete_knowledge_source(db, tenant_id=ctx.tenant.id, ks_public_id=ks_id)
+        return ApiResponse(success=True, message="Knowledge source deleted.", data=None)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("delete_knowledge_source failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not delete knowledge source.")
 
 
 # =============================================================================
@@ -487,18 +543,21 @@ async def submit_crawl_jobs(
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.CrawlJobResponse]]:
     require_write(ctx)
-    data = await service.submit_crawl_jobs(
-        db,
-        tenant_id=ctx.tenant.id,
-        user_id=ctx.membership.user_id,
-        ks_public_id=ks_id,
-        payload=payload,
-    )
-    return ApiResponse(
-        success=True,
-        message=f"{len(data)} crawl job(s) queued.",
-        data=data,
-    )
+    try:
+        data = await service.submit_crawl_jobs(
+            db,
+            tenant_id=ctx.tenant.id,
+            user_id=ctx.membership.user_id,
+            ks_public_id=ks_id,
+            payload=payload,
+        )
+        return ApiResponse(success=True, message=f"{len(data)} crawl job(s) queued.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("submit_crawl_jobs failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not queue crawl jobs.")
 
 
 @router.get(
@@ -512,12 +571,15 @@ async def list_crawl_jobs(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.CrawlJobResponse]]:
-    data = await service.list_crawl_jobs(
-        db,
-        tenant_id=ctx.tenant.id,
-        ks_public_id=ks_id,
-    )
-    return ApiResponse(success=True, message="OK", data=data)
+    try:
+        data = await service.list_crawl_jobs(db, tenant_id=ctx.tenant.id, ks_public_id=ks_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_crawl_jobs failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not list crawl jobs.")
 
 
 @router.post(
@@ -534,46 +596,49 @@ async def retry_crawl_job(
 ) -> ApiResponse[schemas.CrawlJobResponse]:
     require_write(ctx)
 
-    job = await repo.get_crawl_job_by_public_id(db, tenant_id=ctx.tenant.id, public_id=job_public_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Crawl job not found.")
+    try:
+        job = await repo.get_crawl_job_by_public_id(db, tenant_id=ctx.tenant.id, public_id=job_public_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Crawl job not found.")
 
-    if job.status == CrawlStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="Crawl job is already running.")
+        if job.status == CrawlStatus.RUNNING:
+            raise HTTPException(status_code=409, detail="Crawl job is already running.")
 
-    ks = await repo.get_knowledge_source(db, tenant_id=ctx.tenant.id, source_id=job.knowledge_source_id)
-    if not ks:
-        raise HTTPException(status_code=404, detail="Knowledge source not found.")
+        ks = await repo.get_knowledge_source(db, tenant_id=ctx.tenant.id, source_id=job.knowledge_source_id)
+        if not ks:
+            raise HTTPException(status_code=404, detail="Knowledge source not found.")
 
-    await repo.update_crawl_job(
-        db, job=job,
-        status=CrawlStatus.QUEUED,
-        started_at=None,
-        completed_at=None,
-        error_message=None,
-        pages_found=0,
-        pages_processed=0,
-        pages_failed=0,
-    )
-    await db.commit()
-    await db.refresh(job)
+        await repo.update_crawl_job(
+            db, job=job,
+            status=CrawlStatus.QUEUED,
+            started_at=None,
+            completed_at=None,
+            error_message=None,
+            pages_found=0,
+            pages_processed=0,
+            pages_failed=0,
+        )
+        await db.commit()
+        await db.refresh(job)
 
-    crawl_and_embed.apply_async(
-        kwargs=dict(
-            crawl_job_id=job.id,
-            tenant_id=job.tenant_id,
-            knowledge_source_id=job.knowledge_source_id,
-            chatbot_config_id=ks.chatbot_config_id,
-            base_url=job.base_url,
-        ),
-        queue=QUEUEEnum.ANALYSIS.value,
-    )
+        crawl_and_embed.apply_async(
+            kwargs=dict(
+                crawl_job_id=job.id,
+                tenant_id=job.tenant_id,
+                knowledge_source_id=job.knowledge_source_id,
+                chatbot_config_id=ks.chatbot_config_id,
+                base_url=job.base_url,
+            ),
+            queue=QUEUEEnum.ANALYSIS.value,
+        )
 
-    return ApiResponse(
-        success=True,
-        message="Crawl job re-queued.",
-        data=schemas.CrawlJobResponse.model_validate(job),
-    )
+        return ApiResponse(success=True, message="Crawl job re-queued.", data=schemas.CrawlJobResponse.model_validate(job))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("retry_crawl_job failed job_public_id=%s", job_public_id)
+        raise HTTPException(status_code=500, detail="Could not retry crawl job.")
 
 
 # =============================================================================
@@ -636,21 +701,24 @@ async def upload_document(
 
     file_type = _infer_file_type(file.filename or "", content_type)
 
-    data = await service.upload_document(
-        db,
-        tenant_id=ctx.tenant.id,
-        user_id=ctx.membership.user_id,
-        ks_public_id=ks_id,
-        file_name=file.filename or f"upload.{file_type}",
-        file_type=file_type,
-        file_size_bytes=len(file_bytes),
-        file_data=file_bytes,
-    )
-    return ApiResponse(
-        success=True,
-        message="Document uploaded and queued for processing.",
-        data=data,
-    )
+    try:
+        data = await service.upload_document(
+            db,
+            tenant_id=ctx.tenant.id,
+            user_id=ctx.membership.user_id,
+            ks_public_id=ks_id,
+            file_name=file.filename or f"upload.{file_type}",
+            file_type=file_type,
+            file_size_bytes=len(file_bytes),
+            file_data=file_bytes,
+        )
+        return ApiResponse(success=True, message="Document uploaded and queued for processing.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("upload_document failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not upload document.")
 
 
 @router.get(
@@ -664,12 +732,15 @@ async def list_documents(
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[List[schemas.DocumentResponse]]:
-    data = await service.list_documents(
-        db,
-        tenant_id=ctx.tenant.id,
-        ks_public_id=ks_id,
-    )
-    return ApiResponse(success=True, message="OK", data=data)
+    try:
+        data = await service.list_documents(db, tenant_id=ctx.tenant.id, ks_public_id=ks_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_documents failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not list documents.")
 
 
 @router.get(
@@ -694,24 +765,26 @@ async def download_document(
     Only user-uploaded documents (PDF, DOCX, TXT) have stored bytes.
     Crawled HTML pages return 422 — they have no downloadable file.
     """
-    file_bytes, mime_type, file_name = await service.download_document(
-        db,
-        tenant_id=ctx.tenant.id,
-        doc_public_id=doc_id,
-    )
-
-    disposition = "inline" if inline else "attachment"
-
-    return Response(
-        content=file_bytes,
-        media_type=mime_type,
-        headers={
-            "Content-Disposition": f'{disposition}; filename="{file_name}"',
-            "Content-Length": str(len(file_bytes)),
-            # Prevent proxies from caching sensitive tenant documents
-            "Cache-Control": "private, no-store",
-        },
-    )
+    try:
+        file_bytes, mime_type, file_name = await service.download_document(
+            db, tenant_id=ctx.tenant.id, doc_public_id=doc_id,
+        )
+        disposition = "inline" if inline else "attachment"
+        return Response(
+            content=file_bytes,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{file_name}"',
+                "Content-Length": str(len(file_bytes)),
+                "Cache-Control": "private, no-store",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("download_document failed doc_id=%s", doc_id)
+        raise HTTPException(status_code=500, detail="Could not download document.")
 
 
 # =============================================================================
@@ -733,18 +806,17 @@ async def create_manual_entry(
     ctx: CtxDep,
 ) -> ApiResponse[schemas.DocumentResponse]:
     require_write(ctx)
-    data = await service.create_manual_entry(
-        db,
-        tenant_id=ctx.tenant.id,
-        user_id=ctx.membership.user_id,
-        ks_public_id=ks_id,
-        payload=payload,
-    )
-    return ApiResponse(
-        success=True,
-        message="Entry queued for processing.",
-        data=data,
-    )
+    try:
+        data = await service.create_manual_entry(
+            db, tenant_id=ctx.tenant.id, user_id=ctx.membership.user_id, ks_public_id=ks_id, payload=payload,
+        )
+        return ApiResponse(success=True, message="Entry queued for processing.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("create_manual_entry failed ks_id=%s", ks_id)
+        raise HTTPException(status_code=500, detail="Could not create entry.")
 
 
 # =============================================================================

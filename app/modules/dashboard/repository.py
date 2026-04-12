@@ -1,7 +1,10 @@
+import logging
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
 
 
 async def get_dashboard_summary(

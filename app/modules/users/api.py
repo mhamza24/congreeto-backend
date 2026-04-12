@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Annotated
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +50,7 @@ async def user_info(
         raise
     except Exception:
         logger.exception("Unexpected error getting current user profile")
+        sentry_sdk.capture_exception()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not get current user profile. Please try again later.",

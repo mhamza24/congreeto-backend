@@ -1,8 +1,12 @@
 # app/modules/inquiries/service.py
+import logging
 from typing import List, Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, InquiryStatus, AffiliationInquiry
 from app.modules.inquiries.schemas import GeneralInquiryCreateRequest, DemoInquiryCreateRequest, AffiliationInquiryCreateRequest
+
+logger = logging.getLogger(__name__)
 from app.modules.inquiries.repository import (
     create_general_inquiry,
     get_general_inquiry,
@@ -21,6 +25,7 @@ from app.modules.email.service import send_contact_inquiry_email, send_demo_inqu
 
 
 async def create_general(session: AsyncSession, data: GeneralInquiryCreateRequest) -> GeneralInquiry:
+    logger.info("[inquiries] general inquiry received email=%s subject=%s", data.email, data.subject)
     inquiry = GeneralInquiry(
         first_name=data.first_name,
         last_name=data.last_name,
@@ -42,7 +47,9 @@ async def create_general(session: AsyncSession, data: GeneralInquiryCreateReques
         recipients=["muhammadhamzakhalid248@gmail.com",
                     "contact@getveloce.com"],
     )
-    return await create_general_inquiry(session, inquiry)
+    result = await create_general_inquiry(session, inquiry)
+    logger.info("[inquiries] general inquiry saved public_id=%s email=%s", result.public_id, data.email)
+    return result
     
 
 async def get_general(session: AsyncSession, public_id: str) -> GeneralInquiry:
@@ -62,6 +69,7 @@ async def update_general_status(session: AsyncSession, public_id: str, status: I
 # -----------------------
 
 async def create_demo(session: AsyncSession, data: DemoInquiryCreateRequest) -> DemoInquiry:
+    logger.info("[inquiries] demo inquiry received email=%s company=%s", data.email, data.company_name)
     inquiry = DemoInquiry(
         first_name=data.first_name,
         last_name=data.last_name,
@@ -80,15 +88,16 @@ async def create_demo(session: AsyncSession, data: DemoInquiryCreateRequest) -> 
             "email":             data.email,
             "company_name":      data.company_name,
             "company_website":   data.company_website,
-            "property_sectors":  data.property_sectors,   # list[str]
-            "states":            data.states,             # list[str]
+            "property_sectors":  data.property_sectors,
+            "states":            data.states,
             "message":           data.message,
         },
         recipients=["muhammadhamzakhalid248@gmail.com",
                     "contact@getveloce.com"],
     )
-    
-    return await create_demo_inquiry(session, inquiry)
+    result = await create_demo_inquiry(session, inquiry)
+    logger.info("[inquiries] demo inquiry saved public_id=%s email=%s", result.public_id, data.email)
+    return result
 
 
 async def get_demo(session: AsyncSession, public_id: str) -> DemoInquiry:
@@ -115,6 +124,7 @@ async def create_affiliation(
     page_url: Optional[str] = None,
 ) -> AffiliationInquiry:
 
+    logger.info("[inquiries] affiliation inquiry received email=%s category=%s company=%s", data.email, data.category, data.legal_entity_name)
     inquiry = AffiliationInquiry(
         first_name=data.first_name,
         last_name=data.last_name,
@@ -153,4 +163,6 @@ async def create_affiliation(
         
     )
 
-    return await _persist_affiliation_inquiry(session, inquiry)
+    result = await _persist_affiliation_inquiry(session, inquiry)
+    logger.info("[inquiries] affiliation inquiry saved public_id=%s email=%s", result.public_id, data.email)
+    return result

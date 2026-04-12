@@ -34,9 +34,11 @@ async def create_user(
     payload: schemas.SignupRequest,
 ) -> schemas.SignupResponse:
 
+    logger.info("[auth] signup attempt email=%s", payload.email)
     # ── 1. Business rule ──────────────────────────────────────────────────
     existing = await user_repo.get_user_by_email(db, email=payload.email)
     if existing:
+        logger.warning("[auth] signup conflict email already exists email=%s", payload.email)
         raise EmailAlreadyExistsError(payload.email)
 
     # ── 2. Fields that need transformation before hitting the DB ──────────
@@ -70,8 +72,7 @@ async def create_user(
     celery_task = background_tasks.send_otp_verification_email_task.delay(
        email=payload.email, first_name=payload.first_name, otp_code=raw_otp)
 
-    logger.info(
-        f"Task enqueued: {celery_task.id}, initial status: {celery_task.status}")
+    logger.info("[auth] user created public_id=%s email=%s task=%s", user.public_id, payload.email, celery_task.id)
 
     return schemas.SignupResponse(
         public_id=user.public_id,
@@ -85,20 +86,24 @@ async def login_user(
     payload: schemas.LoginRequest,
 ) -> schemas.LoginResponse:
 
+    logger.info("[auth] login attempt email=%s", payload.email)
     existing_user = await user_repo.get_user_by_email(db, email=payload.email)
 
     if existing_user is None:
+        logger.warning("[auth] login failed user not found email=%s", payload.email)
         raise InvalidCredentialsError()
 
     is_password_valid = hashing_utils.verify_password(
         payload.password, existing_user.password_hash
     )
     if not is_password_valid:
+        logger.warning("[auth] login failed invalid password email=%s", payload.email)
         raise InvalidCredentialsError()
 
     # Update last login time
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
-    
+    logger.info("[auth] login success public_id=%s email=%s", existing_user.public_id, existing_user.email)
+
     # ── Build whatever you need in the subject ────────────────────────────
     jwt_subject = get_token_subject(existing_user)
 
@@ -121,19 +126,23 @@ async def refresh_access_token(
     try:
         payload = decode_token(refresh_token)
     except Exception:
+        logger.warning("[auth] refresh_token decode failed")
         raise InvalidTokenError("Invalid refresh token")
 
     # 2. Must be a refresh token, not access
     if payload.type != "refresh":
+        logger.warning("[auth] refresh_token wrong type type=%s", payload.type)
         raise InvalidTokenTypeError()
 
     # 3. Check user still exists
     sub = payload.sub
     existing_user = await user_repo.get_user_by_id(db, id=sub["id"])
     if existing_user is None:
+        logger.warning("[auth] refresh_token user not found id=%s", sub.get("id"))
         raise UserNotExistError()
 
     # 4. Issue new access token only (refresh token stays the same)
+    logger.debug("[auth] access token refreshed user=%s", existing_user.public_id)
     subject = get_token_subject(existing_user)
 
     return schemas.RefreshResponse(
@@ -158,8 +167,10 @@ async def verify_email(
     from the already-loaded SQLAlchemy object.
     """
 
+    logger.info("[auth] verify_email attempt user=%s", current_user.public_id)
     # 1. Guard — already verified
     if current_user.email_verified_at is not None:
+        logger.warning("[auth] verify_email already verified user=%s", current_user.public_id)
         raise EmailAlreadyVerifiedError()
 
     # 2. DB hit 1 — fetch OTP record once, reuse throughout
@@ -184,6 +195,7 @@ async def verify_email(
         raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
 
     # 4. DB hit 2 — mark verified, get updated user back (no extra fetch)
+    logger.info("[auth] email verified user=%s", current_user.public_id)
     updated_user = await user_repo.mark_email_verified_and_update_status(db, user_id=current_user.id)
 
     # 5. Issue fresh token pair with verified identity
@@ -203,9 +215,11 @@ async def create_admin_user(
     payload: schemas.AdminSignupRequest,
 ) -> schemas.AdminSignupResponse:
 
+    logger.info("[auth] admin signup attempt email=%s", payload.email)
     # 1. Reject duplicate emails
     existing = await user_repo.get_user_by_email(db, email=payload.email)
     if existing:
+        logger.warning("[auth] admin signup conflict email exists email=%s", payload.email)
         raise EmailAlreadyExistsError(payload.email)
 
     # 2. Build the user — mark as superadmin, active, and already verified
@@ -222,6 +236,7 @@ async def create_admin_user(
     # 3. Persist — no OTP, no email
     user = await user_repo.create_user(db, user=user)
     await db.commit()
+    logger.info("[auth] admin user created public_id=%s email=%s", user.public_id, user.email)
 
     return schemas.AdminSignupResponse(
         public_id=user.public_id,
@@ -234,10 +249,12 @@ async def login_admin_user(
     payload: schemas.LoginRequest,
 ) -> schemas.LoginResponse:
 
+    logger.info("[auth] admin login attempt email=%s", payload.email)
     existing_user = await user_repo.get_user_by_email(db, email=payload.email)
 
     # Check 1: user exists
     if existing_user is None:
+        logger.warning("[auth] admin login failed user not found email=%s", payload.email)
         raise InvalidCredentialsError()
 
     # Check 2: password valid — do this before the superadmin check to keep
@@ -246,17 +263,21 @@ async def login_admin_user(
         payload.password, existing_user.password_hash
     )
     if not is_password_valid:
+        logger.warning("[auth] admin login failed invalid password email=%s", payload.email)
         raise InvalidCredentialsError()
 
     # Check 3: must be a superadmin — same generic error to prevent enumeration
     if not existing_user.is_superadmin:
+        logger.warning("[auth] admin login rejected not superadmin email=%s", payload.email)
         raise InvalidCredentialsError()
 
     # Check 4: account must not be suspended or inactive
     if existing_user.status in (UserStatus.SUSPENDED, UserStatus.INACTIVE):
+        logger.warning("[auth] admin login rejected account status=%s email=%s", existing_user.status, payload.email)
         raise InvalidCredentialsError()
 
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
+    logger.info("[auth] admin login success public_id=%s email=%s", existing_user.public_id, existing_user.email)
 
     jwt_subject = get_token_subject(existing_user)
 

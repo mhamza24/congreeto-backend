@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, func, not_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
