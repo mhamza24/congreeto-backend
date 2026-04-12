@@ -870,7 +870,7 @@ async def upload_chatbot_asset(
         public_id=public_id,
     )
 
-    serve_url = f"{base_url}/knowledge/assets/{public_id}"
+    serve_url = f"{base_url}/api/v1/chatbot/assets/{public_id}"
 
     # ── Auto-update chatbot branding with the asset URL ───────────────────────
     # This keeps branding.logo_url / branding.avatar_url etc. always current
