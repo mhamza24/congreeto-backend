@@ -82,6 +82,7 @@ async def create_chatbot(
         lead_capture_config=payload.lead_capture_config,
         company_profile=company_profile_dict,
         prompt_personality_id=personality.id if personality else None,
+        allow_rental=payload.allow_rental,
         public_id=_new_public_id(),
     )
 
@@ -666,14 +667,12 @@ async def rag_search(
     ]
 
     # ── Leg 2: semantic search on listings (live data, no stale chunks) ───────
-    # Determine listing type filter from chatbot's company_profile.allow_rental flag.
-    # If allow_rental is False (default), restrict to 'sale' listings only.
-    allow_rental: bool = bool(chatbot.company_profile.get("allow_rental", False)) if chatbot.company_profile else False
-    listing_type_filter: Optional[str] = None if allow_rental else "sale"
+    # allow_rental is a chatbot-level toggle (default False). When False, restrict to 'sale' only.
+    listing_type_filter: Optional[str] = None if chatbot.allow_rental else "sale"
 
     logger.info(
         "[rag] listing search tenant=%s allow_rental=%s type_filter=%s query=%r",
-        tenant_id, allow_rental, listing_type_filter, query,
+        tenant_id, chatbot.allow_rental, listing_type_filter, query,
     )
 
     # Fetch total count and semantic results in parallel

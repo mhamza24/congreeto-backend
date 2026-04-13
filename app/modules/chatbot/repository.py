@@ -51,6 +51,7 @@ async def create_chatbot(
     lead_capture_config: dict | None = None,
     company_profile: dict | None = None,
     prompt_personality_id: Optional[int] = None,
+    allow_rental: bool = False,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -66,6 +67,7 @@ async def create_chatbot(
         lead_capture_config=lead_capture_config or {},
         company_profile=company_profile or {},
         prompt_personality_id=prompt_personality_id,
+        allow_rental=allow_rental,
         public_id=public_id,
     )
     db.add(chatbot)

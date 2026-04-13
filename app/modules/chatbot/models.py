@@ -133,6 +133,10 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         Boolean, nullable=False, default=False, server_default=text("FALSE"),
         comment="Flipped TRUE by worker after first DocumentChunk written. Never flip manually."
     )
+    allow_rental: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"),
+        comment="When TRUE, listing search includes rental listings. Defaults to FALSE (sale only)."
+    )
     auto_close_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=15, server_default=text("15")
     )

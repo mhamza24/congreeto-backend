@@ -80,6 +80,10 @@ class ChatbotCreateRequest(BaseModel):
         default="aria",
         description="Personality template slug (e.g. 'aria'). Defaults to 'aria'.",
     )
+    allow_rental: bool = Field(
+        default=False,
+        description="When True, listing search includes rental listings. Defaults to False (sale only).",
+    )
 
 
 class ChatbotUpdateRequest(BaseModel):
@@ -97,6 +101,10 @@ class ChatbotUpdateRequest(BaseModel):
         default=None,
         description="Switch personality. Triggers system prompt regeneration.",
     )
+    allow_rental: Optional[bool] = Field(
+        default=None,
+        description="Set to True to include rental listings in search results.",
+    )
 
 
 class ChatbotActivateRequest(BaseModel):
@@ -113,6 +121,7 @@ class ChatbotResponse(BaseModel):
     system_prompt_template: Optional[str]
     welcome_message: Optional[str]
     rag_enabled: bool
+    allow_rental: bool
     auto_close_minutes: int
     allowed_domains: List[str]
     branding: Dict[str, Any]
