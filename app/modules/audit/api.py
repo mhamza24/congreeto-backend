@@ -2,7 +2,7 @@
 app/modules/audit/api.py
 
 Two audit log endpoints:
-  GET /audit/logs                        — super admin: all tenants
+  GET /audit/admin/logs                        — super admin: all tenants
   GET /audit/{tenant_public_id}/logs     — tenant admin: their own tenant only
 
 Both use the project-standard PagedApiResponse + PaginationMeta pattern.
@@ -97,6 +97,11 @@ async def tenant_list_audit_logs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> PagedApiResponse[List[AuditLogResponse]]:
+    if not ctx.membership.is_owner_or_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only tenant owners and admins can view audit logs.",
+        )
     try:
         logs, total = await _fetch(
             db,
