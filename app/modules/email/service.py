@@ -1069,8 +1069,305 @@ def _render_email_shell(
 
 
 # ══════════════════════════════════════════════════════════════
+# F-2. Tenant-branded lead email shell
+# ══════════════════════════════════════════════════════════════
+
+def _render_tenant_lead_shell(
+    *,
+    company_name: str,
+    company_logo: str | None,
+    company_website: str | None,
+    support_email: str | None,
+    accent: str,
+    inner_html: str,
+) -> str:
+    """
+    Lead-insight email shell branded with the tenant's company identity.
+    A small "Powered by Veloce" line sits in the footer — present but unobtrusive.
+
+    Args:
+        company_name:    Shown in the header and sign-off.
+        company_logo:    URL to the tenant's logo image (optional).
+        company_website: Linked in the header logo (optional).
+        support_email:   Reply-to shown in the footer (optional).
+        accent:          Tier-based accent colour (same as _render_email_shell).
+        inner_html:      The pre-built body rows from build_lead_email_html()
+                         or build_website_lead_email_html() — injected verbatim.
+    """
+    logo_block = ""
+    if company_logo:
+        href = company_website or "#"
+        logo_block = f"""
+    <tr>
+      <td style="padding:24px 36px 16px;">
+        <a href="{href}" target="_blank" style="text-decoration:none;">
+          <img src="{company_logo}" alt="{company_name}"
+               height="40" style="display:block;height:40px;width:auto;" />
+        </a>
+      </td>
+    </tr>"""
+    else:
+        logo_block = f"""
+    <tr>
+      <td style="padding:24px 36px 16px;">
+        <div style="font-size:18px;font-weight:700;color:#1A202C;">{company_name}</div>
+      </td>
+    </tr>"""
+
+    footer_email = (
+        f'<a href="mailto:{support_email}" style="color:{accent};text-decoration:none;">'
+        f'{support_email}</a>'
+        if support_email else company_name
+    )
+    website_line = (
+        f' · <a href="{company_website}" target="_blank" style="color:{accent};text-decoration:none;">'
+        f'{company_website}</a>'
+        if company_website else ""
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>New Lead — {company_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#F2F4F7;
+             font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#F2F4F7;padding:36px 16px;">
+  <tr><td align="center">
+  <table width="580" cellpadding="0" cellspacing="0"
+         style="max-width:580px;background:#FFFFFF;border-radius:10px;
+                overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.07);">
+
+    <!-- Accent bar -->
+    <tr>
+      <td style="background:{accent};height:4px;font-size:0;line-height:0;">&nbsp;</td>
+    </tr>
+
+    {logo_block}
+
+    <tr><td style="padding:0 36px;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+
+    <!-- Lead content rows (contact, overview, summary, transcript …) -->
+    {inner_html}
+
+    <!-- Footer -->
+    <tr>
+      <td style="padding:20px 36px 16px;border-top:1px solid #EAEDF0;">
+        <p style="margin:0;font-size:12px;color:#718096;line-height:1.6;">
+          {footer_email}{website_line}
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0 36px 24px;text-align:left;">
+        <p style="margin:0;font-size:10px;color:#B0BAC9;">
+          Powered by <a href="https://getveloce.com" target="_blank"
+                        style="color:#B0BAC9;text-decoration:none;">Veloce</a>
+          &nbsp;·&nbsp; Auto-generated notification. Do not reply to this email.
+        </p>
+      </td>
+    </tr>
+
+  </table>
+  </td></tr>
+</table>
+
+</body>
+</html>"""
+
+
+def _build_lead_inner_html(
+    *,
+    accent: str,
+    header_label: str,
+    lead_name: str | None,
+    contact_block: str,
+    overview_rows: str,
+    ai_summary: str,
+    ai_insights: str,
+    message_rows: str,
+    recommended_action: str | None = None,
+    extra_blocks: str = "",
+) -> str:
+    """
+    Returns the inner table rows shared by both the Veloce shell and the
+    tenant-branded shell, without the outer <html> wrapper.
+    Extracted so we can inject the same content into either shell.
+    """
+    recommended_block = f"""
+    <tr><td style="padding:16px 36px 0;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">
+        Recommended Action
+      </div>
+      <div style="font-size:13px;color:#FFFFFF;line-height:1.65;
+                  background:{accent};border-radius:8px;padding:12px 16px;
+                  font-weight:500;">
+        {recommended_action}
+      </div>
+    </td></tr>""" if recommended_action else ""
+
+    return f"""
+    <!-- Header -->
+    <tr>
+      <td style="padding:20px 36px 16px;">
+        <div style="font-size:11px;color:#9AA5B4;letter-spacing:1.5px;
+                    text-transform:uppercase;margin-bottom:6px;">{header_label}</div>
+        <div style="font-size:22px;font-weight:700;color:#1A202C;">
+          {lead_name or "Unknown Visitor"}
+        </div>
+      </td>
+    </tr>
+
+    <tr><td style="padding:0 36px;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+
+    {contact_block}
+
+    <!-- Overview -->
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">Overview</div>
+      <table width="100%" cellpadding="0" cellspacing="0">{overview_rows}</table>
+    </td></tr>
+
+    {extra_blocks}
+
+    <tr><td style="padding:16px 36px 0;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+
+    <!-- Summary -->
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">Summary</div>
+      <div style="font-size:13px;color:#2D3748;line-height:1.75;
+                  border-left:3px solid {accent};padding-left:14px;">{ai_summary}</div>
+    </td></tr>
+
+    <!-- Insights -->
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">Insights</div>
+      <div style="font-size:13px;color:#2D3748;line-height:1.75;
+                  border-left:3px solid #CBD5E0;padding-left:14px;">{ai_insights}</div>
+    </td></tr>
+
+    {recommended_block}
+
+    <tr><td style="padding:20px 36px 0;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+
+    <!-- Transcript -->
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:14px;">
+        Conversation
+      </div>
+      <table width="100%" cellpadding="0" cellspacing="0">{message_rows}</table>
+    </td></tr>
+    """
+
+
+# ══════════════════════════════════════════════════════════════
 # G. Public send methods
 # ══════════════════════════════════════════════════════════════
+
+def _build_tenant_lead_email(
+    *,
+    lead: dict[str, Any],
+    insights: dict[str, Any],
+    messages: list[dict],
+    chatbot_name: str,
+    company_profile: dict[str, Any],
+    header_label: str = "New Lead",
+) -> str:
+    """
+    Assembles a full tenant-branded lead email by building the shared inner
+    rows and injecting them into _render_tenant_lead_shell().
+    """
+    tier   = (insights.get("lead_tier") or "cold").lower()
+    accent = TIER_ACCENT.get(tier, "#3A5F8A")
+
+    lead_name  = lead.get("name")
+    lead_email = lead.get("email")
+    lead_phone = lead.get("phone")
+    has_contact = any([lead_name, lead_email, lead_phone])
+
+    contact_rows = (
+        _kv("Name",  lead_name)  +
+        _kv("Email", lead_email) +
+        _kv("Phone", lead_phone)
+    )
+    contact_block = f"""
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">Contact</div>
+      <table width="100%" cellpadding="0" cellspacing="0">{contact_rows}</table>
+    </td></tr>
+    <tr><td style="padding:16px 36px 0;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>""" if has_contact else ""
+
+    tier_badge = (
+        f'<span style="display:inline-block;padding:2px 10px;border-radius:4px;'
+        f'background:{accent};color:#fff;font-size:11px;font-weight:700;'
+        f'letter-spacing:.8px;text-transform:uppercase;">{tier.upper()}</span>'
+    )
+    score  = insights.get("lead_score")
+    intent = (insights.get("intent") or "").title() or None
+    budget = _budget_line(insights)
+    suburbs = _pill_list(insights.get("suburbs_mentioned"), accent)
+
+    overview_rows = (
+        _kv("Lead Tier", tier_badge) +
+        _kv("Score",     f"{score}/100" if score is not None else None) +
+        _kv("Intent",    intent) +
+        _kv("Budget",    budget)
+    )
+    extra_blocks = f"""
+    <tr><td style="padding:16px 36px 0;">
+      <hr style="border:none;border-top:1px solid #EAEDF0;margin:0;"/>
+    </td></tr>
+    <tr><td style="padding:20px 36px 0;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                  text-transform:uppercase;color:#9AA5B4;margin-bottom:10px;">Areas of Interest</div>
+      {suburbs}
+    </td></tr>""" if suburbs else ""
+
+    inner = _build_lead_inner_html(
+        accent=accent,
+        header_label=header_label,
+        lead_name=lead_name,
+        contact_block=contact_block,
+        overview_rows=overview_rows,
+        ai_summary=insights.get("ai_summary") or "No summary available.",
+        ai_insights=insights.get("ai_insights") or "No insights available.",
+        message_rows=_render_messages(messages, chatbot_name),
+        recommended_action=insights.get("recommended_action"),
+        extra_blocks=extra_blocks,
+    )
+
+    return _render_tenant_lead_shell(
+        company_name=company_profile.get("company_name") or "Your Company",
+        company_logo=company_profile.get("logo_url"),
+        company_website=company_profile.get("company_website"),
+        support_email=company_profile.get("contact_email"),
+        accent=accent,
+        inner_html=inner,
+    )
+
 
 async def send_contact_inquiry_email(
     *,
@@ -1209,23 +1506,44 @@ async def send_lead_insight_email(
     insights: dict[str, Any],
     lead: dict[str, Any],
     messages: list[dict],
-    chatbot_name:str,
+    chatbot_name: str,
     recipients: list[str],
+    company_profile: dict[str, Any] | None = None,
 ) -> None:
-    """Build and send the lead-insight email for PROPERTY chatbot conversations."""
+    """
+    Build and send the lead-insight email for PROPERTY chatbot conversations.
+
+    If company_profile is provided (non-empty) the email uses the
+    tenant-branded shell; otherwise it falls back to the Veloce shell.
+    """
     tier      = (insights.get("lead_tier") or "lead").upper()
     lead_name = lead.get("name") or "New Lead"
 
+    if company_profile:
+        body = _build_tenant_lead_email(
+            lead=lead,
+            insights=insights,
+            messages=messages,
+            chatbot_name=chatbot_name,
+            company_profile=company_profile,
+            header_label="New Lead",
+        )
+    else:
+        body = build_lead_email_html(
+            lead=lead, insights=insights, messages=messages, chatbot_name=chatbot_name
+        )
+
+    company_name = (company_profile or {}).get("company_name") or ""
+    subject_prefix = f"{company_name} · " if company_name else ""
+
     await fm.send_message(MessageSchema(
-        subject=f"[{tier}] New Lead: {lead_name}",
+        subject=f"{subject_prefix}[{tier}] New Lead: {lead_name}",
         recipients=recipients,
-        body=build_lead_email_html(lead=lead, insights=insights, messages=messages,chatbot_name=chatbot_name),
+        body=body,
         subtype=MessageType.html,
     ))
 
-    logger.info(
-        f"Sent lead email to {recipients} for lead {lead_name} with tier {tier}"
-    )
+    logger.info("Sent lead email to %s for lead %s tier=%s", recipients, lead_name, tier)
 
 
 async def send_website_lead_insight_email(

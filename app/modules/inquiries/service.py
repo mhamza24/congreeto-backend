@@ -3,10 +3,9 @@ import logging
 from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.config.settings import get_settings
 from app.modules.inquiries.models import GeneralInquiry, DemoInquiry, InquiryStatus, AffiliationInquiry
 from app.modules.inquiries.schemas import GeneralInquiryCreateRequest, DemoInquiryCreateRequest, AffiliationInquiryCreateRequest
-
-logger = logging.getLogger(__name__)
 from app.modules.inquiries.repository import (
     create_general_inquiry,
     get_general_inquiry,
@@ -16,9 +15,18 @@ from app.modules.inquiries.repository import (
     get_demo_inquiry,
     list_demo_inquiries,
     update_demo_inquiry_status,
-    _persist_affiliation_inquiry
+    _persist_affiliation_inquiry,
 )
 from app.modules.email.service import send_contact_inquiry_email, send_demo_inquiry_email, send_affiliation_inquiry_email
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# Veloce internal recipients — configured via INQUIRY_RECIPIENTS env var
+# (comma-separated, e.g. "contact@getveloce.com,taha@getveloce.com")
+_INQUIRY_RECIPIENTS: list[str] = [
+    e.strip() for e in settings.INQUIRY_RECIPIENTS.split(",") if e.strip()
+]
 # -----------------------
 # General Inquiry
 # -----------------------
@@ -44,8 +52,7 @@ async def create_general(session: AsyncSession, data: GeneralInquiryCreateReques
             "subject":      data.subject,
             "message":      data.message,
         },
-        recipients=["muhammadhamzakhalid248@gmail.com",
-                    "contact@getveloce.com"],
+        recipients=_INQUIRY_RECIPIENTS,
     )
     result = await create_general_inquiry(session, inquiry)
     logger.info("[inquiries] general inquiry saved public_id=%s email=%s", result.public_id, data.email)
@@ -92,8 +99,7 @@ async def create_demo(session: AsyncSession, data: DemoInquiryCreateRequest) -> 
             "states":            data.states,
             "message":           data.message,
         },
-        recipients=["muhammadhamzakhalid248@gmail.com",
-                    "contact@getveloce.com"],
+        recipients=_INQUIRY_RECIPIENTS,
     )
     result = await create_demo_inquiry(session, inquiry)
     logger.info("[inquiries] demo inquiry saved public_id=%s email=%s", result.public_id, data.email)
@@ -155,10 +161,7 @@ async def create_affiliation(
             "gst_applicable":    data.gst_applicable,
             "company_type":      data.company_type,
         },
-        recipients=[
-            "muhammadhamzakhalid248@gmail.com",
-            "contact@getveloce.com","taha.salman@getveloce.com"
-        ],
+        recipients=_INQUIRY_RECIPIENTS,
         
         
     )

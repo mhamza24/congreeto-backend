@@ -15,6 +15,7 @@ class AuditLogResponse(BaseModel):
     id: int
     tenant_public_id: Optional[str] = None
     user_public_id: Optional[str] = None
+    user_name: Optional[str] = None
     entity_type: str
     entity_id: Optional[int] = None
     action: str

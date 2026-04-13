@@ -166,6 +166,8 @@ async def list_logs(
             AuditLog,
             Tenant.public_id.label("tenant_public_id"),
             User.public_id.label("user_public_id"),
+            User.first_name.label("user_first_name"),
+            User.last_name.label("user_last_name"),
         )
         .outerjoin(Tenant, AuditLog.tenant_id == Tenant.id)
         .outerjoin(User, AuditLog.user_id == User.id)
@@ -186,6 +188,7 @@ async def list_logs(
             "id": row.AuditLog.id,
             "tenant_public_id": row.tenant_public_id,
             "user_public_id": row.user_public_id,
+            "user_name": " ".join(filter(None, [row.user_first_name, row.user_last_name])) or None,
             "entity_type": row.AuditLog.entity_type,
             "entity_id": row.AuditLog.entity_id,
             "action": row.AuditLog.action,

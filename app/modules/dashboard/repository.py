@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -181,3 +182,215 @@ async def get_dashboard_summary(
     result = await db.execute(query, {"tenant_id": tenant_id})
     row = result.mappings().first()
     return dict(row) if row else {}
+
+
+# =============================================================================
+# SUPER-ADMIN — platform-wide analytics
+# =============================================================================
+
+async def get_admin_overview(db: AsyncSession) -> dict:
+    """
+    Single query that returns all platform-wide KPIs for the super-admin
+    dashboard in one round-trip.
+    """
+    query = text("""
+        WITH tenant_stats AS (
+            SELECT
+                COUNT(*)                                                            AS total,
+                COUNT(*) FILTER (WHERE status = 'active'       AND deleted_at IS NULL) AS active,
+                COUNT(*) FILTER (WHERE status = 'trial'        AND deleted_at IS NULL) AS trial,
+                COUNT(*) FILTER (WHERE status = 'pending_plan' AND deleted_at IS NULL) AS pending_plan,
+                COUNT(*) FILTER (WHERE status = 'suspended'    AND deleted_at IS NULL) AS suspended,
+                COUNT(*) FILTER (WHERE status = 'cancelled'    AND deleted_at IS NULL) AS cancelled
+            FROM tenants
+            WHERE deleted_at IS NULL
+        ),
+
+        user_stats AS (
+            SELECT COUNT(*) AS total_users
+            FROM users
+            WHERE deleted_at IS NULL
+        ),
+
+        conv_stats AS (
+            SELECT
+                COUNT(*)                                                            AS total_conversations,
+                COUNT(*) FILTER (
+                    WHERE created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
+                )                                                                   AS conversations_this_month,
+                COUNT(*) FILTER (WHERE status = 'in_progress')                     AS active_conversations
+            FROM conversations
+        ),
+
+        lead_stats AS (
+            SELECT
+                COUNT(*) FILTER (WHERE lead_tier = 'hot')     AS hot,
+                COUNT(*) FILTER (WHERE lead_tier = 'nurture') AS nurture,
+                COUNT(*) FILTER (WHERE lead_tier = 'cold')    AS cold,
+                COUNT(*)                                       AS total
+            FROM conversation_insights
+        ),
+
+        revenue_stats AS (
+            SELECT
+                COALESCE(SUM(p.price_aud_cents) FILTER (WHERE ts.status = 'active'),    0) / 100.0 AS mrr_aud,
+                COALESCE(SUM(p.price_aud_cents) FILTER (WHERE ts.status = 'trialing'),  0)         AS _trialing_cents,
+                COUNT(*) FILTER (WHERE ts.status = 'active')   AS active_subscriptions,
+                COUNT(*) FILTER (WHERE ts.status = 'trialing') AS trialing_subscriptions,
+                COUNT(*) FILTER (WHERE ts.status = 'past_due') AS past_due_subscriptions
+            FROM tenant_subscriptions ts
+            JOIN plans p ON p.id = ts.plan_id
+            WHERE ts.status IN ('active', 'trialing', 'past_due')
+        ),
+
+        plan_dist AS (
+            SELECT JSON_AGG(
+                JSON_BUILD_OBJECT(
+                    'plan_name',        p.name,
+                    'plan_slug',        p.slug,
+                    'billing_interval', p.billing_interval,
+                    'subscriber_count', sub_count,
+                    'revenue_aud',      sub_revenue_aud
+                ) ORDER BY sub_revenue_aud DESC
+            ) AS plan_distribution
+            FROM (
+                SELECT
+                    ts.plan_id,
+                    COUNT(*)                                     AS sub_count,
+                    SUM(p2.price_aud_cents) / 100.0              AS sub_revenue_aud
+                FROM tenant_subscriptions ts
+                JOIN plans p2 ON p2.id = ts.plan_id
+                WHERE ts.status = 'active'
+                GROUP BY ts.plan_id
+            ) pd
+            JOIN plans p ON p.id = pd.plan_id
+        ),
+
+        chatbot_stats AS (
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'active')   AS active,
+                COUNT(*) FILTER (WHERE status = 'draft')    AS draft,
+                COUNT(*) FILTER (WHERE status = 'inactive') AS inactive
+            FROM chatbot_configs
+        ),
+
+        daily_activity AS (
+            SELECT JSON_AGG(
+                JSON_BUILD_OBJECT(
+                    'day',             TO_CHAR(day, 'YYYY-MM-DD'),
+                    'conversations',   total_conversations,
+                    'leads_captured',  leads_captured
+                ) ORDER BY day
+            ) AS daily_activity
+            FROM (
+                SELECT
+                    DATE_TRUNC('day', created_at AT TIME ZONE 'UTC') AS day,
+                    COUNT(*)                                          AS total_conversations,
+                    COUNT(*) FILTER (WHERE is_lead = TRUE)           AS leads_captured
+                FROM conversations
+                WHERE created_at >= NOW() - INTERVAL '30 days'
+                GROUP BY DATE_TRUNC('day', created_at AT TIME ZONE 'UTC')
+            ) d
+        )
+
+        SELECT
+            -- tenants
+            t.total            AS tenant_total,
+            t.active           AS tenant_active,
+            t.trial            AS tenant_trial,
+            t.pending_plan     AS tenant_pending_plan,
+            t.suspended        AS tenant_suspended,
+            t.cancelled        AS tenant_cancelled,
+            -- users
+            u.total_users,
+            -- conversations
+            c.total_conversations,
+            c.conversations_this_month,
+            c.active_conversations,
+            -- leads
+            l.hot              AS lead_hot,
+            l.nurture          AS lead_nurture,
+            l.cold             AS lead_cold,
+            l.total            AS lead_total,
+            -- revenue
+            r.mrr_aud,
+            r.mrr_aud * 12     AS arr_aud,
+            r.active_subscriptions,
+            r.trialing_subscriptions,
+            r.past_due_subscriptions,
+            pd.plan_distribution,
+            -- chatbots
+            cb.active          AS chatbot_active,
+            cb.draft           AS chatbot_draft,
+            cb.inactive        AS chatbot_inactive,
+            -- activity
+            da.daily_activity
+        FROM tenant_stats t
+        CROSS JOIN user_stats u
+        CROSS JOIN conv_stats c
+        CROSS JOIN lead_stats l
+        CROSS JOIN revenue_stats r
+        CROSS JOIN plan_dist pd
+        CROSS JOIN chatbot_stats cb
+        CROSS JOIN daily_activity da
+    """)
+
+    result = await db.execute(query)
+    row = result.mappings().first()
+    return dict(row) if row else {}
+
+
+async def get_admin_tenants(
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """
+    Paginated tenant table for the super-admin dashboard.
+    Returns (rows, total_count).
+    """
+    rows_query = text("""
+        SELECT
+            t.public_id,
+            t.name,
+            t.slug,
+            t.status,
+            p.name                                              AS plan_name,
+            ts.status                                           AS subscription_status,
+            COALESCE(conv_counts.total_conversations, 0)        AS total_conversations,
+            COALESCE(member_counts.member_count, 0)             AS member_count,
+            TO_CHAR(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+        FROM tenants t
+        LEFT JOIN tenant_subscriptions ts
+               ON ts.tenant_id = t.id
+              AND ts.status IN ('active', 'trialing', 'past_due')
+        LEFT JOIN plans p ON p.id = ts.plan_id
+        LEFT JOIN (
+            SELECT tenant_id, COUNT(*) AS total_conversations
+            FROM conversations
+            GROUP BY tenant_id
+        ) conv_counts ON conv_counts.tenant_id = t.slug
+        LEFT JOIN (
+            SELECT tenant_id, COUNT(*) AS member_count
+            FROM tenant_users
+            WHERE status = 'active'
+            GROUP BY tenant_id
+        ) member_counts ON member_counts.tenant_id = t.id
+        WHERE t.deleted_at IS NULL
+        ORDER BY t.created_at DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    count_query = text("""
+        SELECT COUNT(*) FROM tenants WHERE deleted_at IS NULL
+    """)
+
+    rows_result, count_result = await asyncio.gather(
+        db.execute(rows_query, {"limit": limit, "offset": offset}),
+        db.execute(count_query),
+    )
+
+    rows = [dict(r) for r in rows_result.mappings().all()]
+    total = count_result.scalar_one()
+    return rows, total

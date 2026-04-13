@@ -88,6 +88,11 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: str = "http://localhost:3000"
 
+    # ── Internal inquiry email recipients ─────────────────────────────────────
+    # Comma-separated list of Veloce team emails that receive contact / demo /
+    # affiliation form submissions.  Never expose these to tenants.
+    INQUIRY_RECIPIENTS: str = "contact@getveloce.com"
+
     # ── Chat conversation ─────────────────────────────────────────────────────
     # Max messages loaded from history for each LLM context window.
     CHAT_HISTORY_LIMIT: int = 50
