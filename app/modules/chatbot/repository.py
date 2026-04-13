@@ -1052,7 +1052,7 @@ async def listing_similarity_search(
     )
     listings = list(vec_result.scalars().all())
 
-    print(f"[RAG-DEBUG] listing_similarity_search: vector search returned {len(listings)} listing(s) for tenant_id={tenant_id}")
+    logger.debug("[rag] listing_similarity_search vector returned %d listings tenant=%d", len(listings), tenant_id)
 
     # ── Fallback: no embeddings exist yet → return most-recent active listings ─
     if not listings:
@@ -1063,17 +1063,17 @@ async def listing_similarity_search(
             .limit(top_k)
         )
         listings = list(fallback_result.scalars().all())
-        print(
-            f"[RAG-DEBUG] listing_similarity_search: vector fallback used — "
-            f"returned {len(listings)} most-recent active listing(s). "
-            f"Run embed_listing task to enable semantic ranking."
+        logger.info(
+            "[rag] listing_similarity_search fallback used — returned %d most-recent listings. "
+            "Run embed_listing to enable semantic ranking. tenant=%d",
+            len(listings), tenant_id,
         )
 
     for lst in listings:
-        print(
-            f"[RAG-DEBUG]   listing id={lst.id} public_id={lst.public_id} "
-            f"title={lst.title!r} status={lst.status} "
-            f"embedding={'set' if lst.embedding is not None else 'NULL'}"
+        logger.debug(
+            "[rag]   listing id=%d public_id=%s title=%r status=%s embedding=%s",
+            lst.id, lst.public_id, lst.title, lst.status,
+            "set" if lst.embedding is not None else "NULL",
         )
 
     return listings

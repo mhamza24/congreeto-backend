@@ -25,6 +25,7 @@ def send_invite_email_task(
     invite_link: str,
     role: str,
 ):
+    logger.info("[tenants] send_invite_email_task started to=%s tenant=%s role=%s attempt=%d", to, tenant_name, role, self.request.retries + 1)
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -43,7 +44,9 @@ def send_invite_email_task(
             loop.close()
             asyncio.set_event_loop(None)
 
+        logger.info("[tenants] send_invite_email_task succeeded to=%s tenant=%s", to, tenant_name)
         return {"to": to, "result": result}
     except Exception as exc:
         countdown = min(300, 2 ** self.request.retries * 10)
+        logger.warning("[tenants] send_invite_email_task failed to=%s retry_in=%ds error=%s", to, countdown, exc)
         raise self.retry(exc=exc, countdown=countdown)

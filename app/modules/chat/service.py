@@ -78,11 +78,14 @@ async def create_or_continue_chat(
     payload: schemas.ChatCreateRequest,
 ) -> schemas.ChatReplyResponse:
 
+    logger.info("[chat] create_or_continue_chat iframe_token=%s conversation_id=%s", payload.iframe_token, payload.conversation_id or "new")
+
     # ── 1. Resolve chatbot via iframe_token ─────────────────────────────────
     chatbot = await chatbot_repo.get_chatbot_by_iframe_token(
         db, iframe_token=payload.iframe_token
     )
     if chatbot is None:
+        logger.warning("[chat] chatbot not found iframe_token=%s", payload.iframe_token)
         raise ValueError("Chatbot not found. Check the iframe_token.")
 
     if chatbot.status != "active":
@@ -384,6 +387,7 @@ async def list_conversations(
     payload: schemas.ConversationListRequest,
     tenant_id: str,
 ) -> schemas.PaginatedResponse[schemas.ConversationSummaryResponse]:
+    logger.debug("[chat] list_conversations tenant=%s page_size=%d cursor=%s", tenant_id, payload.page_size, payload.cursor)
     conversations, next_cursor, total = await repo.get_conversations(
         db,
         tenant_id=tenant_id,
@@ -468,11 +472,13 @@ async def complete_conversation(
     *,
     payload: schemas.ChatCompleteRequest,
 ) -> schemas.ChatCompleteResponse:
+    logger.info("[chat] complete_conversation conversation_id=%s iframe_token=%s", payload.conversation_id, payload.iframe_token)
     # Resolve chatbot to scope the conversation lookup
     chatbot = await chatbot_repo.get_chatbot_by_iframe_token(
         db, iframe_token=payload.iframe_token
     )
     if chatbot is None:
+        logger.warning("[chat] complete_conversation chatbot not found iframe_token=%s", payload.iframe_token)
         raise ValueError("Chatbot not found.")
 
     tenant_str = str(chatbot.tenant_id)

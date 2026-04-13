@@ -24,7 +24,9 @@ async def fetch_summary(
     tenant_id: str,
 
 ) -> schemas.DashboardSummaryResponse:
+    logger.debug("[dashboard] fetch_summary tenant=%s", tenant_id)
     summary = await repo.get_dashboard_summary(db, tenant_id=tenant_id)
+    logger.debug("[dashboard] fetch_summary complete tenant=%s", tenant_id)
     return schemas.DashboardSummaryResponse(
         summary=summary
     )

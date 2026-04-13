@@ -15,9 +15,12 @@ async def get_current_user_profile(
     """
     Fetch the full profile of the currently authenticated user.
     """
+    logger.debug("[users] get_current_user_profile user=%s", current_user.public_id)
     user = await repo.get_user_by_id(db, id=current_user.id)
 
     if not user:
+        logger.warning("[users] get_current_user_profile user not found id=%s", current_user.id)
         raise UserNotFoundError()
 
+    logger.debug("[users] get_current_user_profile fetched public_id=%s", user.public_id)
     return schemas.UserProfileResponse.model_validate(user)

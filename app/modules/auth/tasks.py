@@ -25,6 +25,7 @@ settings = get_settings()
     queue=QUEUEEnum.ANALYSIS.value,
 )
 def send_otp_verification_email_task(self, email: str, first_name: str, otp_code: int):
+    logger.info("[auth] send_otp_verification_email_task started email=%s attempt=%d", email, self.request.retries + 1)
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -35,7 +36,9 @@ def send_otp_verification_email_task(self, email: str, first_name: str, otp_code
             loop.close()
             asyncio.set_event_loop(None)
 
+        logger.info("[auth] send_otp_verification_email_task succeeded email=%s", email)
         return {"email": email, "result": result}
     except Exception as exc:
         countdown = min(300, 2 ** self.request.retries * 10)
+        logger.warning("[auth] send_otp_verification_email_task failed email=%s retry_in=%ds error=%s", email, countdown, exc)
         raise self.retry(exc=exc, countdown=countdown)

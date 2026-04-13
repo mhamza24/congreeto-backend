@@ -19,12 +19,14 @@ CHAT_IDLE_BATCH_SIZE = settings.CHAT_IDLE_BATCH_SIZE
 
 
 async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
+    logger.info("[chat] run_analysis started conversation_id=%s tenant=%s", conversation__id, tenant_id)
     async with get_task_db_session() as db:
         chatbot_name = "ARIA"  # default name if not extracted from insights
         messages = await repo.get_conversation_history(
             db,
             conversation__id=conversation__id,
         )
+        logger.debug("[chat] run_analysis fetched %d messages conversation_id=%s", len(messages), conversation__id)
 
         formatted_messages = [
             {"role": msg.role.value, "content": msg.content}
@@ -41,6 +43,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
                 json.dumps(system_prompt_odysseynleo_website_insights if tenant_id=="website_odysseynleo" else system_prompt_extract_chat_insights)
             )
 
+        logger.debug("[chat] run_analysis LLM response received conversation_id=%s", conversation__id)
         try:
             parsed = json.loads(raw_response)
             insights = parsed.get("insights") or {}
@@ -51,7 +54,8 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             chatbot_name = insights.get("chatbot_identity", "ARIA")
         except json.JSONDecodeError:
             logger.error(
-                f"Failed to parse OpenAI response for conversation {conversation__id}: {raw_response}")
+                "[chat] run_analysis failed to parse LLM response conversation_id=%s raw=%s",
+                conversation__id, raw_response[:200])
             raise
         if tenant_id == "veloce_website":
             saved = await repo.upsert_website_conversation_insights(
@@ -113,6 +117,7 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
         )
         await db.commit()
 
+        logger.info("[chat] run_analysis complete conversation_id=%s insights_id=%s", conversation__id, saved.id)
         return {"insights_id": saved.id, "conversation_id": conversation__id}
 
 

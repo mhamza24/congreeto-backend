@@ -28,6 +28,7 @@ async def create_otp(
     expires_in_minutes: int = settings.OTP_EXPIRES_IN_MINUTES,
     ip_address: Optional[str] = None,
 ) -> str:
+    logger.debug("[auth] create_otp user_id=%d purpose=%s", user_id, purpose)
     """
     Issues a new OTP for the given user and purpose.
     Invalidates any previous unconsumed OTPs for the same (user, purpose).
@@ -73,6 +74,7 @@ async def create_otp(
     await db.commit()
     await db.refresh(otp)
 
+    logger.info("[auth] create_otp issued user_id=%d purpose=%s expires_in=%dm", user_id, purpose, expires_in_minutes)
     return raw_code  # ← only moment raw code exists — caller passes to email service
 
 
@@ -94,11 +96,13 @@ async def verify_otp(
     if not hmac.compare_digest(record.code_hash, expected):
         record.attempts += 1
         await db.commit()
+        logger.warning("[auth] verify_otp failed invalid code user_id=%d purpose=%s attempts=%d", record.user_id, record.purpose, record.attempts)
         return False
 
     record.consumed_at = datetime.now(timezone.utc)
     record.code_hash=None # clear hash on success — prevents reuse even if DB is compromised
     await db.commit()
+    logger.info("[auth] verify_otp success user_id=%d purpose=%s", record.user_id, record.purpose)
     return True
 
 

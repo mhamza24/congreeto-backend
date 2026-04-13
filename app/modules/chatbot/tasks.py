@@ -123,6 +123,7 @@ def crawl_and_embed(
     4. Dispatch N embed_crawled_page tasks (fire-and-forget)
     5. Per-page tasks atomically increment counters and the last one finalizes
     """
+    logger.info("[chatbot] crawl_and_embed started job_id=%d tenant=%d url=%s attempt=%d", crawl_job_id, tenant_id, base_url, self.request.retries + 1)
     try:
         _run(
             _crawl_and_embed_async(
@@ -133,12 +134,13 @@ def crawl_and_embed(
                 base_url=base_url,
             )
         )
+        logger.info("[chatbot] crawl_and_embed dispatched job_id=%d url=%s", crawl_job_id, base_url)
         return f"crawl_and_embed dispatched for job_id={crawl_job_id}"
 
     except Exception as exc:
         import sentry_sdk
         countdown = 2 ** self.request.retries
-        logger.error("crawl_and_embed failed error=%s retry_in=%ds", exc, countdown)
+        logger.error("[chatbot] crawl_and_embed failed job_id=%d error=%s retry_in=%ds", crawl_job_id, exc, countdown)
         if self.request.retries >= self.max_retries:
             sentry_sdk.capture_exception(exc)
         raise self.retry(exc=exc, countdown=countdown)
@@ -627,6 +629,7 @@ def process_document(
     5. Mark document → ready
     6. Flip rag_enabled
     """
+    logger.info("[chatbot] process_document started doc_id=%d tenant=%d chatbot=%d attempt=%d", document_id, tenant_id, chatbot_config_id, self.request.retries + 1)
     try:
         _run(
             _process_document_async(
@@ -635,6 +638,7 @@ def process_document(
                 chatbot_config_id=chatbot_config_id,
             )
         )
+        logger.info("[chatbot] process_document completed doc_id=%d", document_id)
         return f"process_document completed for document_id={document_id}"
 
     except Exception as exc:
@@ -925,12 +929,14 @@ def embed_listing(self, *, listing_id: int, tenant_id: int) -> str:
     Enqueue from listing service:
         embed_listing.delay(listing_id=listing.id, tenant_id=listing.tenant_id)
     """
+    logger.info("[chatbot] embed_listing started listing_id=%d tenant=%d", listing_id, tenant_id)
     try:
         _run(_embed_listing_async(listing_id=listing_id, tenant_id=tenant_id))
+        logger.info("[chatbot] embed_listing completed listing_id=%d", listing_id)
         return f"embed_listing completed for listing_id={listing_id}"
     except Exception as exc:
         countdown = 2 ** self.request.retries
-        logger.error(f"embed_listing failed for listing_id={listing_id}: {exc}. Retrying in {countdown}s.")
+        logger.error("[chatbot] embed_listing failed listing_id=%d error=%s retry_in=%ds", listing_id, exc, countdown)
         raise self.retry(exc=exc, countdown=countdown)
 
 
@@ -1093,14 +1099,16 @@ def process_listing_file(self, *, job_id: int, tenant_id: int) -> str:
     Background task: parse an uploaded Excel or CSV listing file with LLM normalization,
     then upsert each listing row in batches and trigger embed_listing for each one.
     """
+    logger.info("[chatbot] process_listing_file started job_id=%d tenant=%d attempt=%d", job_id, tenant_id, self.request.retries + 1)
     try:
         _run(_process_listing_file_async(job_id=job_id, tenant_id=tenant_id))
+        logger.info("[chatbot] process_listing_file completed job_id=%d", job_id)
         return f"process_listing_file completed for job_id={job_id}"
     except Exception as exc:
         countdown = 2 ** self.request.retries
         logger.error(
-            f"process_listing_file failed for job_id={job_id}: {exc}. "
-            f"Retrying in {countdown}s."
+            "[chatbot] process_listing_file failed job_id=%d error=%s retry_in=%ds",
+            job_id, exc, countdown,
         )
         raise self.retry(exc=exc, countdown=countdown)
 

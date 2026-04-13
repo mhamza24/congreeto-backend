@@ -20,7 +20,7 @@ settings = get_settings()
 
 @celery_app.task
 def background_analysis(conversation_id: str):
-    print(f"Analyzing conversation {conversation_id}")
+    logger.info("[chat] background_analysis triggered conversation_id=%s", conversation_id)
 
 
 @celery_app.task(
@@ -31,6 +31,7 @@ def background_analysis(conversation_id: str):
     queue=QUEUEEnum.ANALYSIS.value,
 )
 def chat_completion_task(self, conversation__id: str, tenant_id: str):
+    logger.info("[chat] chat_completion_task started conversation_id=%s tenant=%s", conversation__id, tenant_id)
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -41,9 +42,11 @@ def chat_completion_task(self, conversation__id: str, tenant_id: str):
             loop.close()
             asyncio.set_event_loop(None)
 
+        logger.info("[chat] chat_completion_task succeeded conversation_id=%s", conversation__id)
         return {"conversation__id": conversation__id, "result": result}
     except Exception as exc:
         countdown = min(300, 2 ** self.request.retries * 10)
+        logger.warning("[chat] chat_completion_task failed conversation_id=%s retry_in=%ds error=%s", conversation__id, countdown, exc)
         raise self.retry(exc=exc, countdown=countdown)
 
 

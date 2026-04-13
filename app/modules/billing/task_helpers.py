@@ -1,12 +1,15 @@
 # app/modules/billing/task_helpers.py
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.billing import repository as repo
 from app.core.enums import UsageMetric, LimitStatus
+
+logger = logging.getLogger(__name__)
 
 
 def current_period_month() -> str:
@@ -100,6 +103,10 @@ async def can_start_new_conversation(
         default_limit=750,
     )
     allowed = status != LimitStatus.EXCEEDED
+    if not allowed:
+        logger.warning("[billing] can_start_new_conversation blocked tenant=%d used=%d limit=%d", tenant_id, used, limit)
+    else:
+        logger.debug("[billing] can_start_new_conversation allowed tenant=%d used=%d limit=%d status=%s", tenant_id, used, limit, status)
     return allowed, used, limit, status
 
 
@@ -121,6 +128,8 @@ async def can_continue_conversation(
         default_limit=1_000_000,
     )
     allowed = status != LimitStatus.EXCEEDED
+    if not allowed:
+        logger.warning("[billing] can_continue_conversation blocked tenant=%d used=%d limit=%d", tenant_id, used, limit)
     return allowed, used, limit, status
 
 

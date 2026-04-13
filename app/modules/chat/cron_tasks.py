@@ -25,6 +25,9 @@ async def _dispatch_in_batches() -> int:
         timedelta(minutes=IDLE_THRESHOLD_MINUTES)
     last_id = 0
     total_spawned = 0
+    batch_count = 0
+
+    logger.info("[idle-cron] _dispatch_in_batches started idle_threshold_minutes=%d", IDLE_THRESHOLD_MINUTES)
 
     while True:
         async with get_task_db_session() as db:
@@ -38,6 +41,9 @@ async def _dispatch_in_batches() -> int:
         if not rows:
             break
 
+        batch_count += 1
+        logger.debug("[idle-cron] processing batch=%d rows=%d after_id=%d", batch_count, len(rows), last_id)
+
         for row in rows:
             try:
                 chat_completion_task.apply_async(
@@ -48,10 +54,11 @@ async def _dispatch_in_batches() -> int:
                     queue=QUEUEEnum.ANALYSIS.value,
                 )
                 total_spawned += 1
+                logger.debug("[idle-cron] spawned task for conversation_id=%s tenant=%s", row.id, row.tenant_id)
             except Exception as exc:
                 logger.error(
-                    f"[idle-cron] Failed to spawn for id={row.id}: {exc}",
-                    exc_info=True,
+                    "[idle-cron] failed to spawn for conversation_id=%s error=%s",
+                    row.id, exc, exc_info=True,
                 )
 
         last_id = rows[-1].id
@@ -59,4 +66,5 @@ async def _dispatch_in_batches() -> int:
         if len(rows) < CHAT_IDLE_BATCH_SIZE:
             break
 
+    logger.info("[idle-cron] _dispatch_in_batches done total_spawned=%d batches=%d", total_spawned, batch_count)
     return total_spawned
