@@ -65,6 +65,13 @@ async def get_tenant_context(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TenantContext:
+    # ── Step 0: email must be verified ───────────────────────────────────────
+    if current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email address not verified. Please verify your email before accessing tenant resources.",
+        )
+
     # ── Step 1: tenant exists ─────────────────────────────────────────────────
     tenant = await tenant_repo.get_tenant_by_public_id(db, public_id=tenant_public_id)
     if not tenant:

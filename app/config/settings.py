@@ -88,6 +88,11 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: str = "http://localhost:3000"
 
+    # ── CORS ──────────────────────────────────────────────────────────────────
+    # Comma-separated list of allowed origins.
+    # Example: "https://app.getveloce.com,https://admin.getveloce.com"
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+
     # ── Internal inquiry email recipients ─────────────────────────────────────
     # Comma-separated list of Veloce team emails that receive contact / demo /
     # affiliation form submissions.  Never expose these to tenants.

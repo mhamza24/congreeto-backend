@@ -16,12 +16,15 @@ from app.modules.auth import tasks as background_tasks
 from app.modules.audit import repository as audit
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
-from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject
+from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject, blacklist_token
 from app.utils.rate_limit import (
     check_otp_rate_limit,
     record_otp_request,
     check_login_otp_lockout,
     set_login_otp_lockout,
+    check_login_failure_lockout,
+    record_login_failure,
+    clear_login_failures,
 )
 from . import repository as repo, schemas, models
 from app.modules.users import repository as user_repo, models as user_models
@@ -113,12 +116,19 @@ async def login_user(
         logger.warning("[auth] login failed user not found email=%s", payload.email)
         raise InvalidCredentialsError()
 
+    # Check per-account lockout before verifying the password (prevents timing oracle)
+    await check_login_failure_lockout(existing_user.id)
+
     is_password_valid = hashing_utils.verify_password(
         payload.password, existing_user.password_hash
     )
     if not is_password_valid:
+        await record_login_failure(existing_user.id)
         logger.warning("[auth] login failed invalid password email=%s", payload.email)
         raise InvalidCredentialsError()
+
+    # Successful auth — clear failure counter
+    await clear_login_failures(existing_user.id)
 
     # ── 2FA — if enabled, send login OTP and defer token issuance ─────────
     if existing_user.two_fa_enabled:
@@ -173,9 +183,12 @@ async def refresh_access_token(
     # 1. Decode and validate
     try:
         payload = decode_token(refresh_token)
-    except Exception:
-        logger.warning("[auth] refresh_token decode failed")
-        raise InvalidTokenError("Invalid refresh token")
+    except (ValueError, KeyError) as exc:
+        logger.warning("[auth] refresh_token decode failed reason=%s", type(exc).__name__)
+        raise InvalidTokenError("Invalid refresh token") from exc
+    except Exception as exc:
+        logger.warning("[auth] refresh_token unexpected decode error type=%s", type(exc).__name__)
+        raise InvalidTokenError("Invalid refresh token") from exc
 
     # 2. Must be a refresh token, not access
     if payload.type != "refresh":
@@ -492,14 +505,17 @@ async def forgot_password(
 ) -> None:
     """
     Sends a password-reset OTP to the user's email.
-    Raises UserNotExistError if no account is found for the given email.
+    Always returns without error to prevent user enumeration — the caller
+    receives the same response regardless of whether the email is registered.
+    The OTP is sent via email only; it is never embedded in a URL.
     """
     logger.info("[auth] forgot_password request email=%s", payload.email)
 
     existing_user = await user_repo.get_user_by_email(db, email=payload.email)
     if existing_user is None:
-        logger.info("[auth] forgot_password email not found email=%s", payload.email)
-        raise UserNotExistError("No account found with that email address.")
+        # Return silently — do not reveal whether the email is registered
+        logger.info("[auth] forgot_password email not found (silent) email=%s", payload.email)
+        return
 
     raw_otp = await repo.create_otp(
         db,
@@ -508,10 +524,8 @@ async def forgot_password(
         expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
     )
 
-    reset_link = (
-        f"{settings.FRONTEND_URL}/reset-password"
-        f"?email={existing_user.email}&otp={raw_otp}"
-    )
+    # Reset link contains only the email — OTP is delivered exclusively by email
+    reset_link = f"{settings.FRONTEND_URL}/reset-password?email={existing_user.email}"
 
     background_tasks.send_forgot_password_email_task.delay(
         email=existing_user.email,
@@ -520,6 +534,21 @@ async def forgot_password(
         reset_link=reset_link,
     )
     logger.info("[auth] forgot_password OTP sent public_id=%s", existing_user.public_id)
+
+
+async def logout_user(
+    *,
+    access_token: str,
+    refresh_token: Optional[str] = None,
+) -> None:
+    """
+    Blacklists the provided tokens so they cannot be reused even before expiry.
+    Both access and (optionally) refresh tokens are revoked.
+    """
+    await blacklist_token(access_token)
+    if refresh_token:
+        await blacklist_token(refresh_token)
+    logger.info("[auth] tokens blacklisted (logout)")
 
 
 async def verify_forgot_password(

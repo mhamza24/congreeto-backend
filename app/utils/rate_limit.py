@@ -114,3 +114,55 @@ async def set_login_otp_lockout(user_id: int) -> None:
         LOCKOUT_SECONDS,
         "locked",
     )
+
+
+# ── Per-account login failure rate limiting ───────────────────────────────────
+
+LOGIN_FAILURE_MAX    = 10   # max consecutive failures before lockout
+LOGIN_FAILURE_WINDOW = 900  # 15-minute sliding window
+LOGIN_FAILURE_LOCKOUT = 1800  # 30-minute lockout after max failures
+
+
+def _login_failure_key(user_id: int) -> str:
+    return f"login:failures:{user_id}"
+
+def _login_failure_lockout_key(user_id: int) -> str:
+    return f"login:lockout:{user_id}"
+
+
+async def check_login_failure_lockout(user_id: int) -> None:
+    """
+    Raises RateLimitError if the account is locked out due to too many
+    consecutive password failures.  Call before verifying the password.
+    """
+    locked = await redis_client.get(_login_failure_lockout_key(user_id))
+    if locked:
+        ttl = await redis_client.ttl(_login_failure_lockout_key(user_id))
+        minutes = math.ceil(max(ttl, 0) / 60)
+        raise RateLimitError(
+            f"Too many failed login attempts. Try again in {minutes} minute(s)."
+        )
+
+
+async def record_login_failure(user_id: int) -> None:
+    """
+    Increments the failure counter for the account.  Triggers a lockout
+    once LOGIN_FAILURE_MAX is reached.
+    """
+    key = _login_failure_key(user_id)
+    count = await redis_client.incr(key)
+    if count == 1:
+        await redis_client.expire(key, LOGIN_FAILURE_WINDOW)
+
+    if count >= LOGIN_FAILURE_MAX:
+        await redis_client.setex(
+            _login_failure_lockout_key(user_id),
+            LOGIN_FAILURE_LOCKOUT,
+            "locked",
+        )
+        await redis_client.delete(key)
+
+
+async def clear_login_failures(user_id: int) -> None:
+    """Reset failure counter on a successful login."""
+    await redis_client.delete(_login_failure_key(user_id))

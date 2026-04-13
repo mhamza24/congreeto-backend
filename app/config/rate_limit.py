@@ -42,8 +42,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 )
 
         except Exception as e:
-            logger.warning(f"Rate limiter Redis error, allowing request through: {e}")
-            request_count = 0
+            logger.error(f"Rate limiter Redis error, blocking request (fail-secure): {e}")
+            return Response(
+                content='{"detail": "Service temporarily unavailable. Please try again shortly."}',
+                status_code=503,
+                headers={"Content-Type": "application/json", "Retry-After": "5"},
+            )
 
         response = await call_next(request)
         response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT)

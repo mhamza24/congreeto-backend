@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from passlib.exc import InvalidTokenError
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +27,9 @@ from app.core.database import get_db
 from app.core.exceptions import InvalidOTPError
 from app.core.response import ApiResponse
 from app.dependencies.auth import get_current_user, require_superadmin
-from . import schemas,service
-from app.modules.chat.models import ConversationStatus
+from . import schemas, service
+
+_bearer = HTTPBearer(auto_error=False)
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +307,32 @@ async def verify_login_otp_endpoint(
         message="Login successful.",
         data=reply,
     )
+
+
+@router.post(
+    "/logout",
+    response_model=ApiResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Invalidate access (and optionally refresh) token",
+)
+async def logout_endpoint(
+    payload: schemas.LogoutRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> ApiResponse[None]:
+    access_token = credentials.credentials if credentials else None
+    if not access_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token.")
+    try:
+        await service.logout_user(
+            access_token=access_token,
+            refresh_token=payload.refresh_token,
+        )
+    except Exception:
+        logger.exception("Unexpected error during logout")
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return ApiResponse(success=True, message="Logged out successfully.", data=None)
 
 
 @router.post(

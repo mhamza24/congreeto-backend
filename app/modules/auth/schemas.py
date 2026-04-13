@@ -24,6 +24,7 @@ class TokenPayload(BaseModel):
     sub: dict[str, Any]   # ← now a dict instead of plain str
     type: str             # "access" | "refresh"
     exp: int
+    jti: Optional[str] = None  # unique token ID for revocation
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ class SignupRequest(BaseModel):
     )
     password: str = Field(
         ...,
-        min_length=8,                 # 1 is not safe — minimum 8 in production
+        min_length=12,
         max_length=100,
         description="Plain-text. Hashed with bcrypt before storage. Never persisted raw.",
     )
@@ -45,18 +46,22 @@ class SignupRequest(BaseModel):
     # status intentionally excluded — clients must never set their own status.
     # The service layer always forces UserStatus.INVITED on signup.
 
-    # @field_validator("email")
-    # @classmethod
-    # def normalize_email(cls, v: str) -> str:
-    #     return v.strip().lower()
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
 
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
         if not any(c.isupper() for c in v):
             raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter.")
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit.")
+        if not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in v):
+            raise ValueError("Password must contain at least one special character.")
         return v
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -132,7 +137,7 @@ class ResendOTPStatusResponse(BaseModel):
 
 class AdminSignupRequest(BaseModel):
     email: EmailStr = Field(..., description="Must be unique. Lowercased before insert.")
-    password: str = Field(..., min_length=8, max_length=100)
+    password: str = Field(..., min_length=12, max_length=100)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
 
@@ -141,8 +146,12 @@ class AdminSignupRequest(BaseModel):
     def password_strength(cls, v: str) -> str:
         if not any(c.isupper() for c in v):
             raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter.")
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit.")
+        if not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in v):
+            raise ValueError("Password must contain at least one special character.")
         return v
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -177,6 +186,10 @@ class VerifyLoginOTPRequest(BaseModel):
 # Forgot password schemas
 # ---------------------------------------------------------------------------
 
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None  # optional — revoke refresh token too if provided
+
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -186,7 +199,7 @@ class ForgotPasswordRequest(BaseModel):
 class VerifyForgotPasswordRequest(BaseModel):
     email: EmailStr
     otp: str = Field(..., min_length=6, max_length=6, description="6-digit reset OTP.")
-    new_password: str = Field(..., min_length=8, max_length=100)
+    new_password: str = Field(..., min_length=12, max_length=100)
 
     @field_validator("otp")
     @classmethod
@@ -200,8 +213,12 @@ class VerifyForgotPasswordRequest(BaseModel):
     def password_strength(cls, v: str) -> str:
         if not any(c.isupper() for c in v):
             raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter.")
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit.")
+        if not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in v):
+            raise ValueError("Password must contain at least one special character.")
         return v
 
     model_config = ConfigDict(str_strip_whitespace=True)

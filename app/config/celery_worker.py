@@ -113,6 +113,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.modules.chatbot.tasks.auto_recrawl_knowledge_sources",
         "schedule": crontab(hour=2, minute=0),    # daily at 02:00 UTC
     },
+    # OTP hygiene — purge expired OTP records older than 24 h
+    "auth-cleanup-expired-otps": {
+        "task": "app.modules.auth.tasks.cleanup_expired_otps",
+        "schedule": crontab(hour=3, minute=0),    # daily at 03:00 UTC
+    },
 }
 
 celery_app.autodiscover_tasks(

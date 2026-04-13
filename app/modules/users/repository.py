@@ -130,10 +130,20 @@ async def update_password_by_id(
 ) -> None:
     """
     Replaces the stored password hash. Caller is responsible for hashing.
+    Writes an audit log entry for the password change.
     """
+    from app.modules.audit import repository as audit_repo
     await db.execute(
         update(User)
         .where(User.id == user_id)
         .values(password_hash=new_password_hash)
+    )
+    await audit_repo.write(
+        db,
+        entity_type="users",
+        action=audit_repo.UPDATE,
+        user_id=user_id,
+        entity_id=user_id,
+        diff={"changed_fields": ["password_hash"]},
     )
     await db.commit()
