@@ -82,3 +82,35 @@ async def record_otp_request(user_id: int) -> int:
         )
 
     return count
+
+
+# ── Login OTP lockout (separate namespace from resend rate-limit) ─────────────
+
+def _login_otp_lockout_key(user_id: int) -> str:
+    return f"login_otp:lockout:{user_id}"
+
+
+async def check_login_otp_lockout(user_id: int) -> None:
+    """
+    Raises RateLimitError if the user is locked out from login OTP attempts.
+    Call at the start of verify_login_otp before any DB work.
+    """
+    locked = await redis_client.get(_login_otp_lockout_key(user_id))
+    if locked:
+        ttl = await redis_client.ttl(_login_otp_lockout_key(user_id))
+        hours = math.ceil(max(ttl, 0) / 3600)
+        raise RateLimitError(
+            f"Too many failed attempts. Try again in {hours} hour(s)."
+        )
+
+
+async def set_login_otp_lockout(user_id: int) -> None:
+    """
+    Sets a 24-hour hard lockout after OTP attempts are exhausted.
+    Call when remaining OTP attempts hit zero.
+    """
+    await redis_client.setex(
+        _login_otp_lockout_key(user_id),
+        LOCKOUT_SECONDS,
+        "locked",
+    )

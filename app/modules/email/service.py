@@ -1291,6 +1291,192 @@ async def send_otp_verification_email(
 
 
 # ══════════════════════════════════════════════════════════════
+# H-0b. Login OTP (2FA) email
+# ══════════════════════════════════════════════════════════════
+
+def build_login_otp_html(*, otp_code: str) -> str:
+    """
+    Body block for the 2FA login OTP email.
+    Same digit-box layout as build_otp_verification_html.
+    """
+    digits = "".join(
+        f"""<td style="
+                width:48px;height:56px;
+                background:{BRAND['offWhite']};
+                border:1px solid {BRAND['border']};
+                border-radius:6px;
+                font-size:26px;
+                font-weight:700;
+                color:{BRAND['textDark']};
+                text-align:center;
+                vertical-align:middle;
+                font-family:'Georgia',serif;
+                padding:0;
+            ">{d}</td>
+        <td style="width:8px;font-size:0;">&nbsp;</td>"""
+        for d in otp_code
+    )
+
+    return f"""
+    <!-- Intro -->
+    <p style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};
+              line-height:1.6;font-family:'Georgia',serif;">
+      We received a login attempt for your account. Use the code below to
+      complete your sign-in. It expires in <strong>{settings.OTP_EXPIRES_IN_MINUTES} minutes</strong>.
+    </p>
+
+    <!-- OTP digit block -->
+    <table cellpadding="0" cellspacing="0" border="0"
+           style="margin:28px 0;border-collapse:separate;border-spacing:0;">
+      <tr>
+        {digits}
+      </tr>
+    </table>
+
+    <!-- Security note -->
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="background:{BRAND['offWhite']};
+                  border-left:3px solid {BRAND['teal']};
+                  border-radius:0 4px 4px 0;
+                  margin:24px 0 0;">
+      <tr>
+        <td style="padding:14px 16px;">
+          <p style="margin:0;font-size:12px;color:{BRAND['textMid']};line-height:1.6;">
+            <strong style="color:{BRAND['textDark']};">Security notice:</strong>
+            Never share this code with anyone. Veloce will never ask for your
+            OTP via phone, chat, or email. If you didn't attempt to log in,
+            please change your password immediately.
+          </p>
+        </td>
+      </tr>
+    </table>
+    """
+
+
+async def send_login_otp_email(
+    *,
+    email     : str,
+    first_name: str,
+    otp_code  : str,
+) -> None:
+    """Sends the 2FA login OTP to the user's email."""
+    await fm.send_message(MessageSchema(
+        subject    = f"{otp_code} is your Veloce login code",
+        recipients = [email],
+        body       = _render_shell(
+            first_name = first_name,
+            body_html  = build_login_otp_html(otp_code=otp_code),
+        ),
+        subtype    = MessageType.html,
+    ))
+    logger.info(f"Login OTP email sent | recipient={email}")
+
+
+# ══════════════════════════════════════════════════════════════
+# H-0c. Forgot password email
+# ══════════════════════════════════════════════════════════════
+
+def build_forgot_password_html(*, reset_link: str, otp_code: str) -> str:
+    """
+    Body block for the forgot-password reset email.
+    Same digit-box layout as build_otp_verification_html, plus a CTA button.
+    """
+    digits = "".join(
+        f"""<td style="
+                width:48px;height:56px;
+                background:{BRAND['offWhite']};
+                border:1px solid {BRAND['border']};
+                border-radius:6px;
+                font-size:26px;
+                font-weight:700;
+                color:{BRAND['textDark']};
+                text-align:center;
+                vertical-align:middle;
+                font-family:'Georgia',serif;
+                padding:0;
+            ">{d}</td>
+        <td style="width:8px;font-size:0;">&nbsp;</td>"""
+        for d in otp_code
+    )
+
+    return f"""
+    <!-- Intro -->
+    <p style="margin:0 0 20px;font-size:15px;color:{BRAND['textDark']};
+              line-height:1.6;font-family:'Georgia',serif;">
+      We received a request to reset your Veloce password. Click the button
+      below — it will take you straight to the reset page with your code
+      pre-filled.
+    </p>
+
+    <!-- CTA button -->
+    <table cellpadding="0" cellspacing="0" border="0" style="margin:0 0 28px;">
+      <tr>
+        <td style="border-radius:6px;background:{BRAND['brown']};">
+          <a href="{reset_link}"
+             style="display:inline-block;padding:14px 32px;
+                    color:#ffffff;font-size:15px;font-weight:600;
+                    text-decoration:none;font-family:'Georgia',serif;">
+            Reset My Password
+          </a>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Manual code label -->
+    <p style="margin:0 0 12px;font-size:13px;color:{BRAND['textMid']};
+              line-height:1.6;">
+      Or enter this code manually on the reset page:
+    </p>
+
+    <!-- OTP digit block -->
+    <table cellpadding="0" cellspacing="0" border="0"
+           style="margin:0 0 28px;border-collapse:separate;border-spacing:0;">
+      <tr>
+        {digits}
+      </tr>
+    </table>
+
+    <!-- Security note -->
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="background:{BRAND['offWhite']};
+                  border-left:3px solid {BRAND['teal']};
+                  border-radius:0 4px 4px 0;
+                  margin:0;">
+      <tr>
+        <td style="padding:14px 16px;">
+          <p style="margin:0;font-size:12px;color:{BRAND['textMid']};line-height:1.6;">
+            <strong style="color:{BRAND['textDark']};">Security notice:</strong>
+            This link and code expire in <strong>{settings.OTP_EXPIRES_IN_MINUTES} minutes</strong>.
+            Never share this code with anyone. If you didn't request a password
+            reset, you can safely ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+    """
+
+
+async def send_forgot_password_email(
+    *,
+    email     : str,
+    first_name: str,
+    otp_code  : str,
+    reset_link: str,
+) -> None:
+    """Sends the forgot-password email with an OTP deep link."""
+    await fm.send_message(MessageSchema(
+        subject    = "Reset your Veloce password",
+        recipients = [email],
+        body       = _render_shell(
+            first_name = first_name,
+            body_html  = build_forgot_password_html(reset_link=reset_link, otp_code=otp_code),
+        ),
+        subtype    = MessageType.html,
+    ))
+    logger.info(f"Forgot password email sent | recipient={email}")
+
+
+# ══════════════════════════════════════════════════════════════
 # H-1. Tenant invite email
 # ══════════════════════════════════════════════════════════════
 

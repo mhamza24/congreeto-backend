@@ -278,3 +278,90 @@ async def resend_otp_endpoint(
     )
 
 
+@router.post(
+    "/verify-login-otp",
+    response_model=ApiResponse[schemas.LoginResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Step 2 of 2FA login — verify OTP and receive tokens",
+)
+async def verify_login_otp_endpoint(
+    payload: schemas.VerifyLoginOTPRequest,
+    request: Request,
+    db: DBDep,
+) -> ApiResponse[schemas.LoginResponse]:
+    try:
+        reply = await service.verify_login_otp(db, payload=payload, request=request)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during login OTP verification")
+        sentry_sdk.capture_exception()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Login successful.",
+        data=reply,
+    )
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ApiResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Send a password-reset OTP to the given email",
+)
+async def forgot_password_endpoint(
+    payload: schemas.ForgotPasswordRequest,
+    db: DBDep,
+) -> ApiResponse[None]:
+    try:
+        await service.forgot_password(db, payload=payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during forgot password")
+        sentry_sdk.capture_exception()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Reset code sent. Please check your email.",
+        data=None,
+    )
+
+
+@router.post(
+    "/verify-forgot-password",
+    response_model=ApiResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Verify reset OTP and set a new password",
+)
+async def verify_forgot_password_endpoint(
+    payload: schemas.VerifyForgotPasswordRequest,
+    db: DBDep,
+) -> ApiResponse[None]:
+    try:
+        await service.verify_forgot_password(db, payload=payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error during password reset verification")
+        sentry_sdk.capture_exception()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not process your request. Please try again later.",
+        )
+
+    return ApiResponse(
+        success=True,
+        message="Password updated successfully. You can now log in.",
+        data=None,
+    )
+

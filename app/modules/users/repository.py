@@ -120,3 +120,20 @@ async def update_login_time_by_id(db: AsyncSession, *, user_id: int) -> None:
             last_login_at=datetime.now(timezone.utc),
         )
     )
+
+
+async def update_password_by_id(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    new_password_hash: str,
+) -> None:
+    """
+    Replaces the stored password hash. Caller is responsible for hashing.
+    """
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(password_hash=new_password_hash)
+    )
+    await db.commit()

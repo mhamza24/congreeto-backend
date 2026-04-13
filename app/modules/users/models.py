@@ -134,6 +134,14 @@ class User(Base, PublicIdMixin, TimestampMixin, SoftDeleteMixin):
         comment="True for internal Veloce team members who can access the superadmin panel.",
     )
 
+    two_fa_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=text("true"),
+        nullable=False,
+        comment="When true, login requires an OTP sent to the user's email. Enabled for all users by default.",
+    )
+
     # ── Status & verification ─────────────────────────────────────────────────
     status: Mapped[UserStatus] = mapped_column(
         user_status_enum,

@@ -105,7 +105,8 @@ class SignupResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     message: str = "Login successful."
-    tokens: TokenPair
+    tokens: Optional[TokenPair] = None
+    requires_2fa: bool = False
 
 
 class RefreshResponse(BaseModel):
@@ -152,3 +153,55 @@ class AdminSignupResponse(BaseModel):
     message: str = "Admin account created successfully."
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# 2FA / Login OTP schemas
+# ---------------------------------------------------------------------------
+
+class VerifyLoginOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit login OTP.")
+
+    @field_validator("otp")
+    @classmethod
+    def otp_must_be_digits(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("OTP must contain only digits.")
+        return v
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+# ---------------------------------------------------------------------------
+# Forgot password schemas
+# ---------------------------------------------------------------------------
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class VerifyForgotPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit reset OTP.")
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator("otp")
+    @classmethod
+    def otp_must_be_digits(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("OTP must contain only digits.")
+        return v
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter.")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit.")
+        return v
+
+    model_config = ConfigDict(str_strip_whitespace=True)

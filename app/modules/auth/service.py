@@ -17,7 +17,12 @@ from app.modules.audit import repository as audit
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
 from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject
-from app.utils.rate_limit import check_otp_rate_limit, record_otp_request
+from app.utils.rate_limit import (
+    check_otp_rate_limit,
+    record_otp_request,
+    check_login_otp_lockout,
+    set_login_otp_lockout,
+)
 from . import repository as repo, schemas, models
 from app.modules.users import repository as user_repo, models as user_models
 
@@ -115,7 +120,26 @@ async def login_user(
         logger.warning("[auth] login failed invalid password email=%s", payload.email)
         raise InvalidCredentialsError()
 
-    # Update last login time
+    # ── 2FA — if enabled, send login OTP and defer token issuance ─────────
+    if existing_user.two_fa_enabled:
+        raw_otp = await repo.create_otp(
+            db,
+            user_id=existing_user.id,
+            purpose=OTPPurpose.LOGIN_OTP,
+            expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
+        )
+        background_tasks.send_login_otp_email_task.delay(
+            email=existing_user.email,
+            first_name=existing_user.first_name,
+            otp_code=raw_otp,
+        )
+        logger.info("[auth] 2FA OTP sent public_id=%s email=%s", existing_user.public_id, existing_user.email)
+        return schemas.LoginResponse(
+            message="OTP sent to your email. Please verify to continue.",
+            requires_2fa=True,
+        )
+
+    # ── No 2FA — issue tokens immediately ────────────────────────────────
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
     logger.info("[auth] login success public_id=%s email=%s", existing_user.public_id, existing_user.email)
 
@@ -131,15 +155,12 @@ async def login_user(
     )
     await db.commit()
 
-    # ── Build whatever you need in the subject ────────────────────────────
     jwt_subject = get_token_subject(existing_user)
-
     return schemas.LoginResponse(
         tokens=schemas.TokenPair(
             access_token=create_access_token(jwt_subject),
             refresh_token=create_refresh_token(jwt_subject),
         ),
-
     )
 
 
@@ -388,4 +409,144 @@ async def resend_otp(
     logger.info(f"OTP email enqueued: task={celery_task.id} attempt={attempt}")
 
     return "OTP resent successfully."
+
+
+async def verify_login_otp(
+    db: AsyncSession,
+    *,
+    payload: schemas.VerifyLoginOTPRequest,
+    request: Optional[Request] = None,
+) -> schemas.LoginResponse:
+    """
+    Step 2 of the 2FA login flow.
+    Verifies the LOGIN_OTP and issues tokens on success.
+    Locks the user out for 24 h after 5 consecutive failures.
+    """
+    logger.info("[auth] verify_login_otp attempt email=%s", payload.email)
+
+    # 1. Resolve user
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+    if existing_user is None:
+        raise InvalidCredentialsError()
+
+    # 2. Check Redis lockout before touching the DB OTP record
+    await check_login_otp_lockout(existing_user.id)
+
+    # 3. Fetch active OTP
+    otp_record = await repo.get_active_otp(
+        db,
+        user_id=existing_user.id,
+        purpose=OTPPurpose.LOGIN_OTP,
+    )
+    if otp_record is None:
+        raise InvalidOTPError()
+
+    # 4. Verify — increments attempts on failure
+    is_valid = await repo.verify_otp(db, record=otp_record, raw_code=payload.otp)
+    if not is_valid:
+        remaining = repo.remaining_attempts(otp_record)
+        if remaining == 0:
+            await set_login_otp_lockout(existing_user.id)
+            logger.warning(
+                "[auth] verify_login_otp lockout triggered user=%s", existing_user.public_id
+            )
+            from app.core.exceptions import RateLimitError
+            raise RateLimitError(
+                "Too many failed attempts. Your account is locked for 24 hours."
+            )
+        raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
+
+    # 5. OTP valid — update login time, audit, issue tokens
+    await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.LOGIN,
+        user_id=existing_user.id,
+        entity_id=existing_user.id,
+        diff={},
+        request=request,
+    )
+    await db.commit()
+
+    logger.info("[auth] verify_login_otp success public_id=%s", existing_user.public_id)
+    jwt_subject = get_token_subject(existing_user)
+    return schemas.LoginResponse(
+        message="Login successful.",
+        tokens=schemas.TokenPair(
+            access_token=create_access_token(jwt_subject),
+            refresh_token=create_refresh_token(jwt_subject),
+        ),
+    )
+
+
+async def forgot_password(
+    db: AsyncSession,
+    *,
+    payload: schemas.ForgotPasswordRequest,
+) -> None:
+    """
+    Sends a password-reset OTP to the user's email.
+    Raises UserNotExistError if no account is found for the given email.
+    """
+    logger.info("[auth] forgot_password request email=%s", payload.email)
+
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+    if existing_user is None:
+        logger.info("[auth] forgot_password email not found email=%s", payload.email)
+        raise UserNotExistError("No account found with that email address.")
+
+    raw_otp = await repo.create_otp(
+        db,
+        user_id=existing_user.id,
+        purpose=OTPPurpose.PASSWORD_RESET,
+        expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
+    )
+
+    reset_link = (
+        f"{settings.FRONTEND_URL}/reset-password"
+        f"?email={existing_user.email}&otp={raw_otp}"
+    )
+
+    background_tasks.send_forgot_password_email_task.delay(
+        email=existing_user.email,
+        first_name=existing_user.first_name,
+        otp_code=raw_otp,
+        reset_link=reset_link,
+    )
+    logger.info("[auth] forgot_password OTP sent public_id=%s", existing_user.public_id)
+
+
+async def verify_forgot_password(
+    db: AsyncSession,
+    *,
+    payload: schemas.VerifyForgotPasswordRequest,
+) -> None:
+    """
+    Verifies the password-reset OTP and updates the user's password.
+    """
+    logger.info("[auth] verify_forgot_password attempt email=%s", payload.email)
+
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+    if existing_user is None:
+        raise InvalidCredentialsError()
+
+    otp_record = await repo.get_active_otp(
+        db,
+        user_id=existing_user.id,
+        purpose=OTPPurpose.PASSWORD_RESET,
+    )
+    if otp_record is None:
+        raise InvalidOTPError()
+
+    is_valid = await repo.verify_otp(db, record=otp_record, raw_code=payload.otp)
+    if not is_valid:
+        remaining = repo.remaining_attempts(otp_record)
+        raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
+
+    # OTP valid — update password
+    new_hash = hashing_utils.hash_password(payload.new_password)
+    await user_repo.update_password_by_id(db, user_id=existing_user.id, new_password_hash=new_hash)
+
+    logger.info("[auth] verify_forgot_password password updated public_id=%s", existing_user.public_id)
 
