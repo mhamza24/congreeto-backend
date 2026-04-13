@@ -142,6 +142,8 @@ async def write_system(
 # ── Read helpers (used by the audit API endpoints) ─────────────────────────────
 
 from sqlalchemy import select, func, desc
+from app.modules.tenants.models import Tenant
+from app.modules.users.models import User
 
 
 async def list_logs(
@@ -153,12 +155,21 @@ async def list_logs(
     action: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-) -> list[AuditLog]:
+) -> list[dict]:
     """
     Fetch audit logs with optional filters.
+    Returns dicts with tenant_public_id and user_public_id resolved via JOIN.
     Pass tenant_id=None to get platform-level logs (super admin use).
     """
-    q = select(AuditLog)
+    q = (
+        select(
+            AuditLog,
+            Tenant.public_id.label("tenant_public_id"),
+            User.public_id.label("user_public_id"),
+        )
+        .outerjoin(Tenant, AuditLog.tenant_id == Tenant.id)
+        .outerjoin(User, AuditLog.user_id == User.id)
+    )
     if tenant_id is not None:
         q = q.where(AuditLog.tenant_id == tenant_id)
     if user_id is not None:
@@ -169,7 +180,22 @@ async def list_logs(
         q = q.where(AuditLog.action == action)
     q = q.order_by(desc(AuditLog.created_at)).limit(limit).offset(offset)
     result = await db.execute(q)
-    return list(result.scalars().all())
+    rows = result.all()
+    return [
+        {
+            "id": row.AuditLog.id,
+            "tenant_public_id": row.tenant_public_id,
+            "user_public_id": row.user_public_id,
+            "entity_type": row.AuditLog.entity_type,
+            "entity_id": row.AuditLog.entity_id,
+            "action": row.AuditLog.action,
+            "diff": row.AuditLog.diff,
+            "ip_address": row.AuditLog.ip_address,
+            "user_agent": row.AuditLog.user_agent,
+            "created_at": row.AuditLog.created_at,
+        }
+        for row in rows
+    ]
 
 
 async def count_logs(

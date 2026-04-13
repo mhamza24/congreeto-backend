@@ -456,7 +456,12 @@ async def verify_login_otp(
             )
         raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
 
-    # 5. OTP valid — update login time, audit, issue tokens
+    # 5. OTP valid — if email unverified, mark it verified now (email access proven via OTP)
+    if existing_user.email_verified_at is None:
+        existing_user = await user_repo.mark_email_verified_and_update_status(db, user_id=existing_user.id)
+        logger.info("[auth] email auto-verified via 2FA login public_id=%s", existing_user.public_id)
+
+    # 6. Update login time, audit, issue tokens
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
     await audit.write(
         db,

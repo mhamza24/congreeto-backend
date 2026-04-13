@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 class AuditLogResponse(BaseModel):
     id: int
-    tenant_id: Optional[int] = None
-    user_id: Optional[int] = None
+    tenant_public_id: Optional[str] = None
+    user_public_id: Optional[str] = None
     entity_type: str
     entity_id: Optional[int] = None
     action: str

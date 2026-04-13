@@ -23,6 +23,8 @@ from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.modules.audit import repository as audit_repo
 from app.modules.audit.schemas import AuditLogResponse
+from app.modules.tenants import repository as tenant_repo
+from app.modules.users import repository as user_repo
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +45,28 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
 async def admin_list_audit_logs(
     db: DBDep,
     current_user=Depends(require_superadmin),
-    tenant_id: Optional[int] = Query(default=None, description="Filter by tenant DB id"),
-    user_id: Optional[int] = Query(default=None, description="Filter by user DB id"),
+    tenant_public_id: Optional[str] = Query(default=None, description="Filter by tenant public id"),
+    user_public_id: Optional[str] = Query(default=None, description="Filter by user public id"),
     entity_type: Optional[str] = Query(default=None, description="e.g. 'tenants', 'listings'"),
     action: Optional[str] = Query(default=None, description="e.g. 'create', 'login'"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> PagedApiResponse[List[AuditLogResponse]]:
+    tenant_id: Optional[int] = None
+    user_id: Optional[int] = None
+
+    if tenant_public_id is not None:
+        tenant = await tenant_repo.get_tenant_by_public_id(db, public_id=tenant_public_id)
+        if tenant is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+        tenant_id = tenant.id
+
+    if user_public_id is not None:
+        user = await user_repo.get_user_by_public_id(db, public_id=user_public_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        user_id = user.id
+
     try:
         logs, total = await _fetch(
             db,
@@ -91,7 +108,7 @@ async def admin_list_audit_logs(
 async def tenant_list_audit_logs(
     db: DBDep,
     ctx: Annotated[TenantContext, Depends(get_tenant_context)],
-    user_id: Optional[int] = Query(default=None, description="Filter by member user id"),
+    user_public_id: Optional[str] = Query(default=None, description="Filter by member user public id"),
     entity_type: Optional[str] = Query(default=None, description="e.g. 'listings', 'chatbot_configs'"),
     action: Optional[str] = Query(default=None, description="e.g. 'create', 'update'"),
     limit: int = Query(default=50, ge=1, le=500),
@@ -102,6 +119,14 @@ async def tenant_list_audit_logs(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only tenant owners and admins can view audit logs.",
         )
+
+    user_id: Optional[int] = None
+    if user_public_id is not None:
+        user = await user_repo.get_user_by_public_id(db, public_id=user_public_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        user_id = user.id
+
     try:
         logs, total = await _fetch(
             db,
