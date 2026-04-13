@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins.
     # Example: "https://app.getveloce.com,https://admin.getveloce.com"
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    ALLOWED_ORIGINS: str = "*"
 
     # ── Internal inquiry email recipients ─────────────────────────────────────
     # Comma-separated list of Veloce team emails that receive contact / demo /
