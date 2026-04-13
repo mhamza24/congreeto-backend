@@ -14,7 +14,7 @@ import logging
 from typing import Annotated, List, Optional
 
 import sentry_sdk
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -99,7 +99,7 @@ async def tenant_list_audit_logs(
 ) -> PagedApiResponse[List[AuditLogResponse]]:
     if not ctx.membership.is_owner_or_admin:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Only tenant owners and admins can view audit logs.",
         )
     try:
