@@ -2,8 +2,8 @@ import re
 from typing import Union, List, Dict, Any
 from urllib.parse import urljoin, urlparse
 
+import httpx
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
 from app.config.settings import get_settings
 settings = get_settings()
 
@@ -36,11 +36,18 @@ async def scrape_websites(
     urls = _normalize_input(input_data)
     results: Dict[str, Dict[str, str]] = {}
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context()
-        page = await context.new_page()
+    timeout_seconds = timeout / 1000  # convert ms to seconds
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; VeloceBot/1.0; +https://getveloce.com)"
+        )
+    }
 
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=timeout_seconds,
+        headers=headers,
+    ) as client:
         for start_url in urls:
             start_url = start_url.rstrip("/")
             visited = set()
@@ -58,9 +65,9 @@ async def scrape_websites(
                     continue
 
                 try:
-                    await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
-                    await page.wait_for_timeout(1500)
-                    html = await page.content()
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    html = response.text
                 except Exception:
                     visited.add(url)
                     continue
@@ -76,8 +83,6 @@ async def scrape_websites(
                         queue.append(link)
 
             results[start_url] = site_data
-
-        await browser.close()
 
     return results
 
