@@ -1,12 +1,13 @@
 from typing import Annotated, Optional
 
 import sentry_sdk
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status  # Query kept for admin endpoints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
 from app.dependencies.auth import require_superadmin
+from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.modules.dashboard import schemas, service
 
 import logging
@@ -17,22 +18,19 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 DBDep = Annotated[AsyncSession, Depends(get_db)]
 
 
-# ── Tenant dashboard (existing) ────────────────────────────────────────────────
-
-async def _get_tenant_id(tenant_id: str | None = Query(default=None)) -> str:
-    return tenant_id or "veloce"
-
-TenantDep = Annotated[str, Depends(_get_tenant_id)]
-
+# ── Tenant dashboard ───────────────────────────────────────────────────────────
 
 @router.get(
-    "/summary",
+    "/{tenant_public_id}/summary",
     response_model=ApiResponse[schemas.DashboardSummaryResponse],
-    status_code=status.HTTP_200_OK,
+    summary="Tenant chatbot dashboard summary (tenant member only)",
 )
-async def get_summary(db: DBDep, tenant_id: TenantDep):
+async def get_summary(
+    db: DBDep,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+):
     try:
-        result = await service.fetch_summary(db, tenant_id=tenant_id)
+        result = await service.fetch_summary(db, tenant_id=ctx.tenant.slug)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
