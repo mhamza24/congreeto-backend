@@ -62,6 +62,11 @@ _BILLING_LIMIT_MESSAGE = (
 _RAG_TOP_K = _settings.RAG_TOP_K
 _LISTING_TOP_K = _settings.RAG_LISTING_TOP_K
 
+# Chat / billing constants — all sourced from settings, no magic numbers here.
+_CHAT_HISTORY_LIMIT = _settings.CHAT_HISTORY_LIMIT
+_DEFAULT_MAX_TOKENS = _settings.BILLING_DEFAULT_MAX_TOKENS_PER_MONTH
+_DEFAULT_MAX_CONVERSATIONS = _settings.BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH
+
 
 # ---------------------------------------------------------------------------
 # 1. Chat — create or continue  (main widget endpoint)
@@ -201,7 +206,7 @@ async def create_or_continue_chat(
         history = await repo.get_conversation_history(
             db,
             conversation__id=conversation.id,
-            limit=50,
+            limit=_CHAT_HISTORY_LIMIT,
         )
         llm_messages = [
             {"role": msg.role.value, "content": msg.content}
@@ -297,7 +302,7 @@ async def create_or_continue_chat(
                 metric=UsageMetric.TOKENS_USED,
                 metric_key="max_tokens_per_month",
                 amount=tokens_used,
-                default_limit=1_000_000,
+                default_limit=_DEFAULT_MAX_TOKENS,
             )
         except Exception:
             logger.warning(f"[billing] Failed to increment token usage for tenant {tenant_db_id}")
@@ -311,7 +316,7 @@ async def create_or_continue_chat(
                 metric=UsageMetric.CONVERSATIONS,
                 metric_key="max_conversations_per_month",
                 amount=1,
-                default_limit=750,
+                default_limit=_DEFAULT_MAX_CONVERSATIONS,
             )
         except Exception:
             logger.warning(f"[billing] Failed to increment conversation usage for tenant {tenant_db_id}")

@@ -88,6 +88,15 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: str = "http://localhost:3000"
 
+    # ── Chat conversation ─────────────────────────────────────────────────────
+    # Max messages loaded from history for each LLM context window.
+    CHAT_HISTORY_LIMIT: int = 50
+
+    # ── Billing defaults ──────────────────────────────────────────────────────
+    # Fallback limits used when no plan-level override exists.
+    BILLING_DEFAULT_MAX_TOKENS_PER_MONTH: int = 1_000_000
+    BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH: int = 750
+
     # ── RAG retrieval ─────────────────────────────────────────────────────────
     # Number of knowledge-base chunks injected into each LLM call.
     RAG_TOP_K: int = 10
