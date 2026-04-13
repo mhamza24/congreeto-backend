@@ -1425,6 +1425,123 @@ async def _retry_failed_documents_async() -> str:
 
 
 # =============================================================================
+# TASK G — AUTO RECRAWL KNOWLEDGE SOURCES  (Celery beat, daily)
+# =============================================================================
+
+@celery_app.task(
+    name="app.modules.chatbot.tasks.auto_recrawl_knowledge_sources",
+    queue=QUEUEEnum.ANALYSIS.value,
+)
+def auto_recrawl_knowledge_sources() -> str:
+    """
+    Beat task (runs daily at 02:00 UTC).
+
+    For every website KnowledgeSource whose config contains
+    ``crawl_interval_days`` (int, 1–30), check whether the most recent
+    completed CrawlJob is older than that interval.  If yes, queue a fresh
+    crawl so the knowledge base stays current without manual intervention.
+
+    Config example:
+        {
+            "base_url": "https://example.com",
+            "extract_listings": true,
+            "crawl_interval_days": 7
+        }
+    """
+    return _run(_auto_recrawl_async())
+
+
+async def _auto_recrawl_async() -> str:
+    from sqlalchemy import select, and_
+    from app.modules.chatbot.models import KnowledgeSource, CrawlJob
+    from datetime import timedelta
+
+    triggered = 0
+    skipped = 0
+    now = datetime.now(timezone.utc)
+
+    async with get_task_db_session() as db:
+        # Fetch all active website knowledge sources that have a crawl_interval_days config
+        ks_result = await db.execute(
+            select(KnowledgeSource).where(
+                KnowledgeSource.type == "website",
+                KnowledgeSource.config["crawl_interval_days"].astext.cast(
+                    __import__("sqlalchemy").Integer
+                ) > 0,
+            )
+        )
+        sources = ks_result.scalars().all()
+
+        for source in sources:
+            interval_days = int(source.config.get("crawl_interval_days", 0))
+            if interval_days <= 0:
+                continue
+
+            base_url: str = source.config.get("base_url") or source.config.get("url", "")
+            if not base_url:
+                logger.warning(
+                    "auto_recrawl: KS %d has no base_url in config — skipping",
+                    source.id,
+                )
+                continue
+
+            # Find the most recent completed crawl for this source
+            last_job_result = await db.execute(
+                select(CrawlJob)
+                .where(
+                    CrawlJob.knowledge_source_id == source.id,
+                    CrawlJob.status == CrawlStatus.COMPLETED,
+                )
+                .order_by(CrawlJob.completed_at.desc())
+                .limit(1)
+            )
+            last_job = last_job_result.scalar_one_or_none()
+
+            due_at = (
+                last_job.completed_at + timedelta(days=interval_days)
+                if last_job and last_job.completed_at
+                else now  # never crawled → crawl now
+            )
+
+            if now < due_at:
+                skipped += 1
+                logger.debug(
+                    "auto_recrawl: KS %d next crawl due %s — skipping",
+                    source.id, due_at.isoformat(),
+                )
+                continue
+
+            # Create a new CrawlJob and enqueue
+            job = CrawlJob(
+                knowledge_source_id=source.id,
+                tenant_id=source.tenant_id,
+                base_url=base_url,
+                public_id=_new_public_id(),
+            )
+            db.add(job)
+            await db.flush()
+            await db.commit()
+
+            crawl_and_embed.apply_async(
+                kwargs=dict(
+                    crawl_job_id=job.id,
+                    tenant_id=source.tenant_id,
+                    knowledge_source_id=source.id,
+                    chatbot_config_id=source.chatbot_config_id,
+                    base_url=base_url,
+                ),
+                queue=QUEUEEnum.ANALYSIS.value,
+            )
+            triggered += 1
+            logger.info(
+                "auto_recrawl: triggered crawl for KS %d (tenant=%d, url=%s, interval=%dd)",
+                source.id, source.tenant_id, base_url, interval_days,
+            )
+
+    return f"auto_recrawl: triggered={triggered} skipped={skipped}"
+
+
+# =============================================================================
 # LEGACY — live link scrapper (kept for backwards compat)
 # =============================================================================
 

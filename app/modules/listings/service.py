@@ -7,11 +7,12 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_base import _new_public_id
 from app.core.enums import ListingSource, UploadJobStatus
+from app.modules.audit import repository as audit
 from app.modules.listings import repository as repo
 from app.modules.listings import schemas
 
@@ -64,6 +65,8 @@ async def create_listing(
     *,
     tenant_id: int,
     payload: schemas.ListingCreateRequest,
+    user_id: Optional[int] = None,
+    request: Optional[Request] = None,
 ) -> schemas.ListingResponse:
     from app.modules.chatbot.tasks import embed_listing
 
@@ -92,6 +95,17 @@ async def create_listing(
         has_pool=payload.has_pool,
         media=payload.media,
     )
+    await audit.write(
+        db,
+        entity_type="listings",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=listing.id,
+        diff={"after": {"title": listing.title, "listing_type": str(listing.listing_type)}},
+        request=request,
+    )
+
     await db.commit()
     await db.refresh(listing)
 
@@ -106,6 +120,8 @@ async def update_listing(
     tenant_id: int,
     public_id: str,
     payload: schemas.ListingUpdateRequest,
+    user_id: Optional[int] = None,
+    request: Optional[Request] = None,
 ) -> schemas.ListingResponse:
     from app.modules.chatbot.tasks import embed_listing
 
@@ -117,6 +133,18 @@ async def update_listing(
     changed_fields = list(payload.model_dump(exclude_none=True).keys())
     for key, value in payload.model_dump(exclude_none=True).items():
         setattr(listing, key, value)
+
+    await audit.write(
+        db,
+        entity_type="listings",
+        action=audit.UPDATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=listing.id,
+        diff={"after": {k: str(v) for k, v in payload.model_dump(exclude_none=True).items()}},
+        request=request,
+    )
+
     await db.commit()
     await db.refresh(listing)
 
@@ -126,7 +154,9 @@ async def update_listing(
 
 
 async def delete_listing(
-    db: AsyncSession, *, tenant_id: int, public_id: str
+    db: AsyncSession, *, tenant_id: int, public_id: str,
+    user_id: Optional[int] = None,
+    request: Optional[Request] = None,
 ) -> None:
     from app.modules.chatbot.tasks import clear_listing_embedding
 
@@ -136,6 +166,18 @@ async def delete_listing(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
 
     listing.deleted_at = datetime.now(timezone.utc)
+
+    await audit.write(
+        db,
+        entity_type="listings",
+        action=audit.DELETE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=listing.id,
+        diff={"before": {"title": listing.title}},
+        request=request,
+    )
+
     await db.commit()
 
     clear_listing_embedding.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))

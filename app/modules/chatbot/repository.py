@@ -998,12 +998,31 @@ async def list_listings(
     return result.scalars().all()
 
 
+async def count_active_listings(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    listing_type: Optional[str] = None,
+) -> int:
+    """Total active, non-deleted listings for a tenant."""
+    q = select(func.count(Listing.id)).where(
+        Listing.tenant_id == tenant_id,
+        Listing.deleted_at.is_(None),
+        Listing.status == ListingStatus.ACTIVE,
+    )
+    if listing_type:
+        q = q.where(Listing.listing_type == listing_type)
+    result = await db.execute(q)
+    return result.scalar_one()
+
+
 async def listing_similarity_search(
     db: AsyncSession,
     *,
     tenant_id: int,
     query_embedding: List[float],
     top_k: int = 5,
+    listing_type: Optional[str] = None,
 ) -> Sequence[Listing]:
     """
     Semantic search on the listings table.
@@ -1012,11 +1031,15 @@ async def listing_similarity_search(
     Falls back to the most-recent active listings when none have embeddings yet
     (e.g. Celery worker hasn't run, or embed_listing task is still pending).
     """
-    _active_scope = (
+    _active_filters = [
         Listing.tenant_id == tenant_id,
         Listing.deleted_at.is_(None),
         Listing.status == ListingStatus.ACTIVE,
-    )
+    ]
+    if listing_type:
+        _active_filters.append(Listing.listing_type == listing_type)
+
+    _active_scope = tuple(_active_filters)
 
     # ── Primary: vector similarity search (requires embedding) ────────────────
     vec_result = await db.execute(

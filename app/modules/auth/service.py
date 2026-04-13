@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from app.config.settings import get_settings
-from fastapi import status
+from fastapi import Request, status
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import OTPPurpose, UserStatus
@@ -12,6 +13,7 @@ from app.core.exceptions import EmailAlreadyExistsError, EmailAlreadyVerifiedErr
 from app.modules.models.otp import OTPVerification
 from app.modules.open_ai import service as openai_service
 from app.modules.auth import tasks as background_tasks
+from app.modules.audit import repository as audit
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils import hashing_utils
 from app.utils.jwt_utils import create_access_token, create_refresh_token, decode_token, get_token_subject
@@ -32,6 +34,7 @@ async def create_user(
     db: AsyncSession,
     *,
     payload: schemas.SignupRequest,
+    request: Optional[Request] = None,
 ) -> schemas.SignupResponse:
 
     logger.info("[auth] signup attempt email=%s", payload.email)
@@ -65,6 +68,17 @@ async def create_user(
     db.add(otp_record)
     await db.flush()
 
+    # ── 5b. Audit log — user signup ────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.CREATE,
+        user_id=user.id,
+        entity_id=user.id,
+        diff={"after": {"email": user.email, "public_id": user.public_id}},
+        request=request,
+    )
+
     # ── 6. Commit first, then enqueue ─────────────────────────────────────
     await db.commit()
 
@@ -84,6 +98,7 @@ async def login_user(
     db: AsyncSession,
     *,
     payload: schemas.LoginRequest,
+    request: Optional[Request] = None,
 ) -> schemas.LoginResponse:
 
     logger.info("[auth] login attempt email=%s", payload.email)
@@ -103,6 +118,18 @@ async def login_user(
     # Update last login time
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
     logger.info("[auth] login success public_id=%s email=%s", existing_user.public_id, existing_user.email)
+
+    # ── Audit log — successful login ──────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.LOGIN,
+        user_id=existing_user.id,
+        entity_id=existing_user.id,
+        diff={},
+        request=request,
+    )
+    await db.commit()
 
     # ── Build whatever you need in the subject ────────────────────────────
     jwt_subject = get_token_subject(existing_user)

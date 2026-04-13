@@ -322,3 +322,34 @@ class liveLinkScrapperResponse(BaseModel):
 
 class AdminChatbotStatusRequest(BaseModel):
     status: str = Field(pattern="^(draft|active|inactive)$")
+
+
+# =============================================================================
+# PUBLIC EMBED — returned for unauthenticated iframe_token requests
+# =============================================================================
+
+class EmbedTheme(BaseModel):
+    name: str
+    colors: Dict[str, Any]
+    typography: Dict[str, Any]
+    assets: Dict[str, Any]
+    layout: Dict[str, Any]
+
+    model_config = {"from_attributes": True}
+
+
+class ChatbotEmbedResponse(BaseModel):
+    """
+    Returned by GET /chatbot/embed/{iframe_token} — no auth required.
+    Contains everything the widget needs to render itself.
+    """
+    iframe_token: str
+    name: str
+    status: str
+    welcome_message: Optional[str]
+    auto_close_minutes: int
+    branding: Dict[str, Any]
+    lead_capture_config: Dict[str, Any]
+    active_theme: Optional[EmbedTheme] = None
+
+    model_config = {"from_attributes": True}

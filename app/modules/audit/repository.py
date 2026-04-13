@@ -137,3 +137,57 @@ async def write_system(
         entity_id=entity_id,
         diff=diff,
     )
+
+
+# ── Read helpers (used by the audit API endpoints) ─────────────────────────────
+
+from sqlalchemy import select, func, desc
+
+
+async def list_logs(
+    db: AsyncSession,
+    *,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    entity_type: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[AuditLog]:
+    """
+    Fetch audit logs with optional filters.
+    Pass tenant_id=None to get platform-level logs (super admin use).
+    """
+    q = select(AuditLog)
+    if tenant_id is not None:
+        q = q.where(AuditLog.tenant_id == tenant_id)
+    if user_id is not None:
+        q = q.where(AuditLog.user_id == user_id)
+    if entity_type:
+        q = q.where(AuditLog.entity_type == entity_type)
+    if action:
+        q = q.where(AuditLog.action == action)
+    q = q.order_by(desc(AuditLog.created_at)).limit(limit).offset(offset)
+    result = await db.execute(q)
+    return list(result.scalars().all())
+
+
+async def count_logs(
+    db: AsyncSession,
+    *,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    entity_type: Optional[str] = None,
+    action: Optional[str] = None,
+) -> int:
+    q = select(func.count(AuditLog.id))
+    if tenant_id is not None:
+        q = q.where(AuditLog.tenant_id == tenant_id)
+    if user_id is not None:
+        q = q.where(AuditLog.user_id == user_id)
+    if entity_type:
+        q = q.where(AuditLog.entity_type == entity_type)
+    if action:
+        q = q.where(AuditLog.action == action)
+    result = await db.execute(q)
+    return result.scalar_one()

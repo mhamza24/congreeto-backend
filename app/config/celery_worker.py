@@ -108,6 +108,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.modules.chatbot.tasks.retry_failed_documents",
         "schedule": crontab(minute="*/15"),       # every 15 minutes
     },
+    # Auto-recrawl website knowledge sources based on per-source crawl_interval_days
+    "chatbot-auto-recrawl-knowledge-sources": {
+        "task": "app.modules.chatbot.tasks.auto_recrawl_knowledge_sources",
+        "schedule": crontab(hour=2, minute=0),    # daily at 02:00 UTC
+    },
 }
 
 celery_app.autodiscover_tasks(
@@ -118,5 +123,6 @@ celery_app.autodiscover_tasks(
         "app.modules.tenants.tasks",
         "app.modules.tenants.corn_tasks",
         "app.modules.billing.tasks",
+        "app.modules.audit.tasks",
     ]
 )

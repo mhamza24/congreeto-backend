@@ -5,7 +5,7 @@ import logging
 from typing import Annotated, List, Optional
 
 import sentry_sdk
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
@@ -95,12 +95,19 @@ async def list_listings(
 async def create_listing(
     tenant_public_id: str,
     payload: schemas.ListingCreateRequest,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingResponse]:
     require_write(ctx)
     try:
-        data = await service.create_listing(db, tenant_id=ctx.tenant.id, payload=payload)
+        data = await service.create_listing(
+            db,
+            tenant_id=ctx.tenant.id,
+            payload=payload,
+            user_id=ctx.membership.user_id,
+            request=request,
+        )
     except HTTPException:
         raise
     except Exception:
@@ -329,13 +336,19 @@ async def update_listing(
     tenant_public_id: str,
     listing_id: str,
     payload: schemas.ListingUpdateRequest,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ListingResponse]:
     require_write(ctx)
     try:
         data = await service.update_listing(
-            db, tenant_id=ctx.tenant.id, public_id=listing_id, payload=payload
+            db,
+            tenant_id=ctx.tenant.id,
+            public_id=listing_id,
+            payload=payload,
+            user_id=ctx.membership.user_id,
+            request=request,
         )
     except HTTPException:
         raise
@@ -358,12 +371,19 @@ async def update_listing(
 async def delete_listing(
     tenant_public_id: str,
     listing_id: str,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[dict]:
     require_write(ctx)
     try:
-        await service.delete_listing(db, tenant_id=ctx.tenant.id, public_id=listing_id)
+        await service.delete_listing(
+            db,
+            tenant_id=ctx.tenant.id,
+            public_id=listing_id,
+            user_id=ctx.membership.user_id,
+            request=request,
+        )
     except HTTPException:
         raise
     except Exception:

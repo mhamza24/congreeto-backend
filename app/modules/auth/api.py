@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from passlib.exc import InvalidTokenError
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,12 +45,14 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
 )
 async def signup_endpoint(
     payload: schemas.SignupRequest,
+    request: Request,
     db: DBDep,
 ) -> ApiResponse[schemas.SignupResponse]:
     try:
         reply = await service.create_user(
             db,
             payload=payload,
+            request=request,
         )
     except HTTPException:
         raise                          
@@ -76,12 +78,14 @@ async def signup_endpoint(
 )
 async def login_endpoint(
     payload: schemas.LoginRequest,
+    request: Request,
     db: DBDep,
 ) -> ApiResponse[schemas.LoginResponse]:
     try:
         reply = await service.login_user(
             db,
             payload=payload,
+            request=request,
         )
     except HTTPException:
         raise                      

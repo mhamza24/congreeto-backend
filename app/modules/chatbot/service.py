@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_base import _new_public_id
 from app.core.enums import DocStatus, CrawlStatus
+from app.modules.audit import repository as audit
 from app.modules.billing import repository as billing_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot import schemas
@@ -36,6 +37,8 @@ async def create_chatbot(
     *,
     tenant_id: int,
     payload: schemas.ChatbotCreateRequest,
+    user_id: Optional[int] = None,
+    request=None,
 ) -> schemas.ChatbotResponse:
     sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
     if sub and sub.plan:
@@ -92,6 +95,17 @@ async def create_chatbot(
         public_id=_new_public_id(),
     )
 
+    await audit.write(
+        db,
+        entity_type="chatbot_configs",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=chatbot.id,
+        diff={"after": {"name": chatbot.name, "identity": str(chatbot.identity)}},
+        request=request,
+    )
+
     await db.commit()
     await db.refresh(chatbot)
     return schemas.ChatbotResponse.model_validate(chatbot)
@@ -115,12 +129,50 @@ async def list_chatbots(
     return [schemas.ChatbotResponse.model_validate(c) for c in chatbots]
 
 
+async def get_chatbot_embed(
+    db: AsyncSession,
+    *,
+    iframe_token: str,
+) -> schemas.ChatbotEmbedResponse:
+    """
+    Public endpoint — no auth required.
+    Returns chatbot branding, config, and active theme based on iframe token.
+    """
+    chatbot = await repo.get_chatbot_by_iframe_token(db, iframe_token=iframe_token)
+    if not chatbot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
+
+    active_theme = await repo.get_active_theme(db, chatbot_config_id=chatbot.id)
+    theme_data = None
+    if active_theme:
+        theme_data = schemas.EmbedTheme(
+            name=active_theme.name,
+            colors=active_theme.colors,
+            typography=active_theme.typography,
+            assets=active_theme.assets,
+            layout=active_theme.layout,
+        )
+
+    return schemas.ChatbotEmbedResponse(
+        iframe_token=chatbot.iframe_token,
+        name=chatbot.name,
+        status=str(chatbot.status.value) if hasattr(chatbot.status, "value") else str(chatbot.status),
+        welcome_message=chatbot.welcome_message,
+        auto_close_minutes=chatbot.auto_close_minutes,
+        branding=chatbot.branding,
+        lead_capture_config=chatbot.lead_capture_config,
+        active_theme=theme_data,
+    )
+
+
 async def update_chatbot(
     db: AsyncSession,
     *,
     tenant_id: int,
     public_id: str,
     payload: schemas.ChatbotUpdateRequest,
+    user_id: Optional[int] = None,
+    request=None,
 ) -> schemas.ChatbotResponse:
     chatbot = await repo.get_chatbot_by_public_id(
         db, tenant_id=tenant_id, public_id=public_id
@@ -164,6 +216,18 @@ async def update_chatbot(
         )
 
     chatbot = await repo.update_chatbot(db, chatbot=chatbot, **updates)
+
+    await audit.write(
+        db,
+        entity_type="chatbot_configs",
+        action=audit.UPDATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=chatbot.id,
+        diff={"after": {k: str(v) for k, v in updates.items() if k != "system_prompt_template"}},
+        request=request,
+    )
+
     await db.commit()
     await db.refresh(chatbot)
     return schemas.ChatbotResponse.model_validate(chatbot)
@@ -174,6 +238,8 @@ async def activate_chatbot(
     *,
     tenant_id: int,
     public_id: str,
+    user_id: Optional[int] = None,
+    request=None,
 ) -> schemas.ChatbotResponse:
     """
     Service layer check: chatbot can only go active if it has ready knowledge.
@@ -197,6 +263,18 @@ async def activate_chatbot(
         )
 
     chatbot = await repo.update_chatbot(db, chatbot=chatbot, status="active")
+
+    await audit.write(
+        db,
+        entity_type="chatbot_configs",
+        action=audit.UPDATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=chatbot.id,
+        diff={"before": {"status": "draft"}, "after": {"status": "active"}},
+        request=request,
+    )
+
     await db.commit()
     await db.refresh(chatbot)
     return schemas.ChatbotResponse.model_validate(chatbot)
@@ -588,16 +666,46 @@ async def rag_search(
     ]
 
     # ── Leg 2: semantic search on listings (live data, no stale chunks) ───────
-    print(f"[RAG-DEBUG] rag_search: starting listing search for tenant_id={tenant_id} query={query!r}")
-    listings = await repo.listing_similarity_search(
-        db,
-        tenant_id=tenant_id,
-        query_embedding=query_embedding,
-        top_k=listing_top_k,
-    )
-    print(f"[RAG-DEBUG] rag_search: listing search returned {len(listings)} listing(s)")
+    # Determine listing type filter from chatbot's company_profile.allow_rental flag.
+    # If allow_rental is False (default), restrict to 'sale' listings only.
+    allow_rental: bool = bool(chatbot.company_profile.get("allow_rental", False)) if chatbot.company_profile else False
+    listing_type_filter: Optional[str] = None if allow_rental else "sale"
 
-    listing_results = [
+    logger.info(
+        "[rag] listing search tenant=%s allow_rental=%s type_filter=%s query=%r",
+        tenant_id, allow_rental, listing_type_filter, query,
+    )
+
+    # Fetch total count and semantic results in parallel
+    import asyncio as _asyncio
+    total_listings, listings = await _asyncio.gather(
+        repo.count_active_listings(
+            db, tenant_id=tenant_id, listing_type=listing_type_filter
+        ),
+        repo.listing_similarity_search(
+            db,
+            tenant_id=tenant_id,
+            query_embedding=query_embedding,
+            top_k=listing_top_k,
+            listing_type=listing_type_filter,
+        ),
+    )
+
+    logger.info("[rag] listing search returned %d sample(s), total_active=%d", len(listings), total_listings)
+
+    # Inject total count as the first chunk so the LLM always has the real number
+    listing_results: list[schemas.RAGChunkResult] = []
+    if total_listings > 0:
+        listing_results.append(
+            schemas.RAGChunkResult(
+                content=f"[Inventory Summary] Total active listings in database: {total_listings}",
+                chunk_metadata={"source_type": "inventory_count"},
+                document_id=0,
+                chunk_index=0,
+            )
+        )
+
+    listing_results.extend([
         schemas.RAGChunkResult(
             content=_listing_to_context(listing),
             chunk_metadata={
@@ -606,15 +714,11 @@ async def rag_search(
                 "listing_public_id": listing.public_id,
                 "listing_status": str(listing.status.value) if listing.status else None,
             },
-            document_id=0,   # sentinel — no document row for direct listing hits
+            document_id=0,
             chunk_index=0,
         )
         for listing in listings
-    ]
-
-    print(f"[RAG-DEBUG] rag_search: doc chunks={len(chunk_results)} listing chunks={len(listing_results)} total={len(chunk_results) + len(listing_results)}")
-    for i, lr in enumerate(listing_results):
-        print(f"[RAG-DEBUG]   listing_chunk[{i}] content preview: {lr.content[:120]!r}")
+    ])
 
     all_results = chunk_results + listing_results
     return schemas.RAGQueryResponse(chunks=all_results, total=len(all_results))

@@ -18,6 +18,7 @@ from app.modules.users.models import User
 from app.core.enums import TenantStatus, TenantRole, TenantUserStatus, UserStatus, OTPPurpose
 from app.utils.hashing_utils import hash_password, hash_identity, hash_otp
 from app.config.settings import get_settings
+from app.modules.audit import repository as audit
 from app.modules.billing import repository as billing_repo
 from app.core.response import PaginationMeta
 import logging
@@ -91,6 +92,16 @@ async def create_tenant(
             status=TenantUserStatus.ACTIVE,
             joined_at=datetime.now(timezone.utc),
         )
+    )
+
+    await audit.write(
+        db,
+        entity_type="tenants",
+        action=audit.CREATE,
+        tenant_id=tenant.id,
+        user_id=owner.id,
+        entity_id=tenant.id,
+        diff={"after": {"slug": tenant.slug, "name": tenant.name}},
     )
 
     await db.commit()
@@ -188,6 +199,17 @@ async def update_tenant_status(
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
     old_status = tenant.status
     tenant.status = payload.status
+
+    action = audit.SUSPEND if str(payload.status) == "suspended" else audit.RESTORE
+    await audit.write(
+        db,
+        entity_type="tenants",
+        action=action,
+        tenant_id=tenant.id,
+        entity_id=tenant.id,
+        diff={"before": {"status": str(old_status)}, "after": {"status": str(payload.status)}},
+    )
+
     await db.commit()
     await db.refresh(tenant)
     logger.info("[tenants] tenant status changed tenant=%s old=%s new=%s", tenant.public_id, old_status, payload.status)

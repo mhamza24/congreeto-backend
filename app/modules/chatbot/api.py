@@ -45,6 +45,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
@@ -143,12 +144,19 @@ async def admin_delete_chatbot(
 )
 async def create_chatbot(
     payload: schemas.ChatbotCreateRequest,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
     try:
-        data = await service.create_chatbot(db, tenant_id=ctx.tenant.id, payload=payload)
+        data = await service.create_chatbot(
+            db,
+            tenant_id=ctx.tenant.id,
+            payload=payload,
+            user_id=ctx.membership.user_id,
+            request=request,
+        )
         return ApiResponse(success=True, message="Chatbot created.", data=data)
     except HTTPException:
         raise
@@ -207,12 +215,20 @@ async def get_chatbot(
 async def update_chatbot(
     chatbot_id: str,
     payload: schemas.ChatbotUpdateRequest,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
     try:
-        data = await service.update_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id, payload=payload)
+        data = await service.update_chatbot(
+            db,
+            tenant_id=ctx.tenant.id,
+            public_id=chatbot_id,
+            payload=payload,
+            user_id=ctx.membership.user_id,
+            request=request,
+        )
         return ApiResponse(success=True, message="Chatbot updated.", data=data)
     except HTTPException:
         raise
@@ -229,12 +245,19 @@ async def update_chatbot(
 )
 async def activate_chatbot(
     chatbot_id: str,
+    request: Request,
     db: DBDep,
     ctx: CtxDep,
 ) -> ApiResponse[schemas.ChatbotResponse]:
     require_write(ctx)
     try:
-        data = await service.activate_chatbot(db, tenant_id=ctx.tenant.id, public_id=chatbot_id)
+        data = await service.activate_chatbot(
+            db,
+            tenant_id=ctx.tenant.id,
+            public_id=chatbot_id,
+            user_id=ctx.membership.user_id,
+            request=request,
+        )
         return ApiResponse(success=True, message="Chatbot is now active.", data=data)
     except HTTPException:
         raise
@@ -425,6 +448,35 @@ async def serve_asset(
         sentry_sdk.capture_exception(exc)
         logger.exception("serve_asset failed asset_public_id=%s", asset_public_id)
         raise HTTPException(status_code=500, detail="Could not serve asset.")
+
+
+# =============================================================================
+# PUBLIC EMBED — no auth, iframe_token only
+# =============================================================================
+
+@router.get(
+    "/embed/{iframe_token}",
+    response_model=ApiResponse[schemas.ChatbotEmbedResponse],
+    summary="Get chatbot config + branding by iframe token (public, no auth required)",
+)
+async def get_chatbot_embed(
+    iframe_token: str,
+    db: DBDep,
+) -> ApiResponse[schemas.ChatbotEmbedResponse]:
+    """
+    Used by the frontend widget on initial load.
+    Returns branding, welcome message, theme, and lead capture config.
+    No authentication required — the iframe_token is the access key.
+    """
+    try:
+        data = await service.get_chatbot_embed(db, iframe_token=iframe_token)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("get_chatbot_embed failed iframe_token=%s", iframe_token)
+        raise HTTPException(status_code=500, detail="Could not load chatbot configuration.")
 
 
 # =============================================================================
