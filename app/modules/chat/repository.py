@@ -75,6 +75,8 @@ async def get_or_create_conversation(
     conversation_public_id: Optional[str],
     tenant_id: str,
     chatbot_config_id: Optional[int] = None,
+    campaign_id: Optional[int] = None,
+    page_url: Optional[str] = None,
 ) -> Tuple[Conversation, bool]:
     """
     Look up an existing conversation by its public_id, or create a new one.
@@ -85,6 +87,9 @@ async def get_or_create_conversation(
 
     chatbot_config_id is set for widget conversations (looked up via iframe_token)
     and NULL for legacy/admin conversations.
+
+    campaign_id is the campaign matched at conversation start via page_url.
+    NULL = no campaign matched (base chatbot behaviour, no overlay).
     """
     if conversation_public_id:
         result = await db.execute(
@@ -106,10 +111,15 @@ async def get_or_create_conversation(
     conversation = Conversation(
         tenant_id=tenant_id,
         chatbot_config_id=chatbot_config_id,
+        campaign_id=campaign_id,
+        page_url=page_url,
     )
     db.add(conversation)
     await db.flush()
-    logger.info("[chat] conversation created public_id=%s tenant=%s", conversation.public_id, tenant_id)
+    logger.info(
+        "[chat] conversation created public_id=%s tenant=%s campaign_id=%s",
+        conversation.public_id, tenant_id, campaign_id,
+    )
     return conversation, True
 
 

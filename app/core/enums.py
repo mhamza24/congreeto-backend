@@ -193,6 +193,12 @@ class UploadJobStatus(str, enum.Enum):
     FAILED     = "failed"
 
 
+class CampaignStatus(str, enum.Enum):
+    DRAFT    = "draft"
+    ACTIVE   = "active"
+    INACTIVE = "inactive"
+
+
 class LimitStatus(str, enum.Enum):
     """Computed — never stored in DB. Used only in API responses."""
     OK       = "ok"        # < 80%
@@ -344,5 +350,12 @@ upload_job_status_enum = PgEnum(
     name="upload_job_status",
     create_type=False,   # no native PG ENUM type — stored as VARCHAR
     native_enum=False,
+    values_callable=lambda x: [e.value for e in x],
+)
+
+campaign_status_enum = PgEnum(
+    CampaignStatus,
+    name="campaign_status",
+    create_type=False,   # created by Alembic migration, not here
     values_callable=lambda x: [e.value for e in x],
 )

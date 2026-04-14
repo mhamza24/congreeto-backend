@@ -60,6 +60,15 @@ class ChatCreateRequest(BaseModel):
         default=None,
         description="User's local timestamp for time-aware responses (ISO format).",
     )
+    page_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description=(
+            "Full URL of the page where the widget is embedded "
+            "(e.g. window.location.href). Used to automatically match the correct "
+            "campaign for this conversation. Sent by the widget JS on every new conversation."
+        ),
+    )
 
 
 

@@ -151,6 +151,18 @@ class Conversation(Base):
         comment="FK to chatbot_configs.id. Set for widget conversations; NULL for legacy.",
     )
 
+    # ── Campaign link ─────────────────────────────────────────────────────────
+    campaign_id = Column(
+        BigInteger,
+        ForeignKey("campaigns.id", ondelete="SET NULL"),
+        nullable=True,
+        comment=(
+            "Campaign matched at conversation start via page URL. "
+            "SET NULL when the campaign is deleted — conversation history is preserved. "
+            "NULL = no campaign matched (base chatbot behaviour)."
+        ),
+    )
+
     # ── Counters (denormalized for fast reads — avoids COUNT(*) on messages) ─
     total_messages    = Column(Integer, nullable=False, default=0)
     total_tokens_used = Column(Integer, nullable=False, default=0)

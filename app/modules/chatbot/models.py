@@ -28,6 +28,7 @@ from app.core.enums import (
 if TYPE_CHECKING:
     from app.modules.tenants.models import Tenant
     from app.modules.users.models import User
+    from app.modules.campaigns.models import Campaign
 
 
 # =============================================================================
@@ -164,6 +165,10 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
     )
     knowledge_sources: Mapped[list["KnowledgeSource"]] = relationship(
         "KnowledgeSource", back_populates="chatbot_config",
+        lazy="noload", cascade="all, delete-orphan"
+    )
+    campaigns: Mapped[list["Campaign"]] = relationship(
+        "Campaign", back_populates="chatbot_config",
         lazy="noload", cascade="all, delete-orphan"
     )
 

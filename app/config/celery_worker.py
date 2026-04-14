@@ -15,6 +15,7 @@ import app.modules.chatbot.models      # noqa: F401
 import app.modules.chat.models         # noqa: F401
 import app.modules.inquiries.models    # noqa: F401
 import app.modules.audit.models        # noqa: F401
+import app.modules.campaigns.models   # noqa: F401
 
 settings = get_settings()
 os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
@@ -129,5 +130,6 @@ celery_app.autodiscover_tasks(
         "app.modules.tenants.corn_tasks",
         "app.modules.billing.tasks",
         "app.modules.audit.tasks",
+        "app.modules.campaigns.tasks",
     ]
 )

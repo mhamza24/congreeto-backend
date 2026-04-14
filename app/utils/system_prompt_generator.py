@@ -222,6 +222,35 @@ def _render_company_profile(profile: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Campaign overlay builder (called in chat service per request when a campaign
+# is matched to the visitor's page URL)
+# ---------------------------------------------------------------------------
+
+def build_campaign_overlay_block(campaign) -> str:
+    """
+    Render a Campaign row as the LAYER 2 system prompt block.
+
+    Injected between:
+      LAYER 1  →  static base (personality + company profile)
+      LAYER 2  →  THIS (campaign context)       ← here
+      LAYER 3  →  dynamic suffix (RAG + time + returning visitor)
+
+    Keeps the LLM aware of the campaign's goal without disrupting the
+    base persona or polluting the factual RAG context.
+    """
+    lines: list[str] = [
+        "## CAMPAIGN CONTEXT",
+        f"You are currently operating under the '{campaign.name}' campaign.",
+    ]
+    if campaign.description:
+        lines.append(f"Campaign objective: {campaign.description}")
+    if campaign.prompt_overlay:
+        lines.append("")  # blank line before custom instructions
+        lines.append(campaign.prompt_overlay)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Runtime dynamic-parts builder (called in chat service per request)
 # ---------------------------------------------------------------------------
 

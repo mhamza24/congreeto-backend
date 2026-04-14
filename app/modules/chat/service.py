@@ -29,13 +29,14 @@ from app.modules.billing.task_helpers import (
     can_continue_conversation,
     increment_and_check,
 )
+from app.modules.campaigns import repository as campaign_repo
 from app.modules.chat import tasks as background_tasks
 from app.modules.chatbot import repository as chatbot_repo
 from app.modules.chatbot import service as chatbot_service
 from app.modules.open_ai import service as openai_service
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils.hashing_utils import hash_identity
-from app.utils.system_prompt_generator import build_dynamic_context
+from app.utils.system_prompt_generator import build_campaign_overlay_block, build_dynamic_context
 from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
@@ -130,15 +131,39 @@ async def create_or_continue_chat(
             content=_BILLING_LIMIT_MESSAGE,
         )
 
-    # ── 4. Resolve or create conversation ──────────────────────────────────
+    # ── 4. Campaign URL matching (new conversations only) ──────────────────
+    # Load all active campaigns for this chatbot and pick the one whose
+    # url_patterns match the visitor's current page. This happens BEFORE
+    # creating the conversation so campaign_id is set at conversation start.
+    active_campaign = None
+    if is_new_request:
+        try:
+            active_campaigns = await campaign_repo.get_active_campaigns_for_chatbot(
+                db, chatbot_config_id=chatbot.id
+            )
+            active_campaign = campaign_repo.match_campaign_for_url(
+                active_campaigns, page_url=payload.page_url
+            )
+            if active_campaign:
+                logger.info(
+                    "[campaign] Matched campaign=%s for page_url=%r tenant=%d",
+                    active_campaign.public_id, payload.page_url, tenant_db_id,
+                )
+        except Exception as exc:
+            # Never let campaign matching break the chat flow
+            logger.warning("[campaign] Campaign matching failed (degrading gracefully): %s", exc)
+
+    # ── 5. Resolve or create conversation ──────────────────────────────────
     conversation, is_new = await repo.get_or_create_conversation(
         db,
         conversation_public_id=payload.conversation_id,
         tenant_id=tenant_str,
         chatbot_config_id=chatbot.id,
+        campaign_id=active_campaign.id if active_campaign else None,
+        page_url=payload.page_url,
     )
 
-    # ── 5. Returning visitor detection ─────────────────────────────────────
+    # ── 6. Returning visitor detection ─────────────────────────────────────
     returning_visitor_prompt_data = None
     identity_value, identity_type, identity_valid = extract_and_validate_identity(
         payload.message
@@ -157,7 +182,7 @@ async def create_or_continue_chat(
             )
             returning_visitor_prompt_data = get_returning_visitor_prompt(previous_sessions)
 
-    # ── 6. RAG retrieval ────────────────────────────────────────────────────
+    # ── 7. RAG retrieval ────────────────────────────────────────────────────
     rag_chunk_texts: list[str] = []
     if chatbot.rag_enabled:
         try:
@@ -180,10 +205,32 @@ async def create_or_continue_chat(
         except Exception as exc:
             logger.warning(f"[rag] RAG retrieval failed (degrading gracefully): {exc}")
 
-    # ── 7. Assemble system prompt (static base + dynamic suffix) ───────────
-    # Static base is pre-built (personality + company profile) and stored on the chatbot.
-    # Dynamic suffix is assembled fresh per request: RAG + time + returning visitor.
+    # ── 8. Assemble system prompt (3-layer) ────────────────────────────────
+    #
+    #  LAYER 1  static_base       — pre-built personality + company profile (on chatbot)
+    #  LAYER 2  campaign_overlay  — campaign goal/tone/CTA (NEW, matched per page URL)
+    #  LAYER 3  dynamic_suffix    — RAG chunks + time awareness + returning visitor
+    #
+    # The campaign overlay sits between the fixed persona and the live knowledge
+    # so the LLM has a "mission brief" that scopes how it uses the RAG data.
+
     static_base = chatbot.system_prompt_template or ""
+
+    # For existing conversations: load the campaign set at conversation start
+    if not is_new_request and active_campaign is None and conversation.campaign_id:
+        try:
+            from app.modules.campaigns.models import Campaign
+            from sqlalchemy import select as sa_select
+            result = await db.execute(
+                sa_select(Campaign).where(Campaign.id == conversation.campaign_id)
+            )
+            active_campaign = result.scalar_one_or_none()
+        except Exception as exc:
+            logger.warning("[campaign] Failed to load campaign for existing conversation: %s", exc)
+
+    campaign_overlay_block = ""
+    if active_campaign:
+        campaign_overlay_block = build_campaign_overlay_block(active_campaign)
 
     time_aware_data = get_time_awareness_prompt(payload.user_local_timestamp)
 
@@ -193,11 +240,14 @@ async def create_or_continue_chat(
         returning_visitor_prompt=returning_visitor_prompt_data,
     )
 
-    system_prompt = static_base
+    prompt_parts = [static_base]
+    if campaign_overlay_block:
+        prompt_parts.append(campaign_overlay_block)
     if dynamic_suffix:
-        system_prompt = static_base + "\n\n" + dynamic_suffix
+        prompt_parts.append(dynamic_suffix)
+    system_prompt = "\n\n".join(p for p in prompt_parts if p)
 
-    # ── 8. Build LLM message context ────────────────────────────────────────
+    # ── 9. Build LLM message context ────────────────────────────────────────
     welcome_message = (
         chatbot.welcome_message
         or "Hi, I am ARIA. What can I help you with today?"
@@ -239,7 +289,7 @@ async def create_or_continue_chat(
 
     llm_messages.append({"role": "user", "content": payload.message})
 
-    # ── 9. Call LLM (with token usage tracking) ─────────────────────────────
+    # ── 10. Call LLM (with token usage tracking) ────────────────────────────
     try:
         t0 = datetime.now()
         assistant_content, tokens_used = await openai_service.openai_call_with_usage(
@@ -253,7 +303,7 @@ async def create_or_continue_chat(
         tokens_used = 0
         response_ms = None
 
-    # ── 10. Prepare messages for batch insert ───────────────────────────────
+    # ── 11. Prepare messages for batch insert ───────────────────────────────
     messages_to_insert: list[Message] = []
 
     if is_new:
@@ -281,21 +331,21 @@ async def create_or_continue_chat(
         ),
     ])
 
-    # ── 11. Persist messages ────────────────────────────────────────────────
+    # ── 12. Persist messages ────────────────────────────────────────────────
     persisted = await repo.add_messages(db, messages=messages_to_insert)
     assistant_msg = persisted[-1]
 
-    # ── 12. Update conversation counters ────────────────────────────────────
+    # ── 13. Update conversation counters ────────────────────────────────────
     await repo.update_conversation_activity(
         conversation,
         message_increment=len(messages_to_insert),
         token_increment=tokens_used,
     )
 
-    # ── 13. Commit ──────────────────────────────────────────────────────────
+    # ── 14. Commit ──────────────────────────────────────────────────────────
     await db.commit()
 
-    # ── 14. Increment billing usage records (post-commit, non-blocking) ─────
+    # ── 15. Increment billing usage records (post-commit, non-blocking) ─────
     # Token increment — always
     if tokens_used > 0:
         try:
@@ -326,7 +376,7 @@ async def create_or_continue_chat(
 
     await db.commit()
 
-    # ── 15. Return response ─────────────────────────────────────────────────
+    # ── 16. Return response ─────────────────────────────────────────────────
     return schemas.ChatReplyResponse(
         conversation_id=conversation.public_id,
         message_id=assistant_msg.public_id,
