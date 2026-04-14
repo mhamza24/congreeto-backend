@@ -162,6 +162,7 @@ async def get_chatbot_embed(
         auto_close_minutes=chatbot.auto_close_minutes,
         branding=chatbot.branding,
         lead_capture_config=chatbot.lead_capture_config,
+        company_profile=chatbot.company_profile,
         active_theme=theme_data,
     )
 

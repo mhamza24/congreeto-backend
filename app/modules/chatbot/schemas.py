@@ -359,6 +359,7 @@ class ChatbotEmbedResponse(BaseModel):
     auto_close_minutes: int
     branding: Dict[str, Any]
     lead_capture_config: Dict[str, Any]
+    company_profile: Dict[str, Any]
     active_theme: Optional[EmbedTheme] = None
 
     model_config = {"from_attributes": True}
