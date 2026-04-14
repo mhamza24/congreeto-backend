@@ -462,14 +462,16 @@ async def serve_asset(
 async def get_chatbot_embed(
     iframe_token: str,
     db: DBDep,
+    page_url: Optional[str] = Query(default=None, max_length=2048),
 ) -> ApiResponse[schemas.ChatbotEmbedResponse]:
     """
     Used by the frontend widget on initial load.
     Returns branding, welcome message, theme, and lead capture config.
     No authentication required — the iframe_token is the access key.
+    Pass page_url to get the campaign-specific welcome message for that page.
     """
     try:
-        data = await service.get_chatbot_embed(db, iframe_token=iframe_token)
+        data = await service.get_chatbot_embed(db, iframe_token=iframe_token, page_url=page_url)
         return ApiResponse(success=True, message="OK", data=data)
     except HTTPException:
         raise

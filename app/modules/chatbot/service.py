@@ -17,6 +17,7 @@ from app.core.db_base import _new_public_id
 from app.core.enums import DocStatus, CrawlStatus
 from app.modules.audit import repository as audit
 from app.modules.billing import repository as billing_repo
+from app.modules.campaigns import repository as campaign_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot import schemas
 from app.modules.chatbot import tasks as bg
@@ -138,10 +139,12 @@ async def get_chatbot_embed(
     db: AsyncSession,
     *,
     iframe_token: str,
+    page_url: Optional[str] = None,
 ) -> schemas.ChatbotEmbedResponse:
     """
     Public endpoint — no auth required.
     Returns chatbot branding, config, and active theme based on iframe token.
+    If page_url is provided, matches the best campaign and uses its welcome_message.
     """
     chatbot = await repo.get_chatbot_by_iframe_token(db, iframe_token=iframe_token)
     if not chatbot:
@@ -158,11 +161,28 @@ async def get_chatbot_embed(
             layout=active_theme.layout,
         )
 
+    # Match campaign for the visitor's page and override welcome_message if set
+    welcome_message = chatbot.welcome_message
+    if page_url:
+        try:
+            active_campaigns = await campaign_repo.get_active_campaigns_for_chatbot(
+                db, chatbot_config_id=chatbot.id
+            )
+            matched = campaign_repo.match_campaign_for_url(active_campaigns, page_url=page_url)
+            if matched and matched.welcome_message:
+                welcome_message = matched.welcome_message
+                logger.debug(
+                    "[embed] campaign welcome_message override campaign=%s page_url=%r",
+                    matched.public_id, page_url,
+                )
+        except Exception as exc:
+            logger.warning("[embed] Campaign matching failed (degrading gracefully): %s", exc)
+
     return schemas.ChatbotEmbedResponse(
         iframe_token=chatbot.iframe_token,
         name=chatbot.name,
         status=str(chatbot.status.value) if hasattr(chatbot.status, "value") else str(chatbot.status),
-        welcome_message=chatbot.welcome_message,
+        welcome_message=welcome_message,
         auto_close_minutes=chatbot.auto_close_minutes,
         branding=chatbot.branding,
         lead_capture_config=chatbot.lead_capture_config,
