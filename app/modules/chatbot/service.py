@@ -766,6 +766,19 @@ def _listing_to_context(listing) -> str:
         parts.append(f"Price: {listing.currency} {listing.price:,.0f}")
     if listing.description:
         parts.append(listing.description[:500])
+    # Include the source URL so the LLM can share the direct link with visitors.
+    # Check raw_data first, then fall back to the first URL found in media items.
+    raw_data: dict = listing.raw_data or {}
+    source_url = raw_data.get("source_url")
+    if not source_url:
+        for media_item in (listing.media or []):
+            if isinstance(media_item, dict):
+                candidate = media_item.get("url") or media_item.get("source_url") or media_item.get("href")
+                if candidate and isinstance(candidate, str):
+                    source_url = candidate
+                    break
+    if source_url:
+        parts.append(f"Link: {source_url}")
     return "\n".join(parts)
 
 
