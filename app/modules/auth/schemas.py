@@ -82,7 +82,7 @@ class RefreshRequest(BaseModel):
 
 
 class OTPVerifyRequest(BaseModel):
-    # email: EmailStr
+    email: EmailStr
     otp: str = Field(..., min_length=6, max_length=6,
                      description="6-digit OTP code.")
 

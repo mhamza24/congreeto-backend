@@ -200,10 +200,9 @@ async def refresh_token_endpoint(
 async def verify_email_endpoint(
     payload: schemas.OTPVerifyRequest,
     db: DBDep,
-    current_user=Depends(get_current_user),
 ) -> ApiResponse[schemas.OTPVerifyResponse]:
     try:
-        reply = await service.verify_email(db, payload=payload, current_user=current_user)
+        reply = await service.verify_email(db, payload=payload)
     except HTTPException:
         raise
     except Exception:

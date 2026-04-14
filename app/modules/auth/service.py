@@ -225,29 +225,30 @@ async def verify_email(
     db: AsyncSession,
     *,
     payload: schemas.OTPVerifyRequest,
-    current_user: user_models.User,
 ) -> schemas.OTPVerifyResponse:
     """
-    Verifies the email OTP for the current user.
+    Verifies the email OTP by email + OTP only — no token required.
 
-    DB hits: 2
-      1. get_active_otp  — fetch OTP record
-      2. mark_email_verified — update user (returns updated user, no re-fetch)
-
-    No re-fetch of OTP record after verify_otp — attempts computed in-memory
-    from the already-loaded SQLAlchemy object.
+    DB hits: 3
+      1. get_user_by_email — resolve user from email
+      2. get_active_otp    — fetch OTP record
+      3. mark_email_verified — update user (returns updated user, no re-fetch)
     """
 
-    logger.info("[auth] verify_email attempt user=%s", current_user.public_id)
+    existing_user = await user_repo.get_user_by_email(db, email=payload.email)
+    if existing_user is None:
+        raise InvalidCredentialsError()
+
+    logger.info("[auth] verify_email attempt user=%s", existing_user.public_id)
     # 1. Guard — already verified
-    if current_user.email_verified_at is not None:
-        logger.warning("[auth] verify_email already verified user=%s", current_user.public_id)
+    if existing_user.email_verified_at is not None:
+        logger.warning("[auth] verify_email already verified user=%s", existing_user.public_id)
         raise EmailAlreadyVerifiedError()
 
-    # 2. DB hit 1 — fetch OTP record once, reuse throughout
+    # 2. DB hit 2 — fetch OTP record once, reuse throughout
     otp_record = await repo.get_active_otp(
         db,
-        user_id=current_user.id,
+        user_id=existing_user.id,
         purpose=OTPPurpose.EMAIL_VERIFICATION,
     )
     if otp_record is None:
@@ -265,9 +266,9 @@ async def verify_email(
         remaining = repo.remaining_attempts(otp_record)
         raise InvalidOTPError(f"Invalid OTP. {remaining} attempt(s) remaining.")
 
-    # 4. DB hit 2 — mark verified, get updated user back (no extra fetch)
-    logger.info("[auth] email verified user=%s", current_user.public_id)
-    updated_user = await user_repo.mark_email_verified_and_update_status(db, user_id=current_user.id)
+    # 4. DB hit 3 — mark verified, get updated user back (no extra fetch)
+    logger.info("[auth] email verified user=%s", existing_user.public_id)
+    updated_user = await user_repo.mark_email_verified_and_update_status(db, user_id=existing_user.id)
 
     # 5. Issue fresh token pair with verified identity
     token_subject = get_token_subject(updated_user)
