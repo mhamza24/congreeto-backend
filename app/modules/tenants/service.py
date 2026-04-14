@@ -384,7 +384,7 @@ async def invite_user(
 
     await db.commit()
 
-    invite_link = f"{settings.FRONTEND_URL}/invite/accept?code={raw_otp}"
+    invite_link = f"{settings.FRONTEND_URL}/accept-invite?code={raw_otp}"
     celery_task = background_tasks.send_invite_email_task.delay(
         to           = payload.email,
         first_name   = invitee.first_name or payload.email.split("@")[0],
