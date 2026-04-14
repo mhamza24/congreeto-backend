@@ -224,6 +224,15 @@ ADDONS = [
         "price_usd_cents": 1_000,
         "config": {"grants_per_unit": {"max_ribbon_messages": 3}},
     },
+    {
+        "name": "Extra Pages",
+        "slug": "extra-pages",
+        "description": "Add 50 extra crawlable pages to your knowledge base.",
+        "type": AddonType.EXTRA_PAGES,
+        "price_aud_cents": 1_500,  # AUD 15/month per 50 pages
+        "price_usd_cents": 1_000,
+        "config": {"grants_per_unit": {"max_pages_crawled": 50}},
+    },
 ]
 
 
