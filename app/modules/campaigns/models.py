@@ -126,6 +126,18 @@ class Campaign(Base, PublicIdMixin, TimestampMixin):
         ),
     )
 
+    # ── Welcome message ───────────────────────────────────────────────────────
+    welcome_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        default=None,
+        comment=(
+            "First message shown in the chatbot widget when a visitor lands on a page "
+            "matched by this campaign. Overrides the chatbot-level welcome_message. "
+            "Falls back to the chatbot welcome_message if NULL."
+        ),
+    )
+
     # ── System prompt overlay ─────────────────────────────────────────────────
     prompt_overlay: Mapped[str | None] = mapped_column(
         Text,

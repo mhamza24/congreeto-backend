@@ -248,8 +248,10 @@ async def create_or_continue_chat(
     system_prompt = "\n\n".join(p for p in prompt_parts if p)
 
     # ── 9. Build LLM message context ────────────────────────────────────────
+    # Priority: campaign welcome_message → chatbot welcome_message → default
     welcome_message = (
-        chatbot.welcome_message
+        (active_campaign.welcome_message if active_campaign else None)
+        or chatbot.welcome_message
         or "Hi, I am ARIA. What can I help you with today?"
     )
 

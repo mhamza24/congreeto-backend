@@ -96,6 +96,7 @@ async def create_campaign(
         url_patterns=payload.url_patterns,
         is_default=payload.is_default,
         sort_order=payload.sort_order,
+        welcome_message=payload.welcome_message,
         prompt_overlay=payload.prompt_overlay,
         public_id=_new_public_id(),
     )
@@ -232,7 +233,7 @@ async def update_campaign(
     await db.refresh(campaign)
 
     # Re-generate prompt only when content-relevant fields changed
-    _PROMPT_FIELDS = {"name", "description", "url_patterns", "prompt_overlay"}
+    _PROMPT_FIELDS = {"name", "description", "url_patterns", "welcome_message", "prompt_overlay"}
     if updates.keys() & _PROMPT_FIELDS:
         tasks.generate_campaign_prompt.delay(campaign.public_id, tenant_id)
 
@@ -326,6 +327,7 @@ def _to_response(campaign, *, chatbot_public_id: str) -> schemas.CampaignRespons
         url_patterns=campaign.url_patterns or [],
         is_default=campaign.is_default,
         sort_order=campaign.sort_order,
+        welcome_message=campaign.welcome_message,
         prompt_overlay=campaign.prompt_overlay,
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,

@@ -31,6 +31,7 @@ async def create_campaign(
     url_patterns: List[str],
     is_default: bool,
     sort_order: int,
+    welcome_message: Optional[str],
     prompt_overlay: Optional[str],
     public_id: str,
 ) -> Campaign:
@@ -42,6 +43,7 @@ async def create_campaign(
         url_patterns=url_patterns,
         is_default=is_default,
         sort_order=sort_order,
+        welcome_message=welcome_message,
         prompt_overlay=prompt_overlay,
         public_id=public_id,
     )

@@ -44,6 +44,14 @@ class CampaignCreateRequest(BaseModel):
         default=0,
         description="Priority when multiple campaigns match the same URL. Lower = higher priority.",
     )
+    welcome_message: Optional[str] = Field(
+        default=None,
+        description=(
+            "First message shown in the chatbot widget when a visitor lands on a page "
+            "matched by this campaign. Overrides the chatbot-level welcome message. "
+            "Leave blank to use the chatbot's default welcome message."
+        ),
+    )
     prompt_overlay: Optional[str] = Field(
         default=None,
         max_length=4000,
@@ -64,6 +72,7 @@ class CampaignUpdateRequest(BaseModel):
     url_patterns: Optional[List[str]] = None
     is_default: Optional[bool] = None
     sort_order: Optional[int] = None
+    welcome_message: Optional[str] = None
     prompt_overlay: Optional[str] = Field(default=None, max_length=4000)
 
 
@@ -93,6 +102,7 @@ class CampaignResponse(BaseModel):
     url_patterns: List[str]
     is_default: bool
     sort_order: int
+    welcome_message: Optional[str]
     prompt_overlay: Optional[str]
     created_at: datetime
     updated_at: datetime
