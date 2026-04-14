@@ -719,6 +719,28 @@ async def delete_chunks_for_document(
     await db.flush()
 
 
+async def get_crawled_urls_for_source(
+    db: AsyncSession,
+    *,
+    knowledge_source_id: int,
+    tenant_id: int,
+) -> set[str]:
+    """
+    Return URLs already successfully crawled for a knowledge source.
+    Used by incremental re-crawl to skip pages already in the knowledge base.
+    Only includes READY documents (PROCESSING/FAILED are treated as not done).
+    """
+    result = await db.execute(
+        select(Document.file_name).where(
+            Document.knowledge_source_id == knowledge_source_id,
+            Document.tenant_id == tenant_id,
+            Document.file_type == "html",
+            Document.status == DocStatus.READY,
+        )
+    )
+    return {row[0] for row in result.all()}
+
+
 async def update_widget_theme(
     db: AsyncSession, *, theme: WidgetTheme, **kwargs
 ) -> WidgetTheme:

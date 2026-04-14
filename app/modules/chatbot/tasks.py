@@ -171,6 +171,12 @@ async def _crawl_and_embed_async(
             db, tenant_id=tenant_id, metric_key="max_pages_crawled", default=200
         )
 
+        # Incremental crawl: only fetch pages not already in the knowledge base
+        already_crawled: set[str] = await repo.get_crawled_urls_for_source(
+            db, knowledge_source_id=knowledge_source_id, tenant_id=tenant_id
+        )
+        remaining_pages = max_pages - len(already_crawled)
+
         await repo.update_crawl_job(
             db,
             job=job,
@@ -179,9 +185,31 @@ async def _crawl_and_embed_async(
         )
         await db.commit()
 
+    # ── Step 1b: Early-exit if page limit is already reached ─────────────
+    if remaining_pages <= 0:
+        logger.info(
+            "CrawlJob %d: page limit already reached (%d crawled, limit=%d) — nothing new to fetch.",
+            crawl_job_id, len(already_crawled), max_pages,
+        )
+        async with get_task_db_session() as db:
+            job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
+            if job:
+                await repo.update_crawl_job(
+                    db,
+                    job=job,
+                    status=CrawlStatus.COMPLETED,
+                    completed_at=datetime.now(timezone.utc),
+                )
+                await db.commit()
+        return
+
     # ── Step 2: Scrape (long HTTP — outside any DB session) ───────────────
     try:
-        scraped: dict = await website_parser.scrape_websites(base_url, max_pages=max_pages)
+        scraped: dict = await website_parser.scrape_websites(
+            base_url,
+            max_pages=remaining_pages,
+            exclude_urls=already_crawled,
+        )
     except Exception as exc:
         async with get_task_db_session() as db:
             job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)

@@ -22,12 +22,16 @@ async def scrape_websites(
     max_pages: int = settings.SCRAPPER_WEB_MAX_PAGES,
     headless: bool = settings.SCRAPPER_WEB_HEADLESS,
     timeout: int = settings.SCRAPPER_WEB_TIMEOUT,
+    exclude_urls: set[str] | None = None,
 ) -> Dict[str, Dict[str, str]]:
     """
     Accepts:
         - str → single URL
         - List[str] → multiple URLs
         - Dict → {"url": "..."} or {"urls": ["...", "..."]}
+
+    exclude_urls: set of page URLs already in the knowledge base — skipped
+                  entirely so re-crawls only fetch genuinely new pages.
 
     Returns:
         {
@@ -54,7 +58,7 @@ async def scrape_websites(
     ) as client:
         for start_url in urls:
             start_url = start_url.rstrip("/")
-            results[start_url] = await _crawl_site(client, start_url, max_pages)
+            results[start_url] = await _crawl_site(client, start_url, max_pages, exclude_urls)
 
     return results
 
@@ -68,6 +72,7 @@ async def _crawl_site(
     client: httpx.AsyncClient,
     start_url: str,
     max_pages: int,
+    exclude_urls: set[str] | None = None,
 ) -> Dict[str, str]:
     """
     Crawl a single site concurrently using a batch-wave BFS.
@@ -76,8 +81,12 @@ async def _crawl_site(
     asyncio.gather, then discovers new links before starting the next wave.
     Uses two sets (fetched + queued) for O(1) duplicate detection instead
     of the original O(n) `link not in queue` list scan.
+
+    exclude_urls: pages already in the knowledge base — never fetched or
+                  enqueued, and do NOT count toward max_pages.
     """
-    fetched: set[str] = set()        # already fetched or attempted
+    fetched: set[str] = set()        # already fetched or attempted this run
+    already_seen: set[str] = set(exclude_urls) if exclude_urls else set()
     queued: set[str] = {start_url}   # in queue — prevents duplicate enqueue
     queue: list[str] = [start_url]
     site_data: Dict[str, str] = {}
@@ -99,7 +108,7 @@ async def _crawl_site(
         batch: list[str] = []
         while queue and len(fetched) + len(batch) < max_pages and len(batch) < _CRAWL_CONCURRENCY:
             url = queue.pop(0)
-            if url not in fetched:
+            if url not in fetched and url not in already_seen:
                 batch.append(url)
 
         if not batch:
@@ -113,7 +122,7 @@ async def _crawl_site(
             if text:
                 site_data[url] = text
             for link in links:
-                if link not in fetched and link not in queued:
+                if link not in fetched and link not in queued and link not in already_seen:
                     queued.add(link)
                     queue.append(link)
 
