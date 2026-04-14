@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     OTP_MAX_ATTEMPTS: int = 5
     OTP_LOCKOUT_SECONDS: int = 86400  # 24 hours after max attempts
 
-    CELERY_RESULT_EXPIRES: int = 18000
+    CELERY_RESULT_EXPIRES: int = 3600   # 1 hour — results only needed briefly for status polling
     CELERY_TASK_TRACK_STARTED: bool = True
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_USE_SSL: bool = False
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     OPEN_AI_FREQUENCY_PENALTY: float = 0.1
     OPEN_AI_PRESENCE_PENALTY: float = 0.1
 
-    SCRAPPER_WEB_MAX_PAGES: int = 100
+    SCRAPPER_WEB_MAX_PAGES: int = 200
     SCRAPPER_WEB_HEADLESS: bool = True
     SCRAPPER_WEB_TIMEOUT: int = 30_000
     SCRAPPER_PDF_TIMEOUT: int = 30
@@ -108,14 +108,22 @@ class Settings(BaseSettings):
     BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH: int = 750
 
     # ── RAG retrieval ─────────────────────────────────────────────────────────
-    # Number of knowledge-base chunks injected into each LLM call.
-    RAG_TOP_K: int = 10
-    # Number of listing slots injected alongside RAG chunks.
-    RAG_LISTING_TOP_K: int = 8
+    # KB chunks injected per LLM call. 8 × 300-word chunks ≈ 1 800 tokens of
+    # context — precise enough for real estate Q&A without bloating the prompt.
+    RAG_TOP_K: int = 8
+    # Listing slots injected alongside KB chunks. 5 is enough to show variety
+    # without overwhelming the visitor or the LLM context window.
+    RAG_LISTING_TOP_K: int = 5
 
     # ── Knowledge ingestion pipeline ─────────────────────────────────────────
     # Word-based chunking for crawled pages and uploaded documents.
-    CHUNK_SIZE: int = 500         # max words per chunk
+    # 300 words (~225 tokens) is the sweet spot for real estate content:
+    #   - Short listing pages (200-400 words) → 1 focused chunk each
+    #   - Longer PDFs/guides split into precise retrievable units
+    #   - Well under OpenAI's 8 192-token per-input embedding limit
+    CHUNK_SIZE: int = 300         # max words per chunk
+    # 50-word overlap = ~17% of chunk size — prevents cutting sentences at
+    # boundaries without duplicating too much content.
     CHUNK_OVERLAP: int = 50       # word overlap between adjacent chunks
     # Max texts per OpenAI embeddings API call (API hard limit is 2048).
     EMBED_BATCH_SIZE: int = 100

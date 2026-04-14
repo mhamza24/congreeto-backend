@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.modules.billing.models import Plan, Addon
 from app.core.enums import BillingInterval, AddonType
 
+
 # =============================================================================
 # DEFAULT LIMITS — same for all plans right now
 # Update per-plan when you're ready to differentiate
@@ -149,8 +150,9 @@ PLANS = [
 ]
 
 ADDONS = [
+    # ── Existing addons ───────────────────────────────────────────────────────
     {
-        "name": "Extra User Seat",
+        "name": "Extra Team Member",
         "slug": "extra-users",
         "description": "Add 1 additional team member seat to your plan.",
         "type": AddonType.EXTRA_USERS,
@@ -163,8 +165,8 @@ ADDONS = [
         "slug": "extra-conversations",
         "description": "Add 250 extra conversations per month.",
         "type": AddonType.EXTRA_CONVERSATIONS,
-        "price_aud_cents": 2_000,  # AUD 20/month per 250 conversations
-        "price_usd_cents": 1_300,
+        "price_aud_cents": 1_500,  # AUD 15/month per 250 conversations
+        "price_usd_cents": 1_000,
         "config": {"grants_per_unit": {"max_conversations_per_month": 250}},
     },
     {
@@ -184,6 +186,43 @@ ADDONS = [
         "price_aud_cents": 2_900,  # AUD 29/month
         "price_usd_cents": 1_900,
         "config": {"grants_per_unit": {"premium_widget": 1}},
+    },
+    # ── New addons (all AUD 15/month) ─────────────────────────────────────────
+    {
+        "name": "Extra Chatbot",
+        "slug": "extra-chatbots",
+        "description": "Add 1 additional chatbot to your plan.",
+        "type": AddonType.EXTRA_CHATBOTS,
+        "price_aud_cents": 1_500,  # AUD 15/month
+        "price_usd_cents": 1_000,
+        "config": {"grants_per_unit": {"max_chatbots": 1}},
+    },
+    {
+        "name": "Extra 1M Tokens",
+        "slug": "extra-tokens",
+        "description": "Add 1,000,000 extra tokens per month.",
+        "type": AddonType.EXTRA_TOKENS,
+        "price_aud_cents": 1_500,  # AUD 15/month per 1M tokens
+        "price_usd_cents": 1_000,
+        "config": {"grants_per_unit": {"max_tokens_per_month": 1_000_000}},
+    },
+    {
+        "name": "Custom Banner & Poster",
+        "slug": "custom-banner",
+        "description": "Unlock custom banner and poster upload for your chatbot.",
+        "type": AddonType.CUSTOM_BANNER,
+        "price_aud_cents": 1_500,  # AUD 15/month
+        "price_usd_cents": 1_000,
+        "config": {"grants_per_unit": {"custom_banner": 1}},
+    },
+    {
+        "name": "Extra Ribbon Messages",
+        "slug": "extra-ribbon-messages",
+        "description": "Add 3 extra ribbon message slots (rotating popup messages).",
+        "type": AddonType.EXTRA_RIBBON_MESSAGES,
+        "price_aud_cents": 1_500,  # AUD 15/month per 3 slots
+        "price_usd_cents": 1_000,
+        "config": {"grants_per_unit": {"max_ribbon_messages": 3}},
     },
 ]
 

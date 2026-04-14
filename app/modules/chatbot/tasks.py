@@ -28,6 +28,7 @@ from app.core.database import get_task_db_session
 from app.core.db_base import _new_public_id
 from app.core.enums import CrawlStatus, DocStatus, ListingSource, UploadJobStatus, UsageMetric
 from app.modules.billing import repository as billing_repo
+from app.modules.billing.task_helpers import get_effective_limit
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot.models import DocumentChunk
 from app.modules.chatbot.parsers import website_parser
@@ -166,6 +167,10 @@ async def _crawl_and_embed_async(
         )
         extract_listings = bool(ks and ks.config.get("extract_listings", False))
 
+        max_pages = await get_effective_limit(
+            db, tenant_id=tenant_id, metric_key="max_pages_crawled", default=200
+        )
+
         await repo.update_crawl_job(
             db,
             job=job,
@@ -176,7 +181,7 @@ async def _crawl_and_embed_async(
 
     # ── Step 2: Scrape (long HTTP — outside any DB session) ───────────────
     try:
-        scraped: dict = await website_parser.scrape_websites(base_url)
+        scraped: dict = await website_parser.scrape_websites(base_url, max_pages=max_pages)
     except Exception as exc:
         async with get_task_db_session() as db:
             job = await repo.get_crawl_job(db, tenant_id=tenant_id, job_id=crawl_job_id)
@@ -235,11 +240,10 @@ async def _crawl_and_embed_async(
     embeddings: list[list[float]] = []
     if all_texts:
         try:
-            # embed_texts handles internal batching at EMBED_BATCH_SIZE (from settings)
-            embeddings = await openai_service.embed_texts(all_texts)
+            embeddings, n_batches = await openai_service.embed_texts(all_texts)
             logger.info(
-                "CrawlJob %d: batch-embedded %d chunks across %d pages in 1 API call",
-                crawl_job_id, len(all_texts), pages_found,
+                "CrawlJob %d: embedded %d chunks across %d pages in %d API call(s)",
+                crawl_job_id, len(all_texts), pages_found, n_batches,
             )
         except Exception as exc:
             import sentry_sdk
@@ -277,6 +281,7 @@ async def _crawl_and_embed_async(
                 pages_found=pages_found,
             ),
             queue=QUEUEEnum.ANALYSIS.value,
+            ignore_result=True,  # prevents child UUIDs accumulating in parent's children list
         )
 
     logger.info(
@@ -295,6 +300,7 @@ async def _crawl_and_embed_async(
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
+    ignore_result=True,  # fire-and-forget — result never read, storing it wastes Redis RAM
 )
 def embed_crawled_page(
     self,
@@ -919,6 +925,7 @@ async def _process_manual_entry_async(
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
+    ignore_result=True,  # fire-and-forget
 )
 def embed_listing(self, *, listing_id: int, tenant_id: int) -> str:
     """
@@ -978,6 +985,7 @@ _EMBED_BATCH_SIZE = 100  # max listings per OpenAI embeddings call
     max_retries=settings.CELERY_MAX_TRIES,
     default_retry_delay=settings.CELERY_DEFAULT_RETRY_DELAY,
     queue=QUEUEEnum.ANALYSIS.value,
+    ignore_result=True,  # fire-and-forget
 )
 def embed_listings_batch(self, *, listing_ids: list[int], tenant_id: int) -> str:
     """
@@ -1036,7 +1044,7 @@ async def _embed_listings_batch_async(
 
         # ── Single OpenAI call for the whole batch ────────────────────────────
         ids, texts = zip(*to_embed)
-        embeddings = await openai_service.embed_texts(list(texts))
+        embeddings, _ = await openai_service.embed_texts(list(texts))
 
         # ── One bulk UPDATE round-trip ─────────────────────────────────────────
         id_to_embedding = dict(zip(ids, embeddings))
@@ -1060,6 +1068,7 @@ async def _embed_listings_batch_async(
     max_retries=2,
     default_retry_delay=5,
     queue=QUEUEEnum.ANALYSIS.value,
+    ignore_result=True,  # fire-and-forget
 )
 def clear_listing_embedding(self, *, listing_id: int, tenant_id: int) -> str:
     """

@@ -171,10 +171,15 @@ class SubscriptionStatus(str, enum.Enum):
 
 
 class AddonType(str, enum.Enum):
-    EXTRA_USERS         = "extra_users"
-    EXTRA_CONVERSATIONS = "extra_conversations"
-    EXTRA_STORAGE       = "extra_storage"
-    PREMIUM_WIDGET      = "premium_widget"
+    EXTRA_USERS             = "extra_users"
+    EXTRA_CONVERSATIONS     = "extra_conversations"
+    EXTRA_STORAGE           = "extra_storage"
+    EXTRA_PAGES             = "extra_pages"
+    PREMIUM_WIDGET          = "premium_widget"
+    EXTRA_TOKENS            = "extra_tokens"
+    EXTRA_CHATBOTS          = "extra_chatbots"
+    CUSTOM_BANNER           = "custom_banner"
+    EXTRA_RIBBON_MESSAGES   = "extra_ribbon_messages"
 
 
 class UsageMetric(str, enum.Enum):

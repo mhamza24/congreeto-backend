@@ -44,6 +44,11 @@ celery_app.conf.update(
     task_track_started=settings.CELERY_TASK_TRACK_STARTED,
     task_serializer=settings.CELERY_TASK_SERIALIZER,
     result_expires=settings.CELERY_RESULT_EXPIRES,
+    # Don't let a full result backend crash tasks — silently drop the result
+    # instead of raising an error. Fire-and-forget tasks (ignore_result=True)
+    # are unaffected; orchestrator results are still stored when Redis has room.
+    result_backend_always_retry=True,
+    result_backend_max_retries=3,
     task_default_queue=QUEUEEnum.ANALYSIS,
     task_routes={},
     # ── Redis connection resilience ───────────────────────────────────────

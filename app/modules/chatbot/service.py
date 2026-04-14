@@ -42,7 +42,11 @@ async def create_chatbot(
 ) -> schemas.ChatbotResponse:
     sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
     if sub and sub.plan:
-        max_chatbots = sub.plan.get_limit("max_chatbots")
+        base_limit   = sub.plan.get_limit("max_chatbots")
+        addon_grant  = await billing_repo.get_addon_grant_total(
+            db, tenant_id=tenant_id, metric="max_chatbots"
+        )
+        max_chatbots = base_limit + addon_grant
         if max_chatbots > 0:
             current = await repo.count_chatbots_for_tenant(db, tenant_id=tenant_id)
             if current >= max_chatbots:
@@ -50,7 +54,7 @@ async def create_chatbot(
                     status_code=status.HTTP_402_PAYMENT_REQUIRED,
                     detail=(
                         f"Chatbot limit reached ({current}/{max_chatbots}). "
-                        "Upgrade your plan to create more chatbots."
+                        "Upgrade your plan or purchase the Extra Chatbot add-on."
                     ),
                 )
 
@@ -405,13 +409,22 @@ async def submit_crawl_jobs(
             detail="Crawl jobs can only be created on a 'website' knowledge source.",
         )
 
+    # ── Billing pre-flight: require active subscription ──────────────────
+    from app.modules.billing import repository as billing_repo
+    sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="An active subscription is required to crawl pages.",
+        )
+
     # ── Billing pre-flight: check pages_crawled quota ─────────────────────
     used, limit, limit_status = await check_and_enforce_limit(
         db,
         tenant_id=tenant_id,
         metric=UsageMetric.PAGES_CRAWLED,
         metric_key="max_pages_crawled",
-        default_limit=50,
+        default_limit=200,
     )
     if limit_status == LimitStatus.EXCEEDED:
         today = date.today()

@@ -25,6 +25,9 @@ class PlanLimits(BaseModel):
     max_pages_crawled:           int = 50
     max_listings:                int = 500
     max_storage_mb:              int = 1_000
+    # Addon-gated features (0 = not available on base plan)
+    custom_banner:               int = 0  # ≥1 = banner/poster upload unlocked
+    max_ribbon_messages:         int = 1  # base plan allows 1 ribbon message
 
     model_config = ConfigDict(extra="allow")  # allow future limit keys
 

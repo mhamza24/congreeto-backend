@@ -189,7 +189,7 @@ async def embed_chunks(
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        batch_embeddings = await openai_service.embed_texts(batch)
+        batch_embeddings, _ = await openai_service.embed_texts(batch)
         embeddings.extend(batch_embeddings)
         logger.debug(f"Embedded batch {i}–{i + len(batch)} ({len(batch)} chunks)")
 

@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Union, List, Dict, Any
 from urllib.parse import urljoin, urlparse
@@ -5,7 +6,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 from app.config.settings import get_settings
+
 settings = get_settings()
+
+# Max pages fetched in parallel per site (tune to stay polite to the target server)
+_CRAWL_CONCURRENCY = 10
 
 # =========================================================
 # Public Function (This is the ONLY function you call)
@@ -32,7 +37,6 @@ async def scrape_websites(
             }
         }
     """
-
     urls = _normalize_input(input_data)
     results: Dict[str, Dict[str, str]] = {}
 
@@ -50,39 +54,7 @@ async def scrape_websites(
     ) as client:
         for start_url in urls:
             start_url = start_url.rstrip("/")
-            visited = set()
-            queue = [start_url]
-            site_data: Dict[str, str] = {}
-
-            while queue and len(visited) < max_pages:
-                url = queue.pop(0)
-
-                if url in visited:
-                    continue
-
-                if re.search(r"\.(pdf|jpg|jpeg|png|gif|svg|css|js|zip|mp4|mp3)$", url, re.I):
-                    visited.add(url)
-                    continue
-
-                try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    html = response.text
-                except Exception:
-                    visited.add(url)
-                    continue
-
-                visited.add(url)
-
-                text = _clean_text(html)
-                if text:
-                    site_data[url] = text
-
-                for link in _extract_links(html, start_url):
-                    if link not in visited and link not in queue:
-                        queue.append(link)
-
-            results[start_url] = site_data
+            results[start_url] = await _crawl_site(client, start_url, max_pages)
 
     return results
 
@@ -90,6 +62,63 @@ async def scrape_websites(
 # =========================================================
 # Internal Helpers (Private)
 # =========================================================
+
+
+async def _crawl_site(
+    client: httpx.AsyncClient,
+    start_url: str,
+    max_pages: int,
+) -> Dict[str, str]:
+    """
+    Crawl a single site concurrently using a batch-wave BFS.
+
+    Each wave fetches up to _CRAWL_CONCURRENCY pages in parallel via
+    asyncio.gather, then discovers new links before starting the next wave.
+    Uses two sets (fetched + queued) for O(1) duplicate detection instead
+    of the original O(n) `link not in queue` list scan.
+    """
+    fetched: set[str] = set()        # already fetched or attempted
+    queued: set[str] = {start_url}   # in queue — prevents duplicate enqueue
+    queue: list[str] = [start_url]
+    site_data: Dict[str, str] = {}
+
+    async def _fetch(url: str) -> tuple[str, str | None, list[str]]:
+        """Fetch one page; return (url, cleaned_text_or_None, discovered_links)."""
+        if re.search(r"\.(pdf|jpg|jpeg|png|gif|svg|css|js|zip|mp4|mp3)$", url, re.I):
+            return url, None, []
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            html = response.text
+        except Exception:
+            return url, None, []
+        return url, _clean_text(html) or None, _extract_links(html, start_url)
+
+    while queue and len(fetched) < max_pages:
+        # Build next batch: up to _CRAWL_CONCURRENCY unvisited URLs
+        batch: list[str] = []
+        while queue and len(fetched) + len(batch) < max_pages and len(batch) < _CRAWL_CONCURRENCY:
+            url = queue.pop(0)
+            if url not in fetched:
+                batch.append(url)
+
+        if not batch:
+            break
+
+        # Fetch all pages in the batch concurrently
+        page_results = await asyncio.gather(*(_fetch(url) for url in batch))
+
+        for url, text, links in page_results:
+            fetched.add(url)
+            if text:
+                site_data[url] = text
+            for link in links:
+                if link not in fetched and link not in queued:
+                    queued.add(link)
+                    queue.append(link)
+
+    return site_data
+
 
 def _normalize_input(input_data: Union[str, List[str], Dict[str, Any]]) -> List[str]:
     if isinstance(input_data, str):
