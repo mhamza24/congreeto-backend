@@ -112,6 +112,7 @@ class LoginResponse(BaseModel):
     message: str = "Login successful."
     tokens: Optional[TokenPair] = None
     requires_2fa: bool = False
+    requires_email_verification: bool = False
 
 
 class RefreshResponse(BaseModel):

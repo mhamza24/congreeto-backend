@@ -130,6 +130,16 @@ async def login_user(
     # Successful auth — clear failure counter
     await clear_login_failures(existing_user.id)
 
+    # ── Email verification gate — block login OTP until email is confirmed ──
+    if existing_user.email_verified_at is None:
+        logger.info(
+            "[auth] login blocked email not verified public_id=%s", existing_user.public_id
+        )
+        return schemas.LoginResponse(
+            message="Please verify your email before logging in.",
+            requires_email_verification=True,
+        )
+
     # ── 2FA — if enabled, send login OTP and defer token issuance ─────────
     if existing_user.two_fa_enabled:
         raw_otp = await repo.create_otp(
