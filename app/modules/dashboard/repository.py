@@ -5,6 +5,8 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
+from app.utils.date_time_helper import parse_datetime
+
 logger = logging.getLogger(__name__)
 
 
@@ -182,6 +184,239 @@ async def get_dashboard_summary(
     result = await db.execute(query, {"tenant_id": tenant_id})
     row = result.mappings().first()
     return dict(row) if row else {}
+
+
+async def get_leads_paginated(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict:
+    offset = (page - 1) * page_size
+    query = text("""
+        WITH lead_data AS (
+            SELECT
+                c.public_id,
+                c.is_lead,
+                c.lead_name,
+                c.lead_email,
+                c.lead_phone,
+                c.total_messages,
+                c.summary,
+                c.status,
+                c.last_activity_at,
+                c.created_at,
+                ci.lead_tier,
+                ci.lead_score,
+                ci.intent,
+                ci.sentiment,
+                ci.engagement_score,
+                ci.ai_summary,
+                ci.budget_min,
+                ci.budget_max,
+                ci.budget_currency,
+                ci.suburbs_mentioned,
+                ci.property_types,
+                ci.timeline
+            FROM conversations c
+            LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
+            WHERE c.tenant_id = :tenant_id
+            ORDER BY c.created_at DESC
+        ),
+        total_count AS (
+            SELECT COUNT(*) AS total FROM lead_data
+        )
+        SELECT
+            ld.*,
+            tc.total
+        FROM lead_data ld
+        CROSS JOIN total_count tc
+        LIMIT :page_size OFFSET :offset
+    """)
+
+    result = await db.execute(
+        query,
+        {"tenant_id": tenant_id, "page_size": page_size, "offset": offset},
+    )
+    rows = result.mappings().all()
+    total = rows[0]["total"] if rows else 0
+    leads = [dict(r) for r in rows]
+    for lead in leads:
+        lead.pop("total", None)
+
+    return {
+        "leads": leads,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": -(-total // page_size),  # ceiling division
+        },
+    }
+
+
+async def get_lead_detail(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    public_id: str,
+) -> Optional[dict]:
+    query = text("""
+        WITH message_stats AS (
+            SELECT
+                m.conversation_id,
+                COUNT(*) FILTER (WHERE m.role = 'user')                             AS user_messages,
+                COUNT(*) FILTER (WHERE m.role = 'assistant')                        AS assistant_messages,
+                ROUND(AVG(m.response_ms) FILTER (WHERE m.role = 'assistant'), 2)    AS avg_response_ms,
+                MIN(m.response_ms) FILTER (WHERE m.role = 'assistant')              AS min_response_ms,
+                MAX(m.response_ms) FILTER (WHERE m.role = 'assistant')              AS max_response_ms,
+                SUM(m.tokens_used)                                                  AS total_tokens_messages,
+                MIN(m.created_at)                                                   AS first_message_at,
+                MAX(m.created_at)                                                   AS last_message_at,
+                EXTRACT(EPOCH FROM (MAX(m.created_at) - MIN(m.created_at)))         AS conversation_duration_sec
+            FROM messages m
+            GROUP BY m.conversation_id
+        )
+        SELECT
+            c.public_id,
+            c.is_lead,
+            c.lead_name,
+            c.lead_email,
+            c.lead_phone,
+            c.total_messages,
+            c.total_tokens_used,
+            c.summary,
+            c.running_summary,
+            c.status,
+            c.page_url,
+            c.last_activity_at,
+            c.created_at,
+            c.closed_at,
+            ci.lead_score,
+            ci.lead_tier,
+            ci.intent,
+            ci.budget_min,
+            ci.budget_max,
+            ci.budget_currency,
+            ci.suburbs_mentioned,
+            ci.cities_mentioned,
+            ci.property_types,
+            ci.bedrooms_wanted,
+            ci.timeline,
+            ci.sentiment,
+            ci.engagement_score,
+            ci.topics_mentioned,
+            ci.ai_summary,
+            ci.ai_insights,
+            ci.processed_at,
+            ms.user_messages,
+            ms.assistant_messages,
+            ms.avg_response_ms,
+            ms.min_response_ms,
+            ms.max_response_ms,
+            ms.total_tokens_messages,
+            ms.first_message_at,
+            ms.last_message_at,
+            ms.conversation_duration_sec
+        FROM conversations c
+        LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
+        LEFT JOIN message_stats ms ON ms.conversation_id = c.id
+        WHERE c.tenant_id = :tenant_id
+          AND c.public_id = :public_id
+    """)
+
+    result = await db.execute(query, {"tenant_id": tenant_id, "public_id": public_id})
+    row = result.mappings().first()
+    if not row:
+        return None
+
+    messages_query = text("""
+        SELECT
+            m.public_id,
+            m.role,
+            m.content,
+            m.tokens_used,
+            m.model_used,
+            m.response_ms,
+            m.created_at
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.tenant_id = :tenant_id
+          AND c.public_id = :public_id
+        ORDER BY m.created_at ASC
+    """)
+
+    msg_result = await db.execute(messages_query, {"tenant_id": tenant_id, "public_id": public_id})
+    messages = [dict(r) for r in msg_result.mappings().all()]
+
+    detail = dict(row)
+    detail["messages"] = messages
+    return detail
+
+
+async def get_leads_for_export(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    last_days: Optional[int] = None,
+) -> list[dict]:
+    date_from_parsed = parse_datetime(date_from) if date_from else None
+    date_to_parsed   = parse_datetime(date_to)   if date_to   else None
+
+    filters = "WHERE c.tenant_id = :tenant_id"
+    params: dict = {"tenant_id": tenant_id}
+
+    if last_days is not None:
+        filters += f" AND c.created_at >= NOW() - INTERVAL '{int(last_days)} days'"
+    elif date_from_parsed and date_to_parsed:
+        filters += " AND c.created_at BETWEEN :date_from AND :date_to"
+        params["date_from"] = date_from_parsed
+        params["date_to"]   = date_to_parsed
+    elif date_from_parsed:
+        filters += " AND c.created_at >= :date_from"
+        params["date_from"] = date_from_parsed
+    elif date_to_parsed:
+        filters += " AND c.created_at <= :date_to"
+        params["date_to"] = date_to_parsed
+
+    query = text(f"""
+        SELECT
+            c.public_id          AS conversation_id,
+            c.is_lead,
+            c.lead_name,
+            c.lead_email,
+            c.lead_phone,
+            c.total_messages,
+            c.status,
+            c.summary,
+            c.last_activity_at,
+            c.created_at,
+            ci.lead_tier,
+            ci.lead_score,
+            ci.intent,
+            ci.budget_min,
+            ci.budget_max,
+            ci.budget_currency,
+            ci.suburbs_mentioned,
+            ci.cities_mentioned,
+            ci.property_types,
+            ci.bedrooms_wanted,
+            ci.timeline,
+            ci.sentiment,
+            ci.engagement_score,
+            ci.topics_mentioned,
+            ci.ai_summary
+        FROM conversations c
+        LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
+        {filters}
+        ORDER BY c.created_at DESC
+    """)
+
+    result = await db.execute(query, params)
+    return [dict(r) for r in result.mappings().all()]
 
 
 # =============================================================================
