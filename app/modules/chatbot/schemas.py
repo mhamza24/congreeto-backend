@@ -140,6 +140,7 @@ class ChatbotResponse(BaseModel):
 
 class ThemeCreateRequest(BaseModel):
     name: str = Field(default="Default Theme", max_length=100)
+    is_paid_theme: bool = Field(default=False, description="True for premium themes requiring the Premium Widget add-on.")
     colors: Dict[str, Any] = Field(default_factory=dict)
     typography: Dict[str, Any] = Field(default_factory=dict)
     assets: Dict[str, Any] = Field(default_factory=dict)

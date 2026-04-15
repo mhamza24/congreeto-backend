@@ -208,6 +208,26 @@ async def update_chatbot(
 
     updates = payload.model_dump(exclude_none=True, exclude={"company_profile", "prompt_personality_slug"})
 
+    # ── Gate: max_ribbon_messages — checked when branding carries ribbon_messages ─
+    if payload.branding is not None and "ribbon_messages" in payload.branding:
+        ribbon_msgs = payload.branding["ribbon_messages"]
+        if isinstance(ribbon_msgs, list):
+            sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
+            ribbon_limit = 1  # base default
+            if sub and sub.plan:
+                ribbon_addon = await billing_repo.get_addon_grant_total(
+                    db, tenant_id=tenant_id, metric="max_ribbon_messages"
+                )
+                ribbon_limit = sub.plan.get_limit("max_ribbon_messages", 1) + ribbon_addon
+            if len(ribbon_msgs) > ribbon_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail=(
+                        f"Ribbon message limit reached ({len(ribbon_msgs)}/{ribbon_limit}). "
+                        "Purchase 'Extra Ribbon Messages' to add more slots."
+                    ),
+                )
+
     # ── Handle company_profile update ─────────────────────────────────────────
     new_company_profile: dict | None = None
     if payload.company_profile is not None:
@@ -592,7 +612,10 @@ async def _check_document_limits(
 
     plan = sub.plan
     max_docs = plan.get_limit("max_documents")
-    max_storage_mb = plan.get_limit("max_storage_mb")
+    storage_addon = await billing_repo.get_addon_grant_total(
+        db, tenant_id=tenant_id, metric="max_storage_mb"
+    )
+    max_storage_mb = plan.get_limit("max_storage_mb") + storage_addon
 
     if max_docs > 0:
         current_docs = await repo.count_documents_for_tenant(db, tenant_id=tenant_id)
@@ -883,6 +906,27 @@ async def list_themes(
     return [schemas.ThemeResponse.model_validate(t) for t in themes]
 
 
+async def _check_premium_widget_grant(db: AsyncSession, *, tenant_id: int) -> None:
+    """Raises HTTP 402 if the tenant has not purchased the Premium Widget add-on."""
+    sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
+    grant = 0
+    if sub and sub.plan:
+        grant = (
+            sub.plan.get_limit("premium_widget", 0)
+            + await billing_repo.get_addon_grant_total(
+                db, tenant_id=tenant_id, metric="premium_widget"
+            )
+        )
+    if grant < 1:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                "Your plan does not include Premium Widget themes. "
+                "Purchase the 'Premium Widget' add-on to unlock advanced themes."
+            ),
+        )
+
+
 async def create_theme(
     db: AsyncSession,
     *,
@@ -896,12 +940,17 @@ async def create_theme(
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
 
+    # ── Gate: premium_widget addon required for paid themes ───────────────────
+    if payload.is_paid_theme:
+        await _check_premium_widget_grant(db, tenant_id=tenant_id)
+
     theme = await repo.create_widget_theme(
         db,
         tenant_id=tenant_id,
         chatbot_config_id=chatbot.id,
         name=payload.name,
         is_active=False,  # caller must explicitly activate
+        is_paid_theme=payload.is_paid_theme,
         colors=payload.colors,
         typography=payload.typography,
         assets=payload.assets,
@@ -959,6 +1008,10 @@ async def activate_theme(
     if not theme:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Theme not found.")
 
+    # ── Gate: premium_widget addon required to activate a paid theme ──────────
+    if theme.is_paid_theme:
+        await _check_premium_widget_grant(db, tenant_id=tenant_id)
+
     # Deactivate all, then activate the target — inside one flush block
     await repo.deactivate_all_themes(db, chatbot_config_id=chatbot.id)
     theme = await repo.update_widget_theme(db, theme=theme, is_active=True)
@@ -1006,6 +1059,26 @@ async def upload_chatbot_asset(
     )
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
+
+    # ── Gate: custom_banner addon required to upload a banner asset ───────────
+    if asset_type == "banner":
+        sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
+        banner_grant = 0
+        if sub and sub.plan:
+            banner_grant = (
+                sub.plan.get_limit("custom_banner", 0)
+                + await billing_repo.get_addon_grant_total(
+                    db, tenant_id=tenant_id, metric="custom_banner"
+                )
+            )
+        if banner_grant < 1:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    "Your plan does not include the Branded Banner feature. "
+                    "Purchase the 'Branded Banner' add-on to upload a custom hero banner."
+                ),
+            )
 
     public_id = _new_public_id()
     asset = await repo.create_asset(
