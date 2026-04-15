@@ -33,7 +33,7 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.hashing_utils import hash_identity
 
-from .models import Conversation, ConversationStatus, Message, MessageRole
+from .models import Conversation, ConversationCampaign, ConversationStatus, Message, MessageRole
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from datetime import datetime, timezone
@@ -121,6 +121,51 @@ async def get_or_create_conversation(
         conversation.public_id, tenant_id, campaign_id,
     )
     return conversation, True
+
+
+async def link_campaigns_to_conversation(
+    db: AsyncSession,
+    *,
+    conversation_id: int,
+    campaign_ids: List[int],
+) -> None:
+    """
+    Insert rows into conversation_campaigns for every matched campaign.
+    Called once at conversation creation — idempotent because the PK is
+    (conversation_id, campaign_id).
+    """
+    now = datetime.now(timezone.utc)
+    for cid in campaign_ids:
+        link = ConversationCampaign(
+            conversation_id=conversation_id,
+            campaign_id=cid,
+            matched_at=now,
+        )
+        db.add(link)
+    if campaign_ids:
+        await db.flush()
+
+
+async def get_campaigns_for_conversation(
+    db: AsyncSession,
+    *,
+    conversation_id: int,
+) -> List:
+    """
+    Return all Campaign rows linked to a conversation via the junction table,
+    ordered by sort_order ASC (same priority order used during matching).
+
+    Returns an empty list for old conversations that pre-date the junction
+    table — callers should fall back to conversation.campaign_id in that case.
+    """
+    from app.modules.campaigns.models import Campaign
+    result = await db.execute(
+        select(Campaign)
+        .join(ConversationCampaign, Campaign.id == ConversationCampaign.campaign_id)
+        .where(ConversationCampaign.conversation_id == conversation_id)
+        .order_by(Campaign.sort_order.asc())
+    )
+    return list(result.scalars().all())
 
 
 async def get_conversation_by_public_id(

@@ -226,6 +226,34 @@ def _render_company_profile(profile: dict[str, Any]) -> str:
 # is matched to the visitor's page URL)
 # ---------------------------------------------------------------------------
 
+def build_campaign_overlays_block(campaigns: list) -> str:
+    """
+    Build LAYER 2 for one or more matched campaigns.
+
+    Single campaign  → same output as the original build_campaign_overlay_block.
+    Multiple campaigns → sections separated under a shared header so the LLM
+    understands it is serving several concurrent campaign goals.
+    """
+    if not campaigns:
+        return ""
+    if len(campaigns) == 1:
+        return build_campaign_overlay_block(campaigns[0])
+
+    parts: list[str] = [
+        "## CAMPAIGN CONTEXT",
+        f"You are operating under {len(campaigns)} active campaigns simultaneously. "
+        "Apply all goals and instructions below.",
+    ]
+    for i, campaign in enumerate(campaigns, 1):
+        parts.append(f"\n### Campaign {i}: {campaign.name}")
+        if campaign.description:
+            parts.append(f"Objective: {campaign.description}")
+        if campaign.prompt_overlay:
+            parts.append("")
+            parts.append(campaign.prompt_overlay)
+    return "\n".join(parts)
+
+
 def build_campaign_overlay_block(campaign) -> str:
     """
     Render a Campaign row as the LAYER 2 system prompt block.

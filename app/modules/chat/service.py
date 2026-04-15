@@ -36,7 +36,7 @@ from app.modules.chatbot import service as chatbot_service
 from app.modules.open_ai import service as openai_service
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils.hashing_utils import hash_identity
-from app.utils.system_prompt_generator import build_campaign_overlay_block, build_dynamic_context
+from app.utils.system_prompt_generator import build_campaign_overlays_block, build_dynamic_context
 from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
@@ -132,36 +132,54 @@ async def create_or_continue_chat(
         )
 
     # ── 4. Campaign URL matching (new conversations only) ──────────────────
-    # Load all active campaigns for this chatbot and pick the one whose
-    # url_patterns match the visitor's current page. This happens BEFORE
-    # creating the conversation so campaign_id is set at conversation start.
-    active_campaign = None
+    # Load all active campaigns for this chatbot and collect EVERY campaign
+    # whose url_patterns match the visitor's page — not just the first one.
+    # This happens BEFORE creating the conversation so all campaign IDs are
+    # written to the junction table at conversation start.
+    matched_campaigns: list = []
     if is_new_request:
         try:
             active_campaigns = await campaign_repo.get_active_campaigns_for_chatbot(
                 db, chatbot_config_id=chatbot.id
             )
-            active_campaign = campaign_repo.match_campaign_for_url(
+            matched_campaigns = campaign_repo.match_campaigns_for_url(
                 active_campaigns, page_url=payload.page_url
             )
-            if active_campaign:
+            if matched_campaigns:
                 logger.info(
-                    "[campaign] Matched campaign=%s for page_url=%r tenant=%d",
-                    active_campaign.public_id, payload.page_url, tenant_db_id,
+                    "[campaign] Matched %d campaign(s) %s for page_url=%r tenant=%d",
+                    len(matched_campaigns),
+                    [c.public_id for c in matched_campaigns],
+                    payload.page_url,
+                    tenant_db_id,
                 )
         except Exception as exc:
             # Never let campaign matching break the chat flow
             logger.warning("[campaign] Campaign matching failed (degrading gracefully): %s", exc)
 
     # ── 5. Resolve or create conversation ──────────────────────────────────
+    # campaign_id on the conversation is set to the first (highest-priority)
+    # matched campaign for backward compatibility with existing queries.
+    # The full list is written to conversation_campaigns below.
     conversation, is_new = await repo.get_or_create_conversation(
         db,
         conversation_public_id=payload.conversation_id,
         tenant_id=tenant_str,
         chatbot_config_id=chatbot.id,
-        campaign_id=active_campaign.id if active_campaign else None,
+        campaign_id=matched_campaigns[0].id if matched_campaigns else None,
         page_url=payload.page_url,
     )
+
+    # Link ALL matched campaigns to the new conversation in the junction table.
+    if is_new and matched_campaigns:
+        try:
+            await repo.link_campaigns_to_conversation(
+                db,
+                conversation_id=conversation.id,
+                campaign_ids=[c.id for c in matched_campaigns],
+            )
+        except Exception as exc:
+            logger.warning("[campaign] Failed to link campaigns to conversation (degrading gracefully): %s", exc)
 
     # ── 6. Returning visitor detection ─────────────────────────────────────
     returning_visitor_prompt_data = None
@@ -216,21 +234,30 @@ async def create_or_continue_chat(
 
     static_base = chatbot.system_prompt_template or ""
 
-    # For existing conversations: load the campaign set at conversation start
-    if not is_new_request and active_campaign is None and conversation.campaign_id:
+    # For existing conversations: load campaigns from the junction table.
+    # Fall back to the legacy campaign_id column for old conversations that
+    # pre-date the junction table.
+    if not is_new_request and not matched_campaigns:
         try:
-            from app.modules.campaigns.models import Campaign
-            from sqlalchemy import select as sa_select
-            result = await db.execute(
-                sa_select(Campaign).where(Campaign.id == conversation.campaign_id)
+            matched_campaigns = await repo.get_campaigns_for_conversation(
+                db, conversation_id=conversation.id
             )
-            active_campaign = result.scalar_one_or_none()
+            if not matched_campaigns and conversation.campaign_id:
+                # Legacy fallback — conversation was created before junction table
+                from app.modules.campaigns.models import Campaign
+                from sqlalchemy import select as sa_select
+                result = await db.execute(
+                    sa_select(Campaign).where(Campaign.id == conversation.campaign_id)
+                )
+                legacy = result.scalar_one_or_none()
+                if legacy:
+                    matched_campaigns = [legacy]
         except Exception as exc:
-            logger.warning("[campaign] Failed to load campaign for existing conversation: %s", exc)
+            logger.warning("[campaign] Failed to load campaigns for existing conversation: %s", exc)
 
     campaign_overlay_block = ""
-    if active_campaign:
-        campaign_overlay_block = build_campaign_overlay_block(active_campaign)
+    if matched_campaigns:
+        campaign_overlay_block = build_campaign_overlays_block(matched_campaigns)
 
     time_aware_data = get_time_awareness_prompt(payload.user_local_timestamp)
 
@@ -248,9 +275,9 @@ async def create_or_continue_chat(
     system_prompt = "\n\n".join(p for p in prompt_parts if p)
 
     # ── 9. Build LLM message context ────────────────────────────────────────
-    # Priority: campaign welcome_message → chatbot welcome_message → default
+    # Priority: first matched campaign welcome_message → chatbot welcome_message → default
     welcome_message = (
-        (active_campaign.welcome_message if active_campaign else None)
+        (matched_campaigns[0].welcome_message if matched_campaigns else None)
         or chatbot.welcome_message
         or "Hi, I am ARIA. What can I help you with today?"
     )

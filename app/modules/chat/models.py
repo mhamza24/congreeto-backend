@@ -312,6 +312,50 @@ class Message(Base):
         )
 
 
+class ConversationCampaign(Base):
+    """
+    Junction table — many-to-many between Conversation and Campaign.
+
+    A single conversation can be associated with multiple campaigns when
+    several campaigns' url_patterns all match the visitor's page URL.
+
+    campaign_id on Conversation is kept as-is (first matched campaign)
+    for backward compatibility; this table is the authoritative source
+    for the full list of matched campaigns.
+    """
+    __tablename__ = "conversation_campaigns"
+
+    conversation_id = Column(
+        BigInteger,
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    campaign_id = Column(
+        BigInteger,
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    matched_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        comment="Timestamp when this campaign was matched to the conversation.",
+    )
+
+    __table_args__ = (
+        Index("ix_conv_campaigns_conv",     "conversation_id"),
+        Index("ix_conv_campaigns_campaign", "campaign_id"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConversationCampaign conversation_id={self.conversation_id!r} "
+            f"campaign_id={self.campaign_id!r}>"
+        )
+
+
 class ConversationInsights(Base):
     __tablename__ = "conversation_insights"
 

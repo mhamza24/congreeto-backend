@@ -233,29 +233,31 @@ async def get_active_campaigns_for_chatbot(
     return list(result.scalars().all())
 
 
-def match_campaign_for_url(
+def match_campaigns_for_url(
     campaigns: List[Campaign],
     page_url: Optional[str],
-) -> Optional[Campaign]:
+) -> List[Campaign]:
     """
-    Pure Python URL matching — no DB query.
+    Pure Python URL matching — no DB query.  Returns ALL matching campaigns.
 
     Algorithm:
-    1. Among campaigns WITH url_patterns: find those whose pattern appears
-       (case-insensitive substring) in page_url. If multiple match, the one
-       with the lowest sort_order wins (already sorted by the query).
-    2. If nothing matches, fall back to the campaign marked is_default=True.
-    3. If no default, return None (base chatbot behaviour, no overlay).
+    1. Among campaigns WITH url_patterns: collect every campaign whose pattern
+       appears (case-insensitive substring) in page_url.  The list is already
+       sorted by sort_order ASC so priority order is preserved.
+    2. If no url_patterns matched, fall back to the single campaign marked
+       is_default=True (catch-all).
+    3. Return [] if nothing matches (base chatbot behaviour, no overlay).
 
     This runs on the in-memory list returned by get_active_campaigns_for_chatbot()
     so there is no extra DB round-trip.
     """
     if not campaigns:
-        return None
+        return []
 
     url_lower = (page_url or "").lower()
+    matched: List[Campaign] = []
 
-    # Step 1 — URL pattern matching
+    # Step 1 — URL pattern matching (collect ALL matches, not just first)
     if url_lower:
         for campaign in campaigns:
             patterns = campaign.url_patterns or []
@@ -267,14 +269,28 @@ def match_campaign_for_url(
                         "[campaign] URL match: campaign=%s pattern=%r page_url=%r",
                         campaign.public_id, pattern, page_url,
                     )
-                    return campaign
+                    matched.append(campaign)
+                    break  # don't add same campaign twice for multiple patterns
 
-    # Step 2 — Default fallback
+    if matched:
+        return matched
+
+    # Step 2 — Default fallback (only when no URL-specific campaign matched)
     for campaign in campaigns:
         if campaign.is_default:
             logger.debug(
                 "[campaign] Default campaign selected: %s", campaign.public_id
             )
-            return campaign
+            return [campaign]
 
-    return None
+    return []
+
+
+# Keep old name as an alias so any callers outside the chat service still work.
+def match_campaign_for_url(
+    campaigns: List[Campaign],
+    page_url: Optional[str],
+) -> Optional[Campaign]:
+    """Deprecated — use match_campaigns_for_url which returns all matches."""
+    results = match_campaigns_for_url(campaigns, page_url)
+    return results[0] if results else None
