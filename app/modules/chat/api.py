@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import get_settings
 from app.core.database import get_db
 from app.core.response import ApiResponse
+from app.dependencies.auth import get_current_user
 from app.modules.chat import schemas, service
 from app.modules.chat.models import ConversationStatus
 
@@ -101,10 +102,13 @@ async def chat_endpoint(
 )
 async def admin_console_chat_endpoint(
     payload: schemas.AdminConsoleChatCreateRequest,
-     db: DBDep,
+    db: DBDep,
+    _current_user=Depends(get_current_user),
 ) -> ApiResponse[schemas.AdminConsoleChatReplyResponse]:
     try:
-        reply = await service.admin_console_chat( db,payload=payload)
+        reply = await service.admin_console_chat(db, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in admin_console_chat_endpoint")
         sentry_sdk.capture_exception()

@@ -76,20 +76,25 @@ class AdminConsoleChatCreateRequest(BaseModel):
     """
     Stateless admin console chat — no DB persistence.
     Pass the full conversation history (including the latest user message) on every call.
+    Resolves the chatbot via iframe_token to use its own system prompt.
     """
+    iframe_token: str = Field(
+        ..., min_length=1, max_length=64,
+        description="Chatbot embed token — used to resolve the chatbot and its system prompt.",
+    )
     messages: list[AdminConsoleMessage] = Field(
         ...,
         min_length=1,
         description="Full conversation history with roles. Latest user message must be last.",
     )
-    tenant_id: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="Optional tenant ID for custom personalization.",
-    )
     user_local_timestamp: Optional[datetime] = Field(
         default=None,
         description="User's local timestamp for time-aware system prompts (ISO format).",
+    )
+    page_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description="Optional page URL for future campaign matching context.",
     )
 
 
@@ -199,6 +204,9 @@ class ChatReplyResponse(BaseModel):
 class AdminConsoleChatReplyResponse(BaseModel):
     role: MessageRole
     content: str
+    rag_enabled: bool = Field(
+        description="Whether the chatbot's knowledge network (RAG) is enabled.",
+    )
 
 
 class ChatCompleteResponse(BaseModel):

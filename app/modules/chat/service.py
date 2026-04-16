@@ -37,7 +37,6 @@ from app.modules.open_ai import service as openai_service
 from app.utils.email_extractor import extract_and_validate_identity
 from app.utils.hashing_utils import hash_identity
 from app.utils.system_prompt_generator import build_campaign_overlays_block, build_dynamic_context
-from app.utils.system_prompt_admin_console import admin_console_system_prompt
 from app.utils.system_prompt_time_awareness import get_time_awareness_prompt
 from app.utils.system_prompt_previous_sessions import get_returning_visitor_prompt
 
@@ -425,22 +424,39 @@ async def admin_console_chat(
 ) -> schemas.AdminConsoleChatReplyResponse:
     """
     Stateless chat for the admin console.
-    Accepts full message history, calls the LLM, returns the reply.
-    Nothing is read from or written to the database.
+    Resolves the chatbot via iframe_token, uses its own system prompt,
+    and returns the reply with the rag_enabled flag.
+    Only reads from the database (chatbot lookup). Nothing is written.
     """
-    system_prompt = json.dumps(admin_console_system_prompt)
+    # ── 1. Resolve chatbot via iframe_token ─────────────────────────────────
+    chatbot = await chatbot_repo.get_chatbot_by_iframe_token(
+        db, iframe_token=payload.iframe_token
+    )
+    if chatbot is None:
+        raise ValueError("Chatbot not found. Check the iframe_token.")
 
-    if payload.tenant_id:
-        system_prompt += f"\n\nTenant context: {payload.tenant_id}"
+    if chatbot.status != "active":
+        return schemas.AdminConsoleChatReplyResponse(
+            role=MessageRole.assistant,
+            content=_BILLING_LIMIT_MESSAGE,
+            rag_enabled=False,
+        )
 
+    # ── 2. Network (RAG) enabled flag — read once, returned to frontend ──────
+    rag_enabled: bool = chatbot.rag_enabled
+
+    # ── 3. Build system prompt from the chatbot's own template ───────────────
+    system_prompt = chatbot.system_prompt_template or ""
     time_aware = get_time_awareness_prompt(payload.user_local_timestamp)
     system_prompt += "\n\nTime awareness: " + json.dumps(time_aware)
 
+    # ── 4. Build LLM messages from full history ──────────────────────────────
     llm_messages: list[dict] = [
         {"role": msg.role.value, "content": msg.content}
         for msg in payload.messages
     ]
 
+    # ── 5. Call LLM ──────────────────────────────────────────────────────────
     try:
         assistant_content = await openai_service.openai_call_conversation(
             llm_messages,
@@ -453,11 +469,13 @@ async def admin_console_chat(
     return schemas.AdminConsoleChatReplyResponse(
         role=MessageRole.assistant,
         content=assistant_content,
+        rag_enabled=rag_enabled,
     )
 
 
+
 # ---------------------------------------------------------------------------
-# 3. Conversation list (keyset paginated)
+# 4. Conversation list  (keyset paginated)
 # ---------------------------------------------------------------------------
 
 async def list_conversations(
