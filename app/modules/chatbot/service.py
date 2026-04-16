@@ -171,11 +171,18 @@ async def get_chatbot_embed(
             )
             matched = campaign_repo.match_campaign_for_url(active_campaigns, page_url=page_url)
             if matched and matched.welcome_message:
-                welcome_message = matched.welcome_message
-                logger.debug(
-                    "[embed] campaign welcome_message override campaign=%s page_url=%r",
-                    matched.public_id, page_url,
+                page_url_lower = page_url.lower()
+                url_matched = bool(matched.url_patterns) and any(
+                    p and p.lower() in page_url_lower
+                    for p in matched.url_patterns
                 )
+                whole_website = not matched.url_patterns and matched.is_default
+                if url_matched or whole_website:
+                    welcome_message = matched.welcome_message
+                    logger.debug(
+                        "[embed] campaign welcome_message override campaign=%s page_url=%r",
+                        matched.public_id, page_url,
+                    )
         except Exception as exc:
             logger.warning("[embed] Campaign matching failed (degrading gracefully): %s", exc)
 

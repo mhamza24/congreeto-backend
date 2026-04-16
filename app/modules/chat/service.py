@@ -302,14 +302,26 @@ async def create_or_continue_chat(
     system_prompt = "\n\n".join(p for p in prompt_parts if p)
 
     # ── 9. Build LLM message context ────────────────────────────────────────
-    # Show the campaign welcome_message only when the campaign targets a specific
-    # URL (url_patterns non-empty) or covers the whole website (is_default=True).
-    # A campaign with neither should not override the bot-level welcome message.
+    # Campaign welcome_message rules:
+    #   • URL-specific campaign (url_patterns non-empty): show welcome only when
+    #     the current page_url actually matches one of those patterns.
+    #     A URL-specific campaign can also have is_default=True but it should
+    #     still NOT show its welcome on unrelated pages.
+    #   • Whole-website campaign (url_patterns empty + is_default=True): show
+    #     welcome on every page — it is a true site-wide catch-all.
+    #   • Anything else: fall back to the bot-level welcome message.
     _campaign_welcome: str | None = None
     if matched_campaigns:
         _first = matched_campaigns[0]
-        if (_first.url_patterns or _first.is_default) and _first.welcome_message:
-            _campaign_welcome = _first.welcome_message
+        if _first.welcome_message:
+            _page_url_lower = (payload.page_url or "").lower()
+            _url_matched = bool(_first.url_patterns) and any(
+                p and p.lower() in _page_url_lower
+                for p in _first.url_patterns
+            )
+            _whole_website = not _first.url_patterns and _first.is_default
+            if _url_matched or _whole_website:
+                _campaign_welcome = _first.welcome_message
 
     welcome_message = (
         _campaign_welcome
