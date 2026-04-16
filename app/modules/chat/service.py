@@ -302,9 +302,17 @@ async def create_or_continue_chat(
     system_prompt = "\n\n".join(p for p in prompt_parts if p)
 
     # ── 9. Build LLM message context ────────────────────────────────────────
-    # Priority: first matched campaign welcome_message → chatbot welcome_message → default
+    # Show the campaign welcome_message only when the campaign targets a specific
+    # URL (url_patterns non-empty) or covers the whole website (is_default=True).
+    # A campaign with neither should not override the bot-level welcome message.
+    _campaign_welcome: str | None = None
+    if matched_campaigns:
+        _first = matched_campaigns[0]
+        if (_first.url_patterns or _first.is_default) and _first.welcome_message:
+            _campaign_welcome = _first.welcome_message
+
     welcome_message = (
-        (matched_campaigns[0].welcome_message if matched_campaigns else None)
+        _campaign_welcome
         or chatbot.welcome_message
         or "Hi, I am ARIA. What can I help you with today?"
     )
