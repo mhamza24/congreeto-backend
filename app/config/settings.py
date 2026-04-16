@@ -86,7 +86,7 @@ class Settings(BaseSettings):
 
     DEFAULT_SEAT_LIMIT: int = 3
 
-    FRONTEND_URL: str = "https://kh-dashboard-seven.vercel.app" #"http://localhost:3000"
+    FRONTEND_URL: str = "https://veloce-dashboard-client.vercel.app" #"https://kh-dashboard-seven.vercel.app" #"http://localhost:3000"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins.
