@@ -67,6 +67,10 @@ _CHAT_HISTORY_LIMIT = _settings.CHAT_HISTORY_LIMIT
 _DEFAULT_MAX_TOKENS = _settings.BILLING_DEFAULT_MAX_TOKENS_PER_MONTH
 _DEFAULT_MAX_CONVERSATIONS = _settings.BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH
 
+# Max user turns to include in the synthesized RAG query.
+# Keeps the embedding input bounded even for very long conversations.
+_RAG_QUERY_USER_TURNS = 8
+
 
 # ---------------------------------------------------------------------------
 # 1. Chat — create or continue  (main widget endpoint)
@@ -199,7 +203,31 @@ async def create_or_continue_chat(
             )
             returning_visitor_prompt_data = get_returning_visitor_prompt(previous_sessions)
 
+    # ── 6.5. Load conversation history early (needed for RAG query synthesis) ──
+    # For new conversations history is empty; we still set the variable here so
+    # step 9 can reuse it without a second DB round-trip.
+    conversation_history: list = []
+    if not is_new:
+        try:
+            conversation_history = await repo.get_conversation_history(
+                db,
+                conversation__id=conversation.id,
+                limit=_CHAT_HISTORY_LIMIT,
+            )
+        except Exception as exc:
+            logger.warning("[chat] Failed to load conversation history early: %s", exc)
+
     # ── 7. RAG retrieval ────────────────────────────────────────────────────
+    # Build a synthesized query from all prior user turns + the current message
+    # so the embedding captures full intent (rooms, budget, suburb, etc.) rather
+    # than only the latest short follow-up like "show me what's available".
+    _prior_user_msgs = [
+        msg.content for msg in conversation_history
+        if msg.role == MessageRole.user
+    ][-_RAG_QUERY_USER_TURNS:]  # cap to last N turns so embedding stays bounded
+    rag_query = " ".join(_prior_user_msgs + [payload.message]) if _prior_user_msgs else payload.message
+    logger.info("[rag] synthesized query from %d prior user turn(s): %r", len(_prior_user_msgs), rag_query[:120])
+
     rag_chunk_texts: list[str] = []
     if chatbot.rag_enabled:
         try:
@@ -213,7 +241,7 @@ async def create_or_continue_chat(
                     db,
                     tenant_id=tenant_db_id,
                     chatbot_public_id=chatbot.public_id,
-                    query=payload.message,
+                    query=rag_query,
                     top_k=_RAG_TOP_K,
                     listing_top_k=_LISTING_TOP_K,
                 )
@@ -284,14 +312,10 @@ async def create_or_continue_chat(
     llm_messages: list[dict] = []
 
     if not is_new:
-        history = await repo.get_conversation_history(
-            db,
-            conversation__id=conversation.id,
-            limit=_CHAT_HISTORY_LIMIT,
-        )
+        # Reuse history loaded in step 6.5 — no second DB round-trip needed
         llm_messages = [
             {"role": msg.role.value, "content": msg.content}
-            for msg in history
+            for msg in conversation_history
         ]
     else:
         llm_messages.append({"role": "assistant", "content": welcome_message})
