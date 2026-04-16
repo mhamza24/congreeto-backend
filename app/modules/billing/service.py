@@ -7,6 +7,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from app.modules.audit import repository as audit
+
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +77,15 @@ async def create_plan(
         sort_order       = payload.sort_order,
     )
     plan = await repo.create_plan(db, plan=plan)
+
+    await audit.write(
+        db,
+        entity_type="plans",
+        action=audit.CREATE,
+        entity_id=plan.id,
+        diff={"after": {"slug": plan.slug, "name": plan.name, "billing_interval": str(plan.billing_interval)}},
+    )
+
     await db.commit()
     logger.info("[billing] plan created slug=%s public_id=%s", plan.slug, plan.public_id)
     return schemas.PlanResponse.from_plan(plan)
@@ -84,12 +95,22 @@ async def update_plan(
     db: AsyncSession, *, plan_public_id: str, payload: schemas.PlanUpdateRequest
 ) -> schemas.PlanResponse:
     plan = await _get_plan_or_404(db, public_id=plan_public_id)
-    changed_fields = list(payload.model_dump(exclude_unset=True).keys())
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed = payload.model_dump(exclude_unset=True)
+    changed_fields = list(changed.keys())
+    for field, value in changed.items():
         if field == "limits" and value is not None:
             setattr(plan, field, value if isinstance(value, dict) else value.model_dump())
         else:
             setattr(plan, field, value)
+
+    await audit.write(
+        db,
+        entity_type="plans",
+        action=audit.UPDATE,
+        entity_id=plan.id,
+        diff={"after": {k: str(v) for k, v in changed.items() if k != "limits"}},
+    )
+
     await db.commit()
     await db.refresh(plan)
     logger.info("[billing] plan updated public_id=%s fields=%s", plan_public_id, changed_fields)
@@ -120,6 +141,15 @@ async def create_addon(
     db.add(addon)
     await db.flush()
     await db.refresh(addon)
+
+    await audit.write(
+        db,
+        entity_type="addons",
+        action=audit.CREATE,
+        entity_id=addon.id,
+        diff={"after": {"slug": addon.slug, "name": addon.name, "type": str(addon.type)}},
+    )
+
     await db.commit()
     logger.info("[billing] addon created slug=%s public_id=%s", addon.slug, addon.public_id)
     return schemas.AddonResponse.from_addon(addon)
@@ -141,6 +171,16 @@ async def activate_subscription(
         currency=payload.currency, trial_days=payload.trial_days,
         notes=payload.notes,
     )
+
+    await audit.write(
+        db,
+        entity_type="subscriptions",
+        action=audit.ACTIVATE,
+        tenant_id=tenant.id,
+        entity_id=sub.id,
+        diff={"after": {"plan_slug": plan.slug, "status": sub.status.value, "currency": sub.currency}},
+    )
+
     await db.commit()
     logger.info("[billing] subscription activated tenant=%s plan=%s sub=%s", tenant_public_id, plan.slug, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
@@ -157,6 +197,16 @@ async def change_plan(
         db, tenant=tenant, new_plan_id=plan.id,
         currency=payload.currency, notes=payload.notes,
     )
+
+    await audit.write(
+        db,
+        entity_type="subscriptions",
+        action=audit.CHANGE_PLAN,
+        tenant_id=tenant.id,
+        entity_id=sub.id,
+        diff={"after": {"plan_slug": plan.slug, "status": sub.status.value}},
+    )
+
     await db.commit()
     logger.info("[billing] plan changed tenant=%s new_plan=%s sub=%s", tenant_public_id, plan.slug, sub.public_id)
     return _build_subscription_response(sub, plan=plan)
@@ -177,6 +227,16 @@ async def cancel_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active subscription found.",
         )
+
+    await audit.write(
+        db,
+        entity_type="subscriptions",
+        action=audit.CANCEL,
+        tenant_id=tenant.id,
+        entity_id=sub.id,
+        diff={"after": {"status": sub.status.value, "immediately": payload.immediately}},
+    )
+
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
     logger.info("[billing] subscription cancelled tenant=%s sub=%s", tenant_public_id, sub.public_id)
@@ -202,6 +262,16 @@ async def mark_past_due(
             detail="Subscription is already past_due.",
         )
     sub = await contracts.mark_past_due(db, tenant=tenant, notes=notes)
+
+    await audit.write(
+        db,
+        entity_type="subscriptions",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        entity_id=sub.id,
+        diff={"before": {"status": "active"}, "after": {"status": "past_due"}},
+    )
+
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
     logger.info("[billing] subscription marked past_due tenant=%s sub=%s", tenant_public_id, sub.public_id)
@@ -227,6 +297,16 @@ async def mark_active(
             detail=f"Cannot mark active — subscription is currently '{sub.status.value}', not past_due.",
         )
     sub = await contracts.mark_active(db, tenant=tenant, notes=notes)
+
+    await audit.write(
+        db,
+        entity_type="subscriptions",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        entity_id=sub.id,
+        diff={"before": {"status": "past_due"}, "after": {"status": "active"}},
+    )
+
     await db.commit()
     plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
     logger.info("[billing] subscription restored to active tenant=%s sub=%s", tenant_public_id, sub.public_id)
@@ -260,6 +340,16 @@ async def add_addon(
         subscription_id=sub.id, quantity=payload.quantity,
         currency=payload.currency, notes=payload.notes,
     )
+
+    await audit.write(
+        db,
+        entity_type="tenant_addons",
+        action=audit.CREATE,
+        tenant_id=tenant.id,
+        entity_id=addon_sub.id,
+        diff={"after": {"addon_slug": addon.slug, "quantity": payload.quantity}},
+    )
+
     await db.commit()
     logger.info("[billing] addon added tenant=%s addon=%s qty=%s", tenant_public_id, addon.slug, payload.quantity)
     return _build_addon_response(addon_sub, addon=addon)
@@ -293,6 +383,15 @@ async def remove_addon(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot remove {payload.quantity} units — tenant only has {existing.quantity}.",
         )
+    await audit.write(
+        db,
+        entity_type="tenant_addons",
+        action=audit.DELETE,
+        tenant_id=tenant.id,
+        entity_id=existing.id,
+        diff={"before": {"addon_slug": addon.slug, "quantity": payload.quantity or existing.quantity}},
+    )
+
     await contracts.remove_addon(
         db, tenant_id=tenant.id, addon_id=addon.id,
         quantity=payload.quantity, notes=payload.notes,

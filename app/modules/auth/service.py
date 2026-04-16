@@ -270,6 +270,17 @@ async def verify_email(
     logger.info("[auth] email verified user=%s", existing_user.public_id)
     updated_user = await user_repo.mark_email_verified_and_update_status(db, user_id=existing_user.id)
 
+    # ── Audit log — email verified ────────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.VERIFY,
+        user_id=updated_user.id,
+        entity_id=updated_user.id,
+        diff={"after": {"email_verified": True}},
+    )
+    await db.commit()
+
     # 5. Issue fresh token pair with verified identity
     token_subject = get_token_subject(updated_user)
     return schemas.OTPVerifyResponse(
@@ -307,6 +318,17 @@ async def create_admin_user(
 
     # 3. Persist — no OTP, no email
     user = await user_repo.create_user(db, user=user)
+
+    # ── Audit log — admin user created ────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.CREATE,
+        user_id=user.id,
+        entity_id=user.id,
+        diff={"after": {"email": user.email, "is_superadmin": True, "public_id": user.public_id}},
+    )
+
     await db.commit()
     logger.info("[auth] admin user created public_id=%s email=%s", user.public_id, user.email)
 
@@ -349,6 +371,18 @@ async def login_admin_user(
         raise InvalidCredentialsError()
 
     await user_repo.update_login_time_by_id(db, user_id=existing_user.id)
+
+    # ── Audit log — admin login ───────────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.LOGIN,
+        user_id=existing_user.id,
+        entity_id=existing_user.id,
+        diff={},
+    )
+
+    await db.commit()
     logger.info("[auth] admin login success public_id=%s email=%s", existing_user.public_id, existing_user.email)
 
     jwt_subject = get_token_subject(existing_user)
@@ -592,6 +626,17 @@ async def verify_forgot_password(
     # OTP valid — update password
     new_hash = hashing_utils.hash_password(payload.new_password)
     await user_repo.update_password_by_id(db, user_id=existing_user.id, new_password_hash=new_hash)
+
+    # ── Audit log — password reset ────────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="users",
+        action=audit.RESET_PASSWORD,
+        user_id=existing_user.id,
+        entity_id=existing_user.id,
+        diff={},
+    )
+    await db.commit()
 
     logger.info("[auth] verify_forgot_password password updated public_id=%s", existing_user.public_id)
 

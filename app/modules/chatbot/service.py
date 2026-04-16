@@ -114,6 +114,7 @@ async def create_chatbot(
 
     await db.commit()
     await db.refresh(chatbot)
+    logger.info("[chatbot] created public_id=%s tenant=%s name=%s", chatbot.public_id, tenant_id, chatbot.name)
     return schemas.ChatbotResponse.model_validate(chatbot)
 
 
@@ -276,6 +277,7 @@ async def update_chatbot(
 
     await db.commit()
     await db.refresh(chatbot)
+    logger.info("[chatbot] updated public_id=%s tenant=%s fields=%s", chatbot.public_id, tenant_id, list(updates.keys()))
     return schemas.ChatbotResponse.model_validate(chatbot)
 
 
@@ -323,6 +325,7 @@ async def activate_chatbot(
 
     await db.commit()
     await db.refresh(chatbot)
+    logger.info("[chatbot] activated public_id=%s tenant=%s", chatbot.public_id, tenant_id)
     return schemas.ChatbotResponse.model_validate(chatbot)
 
 
@@ -358,8 +361,19 @@ async def create_knowledge_source(
         config=config,
         public_id=_new_public_id(),
     )
+
+    await audit.write(
+        db,
+        entity_type="knowledge_sources",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        entity_id=source.id,
+        diff={"after": {"name": source.name, "type": payload.type, "chatbot_public_id": chatbot_public_id}},
+    )
+
     await db.commit()
     await db.refresh(source)
+    logger.info("[chatbot] knowledge_source created public_id=%s tenant=%s type=%s", source.public_id, tenant_id, payload.type)
     return schemas.KnowledgeSourceResponse.model_validate(source)
 
 
@@ -398,6 +412,17 @@ async def update_knowledge_source(
         name=payload.name,
         config=payload.config,
     )
+
+    await audit.write(
+        db,
+        entity_type="knowledge_sources",
+        action=audit.UPDATE,
+        tenant_id=tenant_id,
+        entity_id=source.id,
+        diff={"after": {"name": payload.name, "type": str(payload.type)}},
+    )
+
+    logger.info("[chatbot] knowledge_source updated public_id=%s tenant=%s", ks_public_id, tenant_id)
     return schemas.KnowledgeSourceResponse.model_validate(source)
 
 
@@ -413,7 +438,17 @@ async def delete_knowledge_source(
     if not source:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge source not found.")
 
+    await audit.write(
+        db,
+        entity_type="knowledge_sources",
+        action=audit.DELETE,
+        tenant_id=tenant_id,
+        entity_id=source.id,
+        diff={"before": {"name": source.name, "type": str(source.type)}},
+    )
+
     await repo.delete_knowledge_source(db, source=source)
+    logger.info("[chatbot] knowledge_source deleted public_id=%s tenant=%s", ks_public_id, tenant_id)
 
 
 # =============================================================================
@@ -582,6 +617,16 @@ async def upload_document(
         uploaded_by=user_id,
         public_id=_new_public_id(),
     )
+    await audit.write(
+        db,
+        entity_type="documents",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=doc.id,
+        diff={"after": {"file_name": file_name, "file_type": file_type, "file_size_bytes": file_size_bytes}},
+    )
+
     await db.commit()
     await db.refresh(doc)
 
@@ -591,7 +636,7 @@ async def upload_document(
         tenant_id=tenant_id,
         chatbot_config_id=source.chatbot_config_id,
     )
-    logger.info(f"Enqueued process_document task for doc_id={doc.id}")
+    logger.info("[chatbot] document uploaded doc_id=%s tenant=%s file=%s", doc.id, tenant_id, file_name)
 
     return schemas.DocumentResponse.model_validate(doc)
 
@@ -1159,6 +1204,16 @@ async def create_manual_entry(
         uploaded_by=user_id,
         public_id=_new_public_id(),
     )
+    await audit.write(
+        db,
+        entity_type="documents",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_id=doc.id,
+        diff={"after": {"title": payload.title, "file_type": "text", "ks_public_id": ks_public_id}},
+    )
+
     await db.commit()
     await db.refresh(doc)
 
@@ -1167,7 +1222,7 @@ async def create_manual_entry(
         tenant_id=tenant_id,
         chatbot_config_id=source.chatbot_config_id,
     )
-    logger.info(f"Enqueued process_manual_entry task for doc_id={doc.id}")
+    logger.info("[chatbot] manual entry created doc_id=%s tenant=%s title=%s", doc.id, tenant_id, payload.title)
 
     return schemas.DocumentResponse.model_validate(doc)
 
@@ -1193,6 +1248,19 @@ async def admin_set_chatbot_status(
     )
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
+
+    # repo already committed; write audit in a new operation
+    await audit.write_system(
+        db,
+        entity_type="chatbot_configs",
+        action=audit.UPDATE,
+        tenant_id=chatbot.tenant_id,
+        entity_id=chatbot.id,
+        diff={"after": {"status": new_status}},
+    )
+    await db.commit()
+
+    logger.info("[chatbot] admin set status public_id=%s new_status=%s", chatbot_public_id, new_status)
     return schemas.ChatbotResponse.model_validate(chatbot)
 
 
@@ -1201,6 +1269,27 @@ async def admin_delete_chatbot(
     *,
     chatbot_public_id: str,
 ) -> None:
+    from sqlalchemy import select as _select
+    from app.modules.chatbot.models import ChatbotConfig
+
+    # Fetch first to capture audit data before the repo deletes and commits
+    _result = await db.execute(_select(ChatbotConfig).where(ChatbotConfig.public_id == chatbot_public_id))
+    _chatbot = _result.scalar_one_or_none()
+
     deleted = await repo.admin_delete_chatbot(db, public_id=chatbot_public_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
+
+    # Write audit in a new operation (repo already committed the delete above)
+    if _chatbot is not None:
+        await audit.write_system(
+            db,
+            entity_type="chatbot_configs",
+            action=audit.DELETE,
+            tenant_id=_chatbot.tenant_id,
+            entity_id=_chatbot.id,
+            diff={"before": {"public_id": chatbot_public_id, "name": _chatbot.name}},
+        )
+        await db.commit()
+
+    logger.info("[chatbot] admin deleted chatbot public_id=%s", chatbot_public_id)

@@ -179,9 +179,20 @@ async def update_tenant(
             detail="Only admins and owners can update tenant details.",
         )
 
-    changed_fields = list(payload.model_dump(exclude_unset=True).keys())
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed = payload.model_dump(exclude_unset=True)
+    changed_fields = list(changed.keys())
+    for field, value in changed.items():
         setattr(tenant, field, value)
+
+    await audit.write(
+        db,
+        entity_type="tenants",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        user_id=caller_tu.user_id,
+        entity_id=tenant.id,
+        diff={"after": {k: str(v) for k, v in changed.items()}},
+    )
 
     await db.commit()
     await db.refresh(tenant)
@@ -382,6 +393,17 @@ async def invite_user(
             )
         )
 
+    # ── Audit log — user invited ──────────────────────────────────────────────
+    await audit.write(
+        db,
+        entity_type="tenant_invites",
+        action=audit.INVITE,
+        tenant_id=tenant.id,
+        user_id=caller_tu.user_id,
+        entity_id=invitee.id,
+        diff={"after": {"email": payload.email, "role": payload.role.value}},
+    )
+
     await db.commit()
 
     invite_link = f"{settings.FRONTEND_URL}/accept-invite?code={raw_otp}"
@@ -496,6 +518,17 @@ async def accept_invite(
             )
         )
 
+    # ── Audit log — invite accepted / member joined ───────────────────────────
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.CREATE,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        entity_id=user.id,
+        diff={"after": {"role": str(role), "tenant_public_id": tenant.public_id}},
+    )
+
     await db.commit()
     logger.info("[tenants] invite accepted user=%s tenant=%s role=%s", user.public_id, tenant.public_id, role)
     return schemas.AcceptInviteResponse(public_id=str(user.public_id))
@@ -527,6 +560,17 @@ async def update_member_role(
 
     old_role = target_tu.role
     target_tu.role = payload.role
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        user_id=caller_tu.user_id,
+        entity_id=target_tu.user_id,
+        diff={"before": {"role": str(old_role)}, "after": {"role": str(payload.role)}},
+    )
+
     await db.commit()
     await db.refresh(target_tu)
     logger.info("[tenants] member role changed tenant=%s member=%s old=%s new=%s", tenant.public_id, member_public_id, old_role, payload.role)
@@ -587,6 +631,17 @@ async def update_member_status(
 
     old_status = target_tu.status
     target_tu.status = payload.status
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        user_id=current_user_id,
+        entity_id=target_tu.user_id,
+        diff={"before": {"status": str(old_status)}, "after": {"status": str(payload.status)}},
+    )
+
     await db.commit()
     await db.refresh(target_tu)
     logger.info("[tenants] member status changed tenant=%s member=%s old=%s new=%s", tenant.public_id, member_public_id, old_status, payload.status)
@@ -617,6 +672,19 @@ async def remove_member(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The primary owner cannot be removed from the tenant.",
         )
+
+    removed_user_id = target_tu.user_id
+    removed_role = str(target_tu.role)
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.DELETE,
+        tenant_id=tenant.id,
+        user_id=current_user_id,
+        entity_id=removed_user_id,
+        diff={"before": {"role": removed_role, "member_public_id": member_public_id}},
+    )
 
     await db.delete(target_tu)
     await db.commit()
@@ -689,10 +757,22 @@ async def admin_update_tenant(
 ) -> schemas.TenantResponse:
     """Super-admin can edit any tenant's profile directly, without being a member."""
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changed = payload.model_dump(exclude_unset=True)
+    for field, value in changed.items():
         setattr(tenant, field, value)
+
+    await audit.write(
+        db,
+        entity_type="tenants",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        entity_id=tenant.id,
+        diff={"after": {k: str(v) for k, v in changed.items()}},
+    )
+
     await db.commit()
     await db.refresh(tenant)
+    logger.info("[tenants] admin updated tenant=%s fields=%s", tenant_public_id, list(changed.keys()))
     return schemas.TenantResponse.model_validate(tenant)
 
 
@@ -703,6 +783,16 @@ async def admin_delete_tenant(
 ) -> None:
     """Super-admin soft-deletes a tenant. All data is retained but access is blocked."""
     tenant = await _get_tenant_or_404(db, public_id=tenant_public_id)
+
+    await audit.write(
+        db,
+        entity_type="tenants",
+        action=audit.DELETE,
+        tenant_id=tenant.id,
+        entity_id=tenant.id,
+        diff={"before": {"name": tenant.name, "slug": tenant.slug, "status": str(tenant.status)}},
+    )
+
     await repo.soft_delete_tenant(db, tenant=tenant)
     await db.commit()
     logger.info("[tenants] tenant soft-deleted tenant=%s", tenant.public_id)
@@ -727,6 +817,16 @@ async def admin_update_member_role(
         )
     old_role = target_tu.role
     target_tu.role = payload.role
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        entity_id=target_tu.user_id,
+        diff={"before": {"role": str(old_role)}, "after": {"role": str(payload.role)}},
+    )
+
     await db.commit()
     await db.refresh(target_tu)
     logger.info("[tenants] admin role changed tenant=%s member=%s old=%s new=%s", tenant_public_id, member_public_id, old_role, payload.role)
@@ -752,6 +852,16 @@ async def admin_update_member_status(
         )
     old_status = target_tu.status
     target_tu.status = payload.status
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.UPDATE,
+        tenant_id=tenant.id,
+        entity_id=target_tu.user_id,
+        diff={"before": {"status": str(old_status)}, "after": {"status": str(payload.status)}},
+    )
+
     await db.commit()
     await db.refresh(target_tu)
     logger.info("[tenants] admin status changed tenant=%s member=%s old=%s new=%s", tenant_public_id, member_public_id, old_status, payload.status)
@@ -774,6 +884,16 @@ async def admin_remove_member(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The primary owner cannot be removed from the tenant.",
         )
+
+    await audit.write(
+        db,
+        entity_type="tenant_users",
+        action=audit.DELETE,
+        tenant_id=tenant.id,
+        entity_id=target_tu.user_id,
+        diff={"before": {"role": str(target_tu.role), "member_public_id": member_public_id}},
+    )
+
     await db.delete(target_tu)
     await db.commit()
     logger.info("[tenants] admin removed member tenant=%s member=%s", tenant_public_id, member_public_id)

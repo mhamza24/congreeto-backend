@@ -115,6 +115,8 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
 
+    logger.info("[campaigns] created public_id=%s tenant=%s chatbot=%s name=%s", campaign.public_id, tenant_id, chatbot_public_id, campaign.name)
+
     # ── 5. Enqueue background prompt generation ───────────────────────────────
     tasks.generate_campaign_prompt.delay(campaign.public_id, tenant_id)
 
@@ -131,6 +133,7 @@ async def get_campaign(
         db, tenant_id=tenant_id, public_id=public_id
     )
     if campaign is None:
+        logger.warning("[campaigns] get_campaign not found public_id=%s tenant=%s", public_id, tenant_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found.")
 
     # Fetch chatbot public_id for the response
@@ -138,6 +141,7 @@ async def get_campaign(
         db, tenant_id=tenant_id, chatbot_id=campaign.chatbot_config_id
     )
     chatbot_public_id = chatbot.public_id if chatbot else ""
+    logger.debug("[campaigns] get_campaign found public_id=%s tenant=%s", public_id, tenant_id)
     return _to_response(campaign, chatbot_public_id=chatbot_public_id)
 
 
@@ -162,6 +166,8 @@ async def list_campaigns(
         db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id,
         limit=limit, offset=offset,
     )
+
+    logger.debug("[campaigns] list_campaigns total=%d tenant=%s chatbot=%s", total, tenant_id, chatbot_public_id)
 
     # Build chatbot_public_id map to avoid N+1
     chatbot_id_map: dict[int, str] = {}
@@ -232,6 +238,8 @@ async def update_campaign(
     await db.commit()
     await db.refresh(campaign)
 
+    logger.info("[campaigns] updated public_id=%s tenant=%s fields=%s", public_id, tenant_id, list(updates.keys()))
+
     # Re-generate prompt only when content-relevant fields changed
     _PROMPT_FIELDS = {"name", "description", "url_patterns", "welcome_message", "prompt_overlay"}
     if updates.keys() & _PROMPT_FIELDS:
@@ -274,6 +282,8 @@ async def set_campaign_status(
     await db.commit()
     await db.refresh(campaign)
 
+    logger.info("[campaigns] status changed public_id=%s tenant=%s new_status=%s", public_id, tenant_id, payload.status)
+
     chatbot = await chatbot_repo.get_chatbot_by_id(
         db, tenant_id=tenant_id, chatbot_id=campaign.chatbot_config_id
     )
@@ -296,6 +306,7 @@ async def delete_campaign(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found.")
 
     campaign_id = campaign.id
+    campaign_name = campaign.name
     deleted = await repo.delete_campaign(db, tenant_id=tenant_id, public_id=public_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found.")
@@ -307,10 +318,11 @@ async def delete_campaign(
         tenant_id=tenant_id,
         user_id=user_id,
         entity_id=campaign_id,
-        diff={"before": {"name": campaign.name}},
+        diff={"before": {"name": campaign_name}},
         request=request,
     )
     await db.commit()
+    logger.info("[campaigns] deleted public_id=%s tenant=%s name=%s", public_id, tenant_id, campaign_name)
 
 
 # =============================================================================

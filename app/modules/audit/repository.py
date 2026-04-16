@@ -38,15 +38,20 @@ logger = logging.getLogger(__name__)
 # ── Public audit actions ───────────────────────────────────────────────────────
 # Keep these consistent so Sentry/search/dashboards can filter by action name.
 
-CREATE   = "create"
-UPDATE   = "update"
-DELETE   = "delete"
-SUSPEND  = "suspend"
-RESTORE  = "restore"
-LOGIN    = "login"
-LOGOUT   = "logout"
-INVITE   = "invite"
-EXPORT   = "export"
+CREATE         = "create"
+UPDATE         = "update"
+DELETE         = "delete"
+SUSPEND        = "suspend"
+RESTORE        = "restore"
+LOGIN          = "login"
+LOGOUT         = "logout"
+INVITE         = "invite"
+EXPORT         = "export"
+VERIFY         = "verify"
+RESET_PASSWORD = "reset_password"
+CANCEL         = "cancel"
+ACTIVATE       = "activate"
+CHANGE_PLAN    = "change_plan"
 
 
 async def write(
