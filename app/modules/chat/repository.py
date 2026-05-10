@@ -452,6 +452,13 @@ async def upsert_conversation_insights(
     now = datetime.now(timezone.utc)
 
     # ── 1. Upsert insights ───────────────────────────────────────────────────
+    # Generic columns are stored directly; everything else goes into industry_insights JSONB.
+    _GENERIC_KEYS = {
+        "lead_score", "lead_tier", "sentiment", "engagement_score",
+        "topics_mentioned", "ai_summary", "ai_insights", "processing_version",
+    }
+    _industry_insights = {k: v for k, v in insights.items() if k not in _GENERIC_KEYS and v is not None}
+
     stmt = (
         pg_insert(ConversationInsights)
         .values(
@@ -459,20 +466,12 @@ async def upsert_conversation_insights(
             tenant_id=tenant_id,
             lead_score=insights.get("lead_score"),
             lead_tier=insights.get("lead_tier"),
-            intent=insights.get("intent"),
-            budget_min=insights.get("budget_min"),
-            budget_max=insights.get("budget_max"),
-            budget_currency=insights.get("budget_currency"),
-            suburbs_mentioned=insights.get("suburbs_mentioned"),
-            cities_mentioned=insights.get("cities_mentioned"),
-            property_types=insights.get("property_types"),
-            bedrooms_wanted=insights.get("bedrooms_wanted"),
-            timeline=insights.get("timeline"),
             sentiment=insights.get("sentiment"),
             engagement_score=insights.get("engagement_score"),
             topics_mentioned=insights.get("topics_mentioned"),
             ai_summary=insights.get("ai_summary"),
             ai_insights=insights.get("ai_insights"),
+            industry_insights=_industry_insights,
             processed_at=now,
             processing_version=insights.get("processing_version", "v1.0"),
         )
@@ -481,20 +480,12 @@ async def upsert_conversation_insights(
             set_=dict(
                 lead_score=insights.get("lead_score"),
                 lead_tier=insights.get("lead_tier"),
-                intent=insights.get("intent"),
-                budget_min=insights.get("budget_min"),
-                budget_max=insights.get("budget_max"),
-                budget_currency=insights.get("budget_currency"),
-                suburbs_mentioned=insights.get("suburbs_mentioned"),
-                cities_mentioned=insights.get("cities_mentioned"),
-                property_types=insights.get("property_types"),
-                bedrooms_wanted=insights.get("bedrooms_wanted"),
-                timeline=insights.get("timeline"),
                 sentiment=insights.get("sentiment"),
                 engagement_score=insights.get("engagement_score"),
                 topics_mentioned=insights.get("topics_mentioned"),
                 ai_summary=insights.get("ai_summary"),
                 ai_insights=insights.get("ai_insights"),
+                industry_insights=_industry_insights,
                 processed_at=now,
                 processing_version=insights.get("processing_version", "v1.0"),
             )
@@ -572,15 +563,14 @@ async def upsert_website_conversation_insights(
     """
     now = datetime.now(timezone.utc)
 
-    # ── Remap B2B fields from their repurposed column names ──────────────────
-    # These clarify intent at the call site — the DB columns are shared,
-    # but the semantics differ between chatbot contexts.
-    subscription_preference = insights.get("budget_currency")   # "monthly" | "annual" | None
-    pain_points             = insights.get("suburbs_mentioned")  # string[] | None
-    business_locations      = insights.get("cities_mentioned")   # string[] | None
-    business_type           = insights.get("property_types")     # ["real_estate_agency"] | None
-
     # ── 1. Upsert insights ───────────────────────────────────────────────────
+    # B2B website context — all industry-specific fields go into industry_insights JSONB.
+    _GENERIC_KEYS = {
+        "lead_score", "lead_tier", "sentiment", "engagement_score",
+        "topics_mentioned", "ai_summary", "ai_insights", "processing_version",
+    }
+    _industry_insights = {k: v for k, v in insights.items() if k not in _GENERIC_KEYS and v is not None}
+
     stmt = (
         pg_insert(ConversationInsights)
         .values(
@@ -588,25 +578,12 @@ async def upsert_website_conversation_insights(
             tenant_id           = tenant_id,
             lead_score          = insights.get("lead_score"),
             lead_tier           = insights.get("lead_tier"),
-            intent              = insights.get("intent"),
-
-            # Not applicable in B2B context — always None
-            budget_min          = None,
-            budget_max          = None,
-            bedrooms_wanted     = None,
-
-            # Repurposed columns — B2B semantics
-            budget_currency     = subscription_preference,
-            suburbs_mentioned   = pain_points,
-            cities_mentioned    = business_locations,
-            property_types      = business_type,
-
-            timeline            = insights.get("timeline"),
             sentiment           = insights.get("sentiment"),
             engagement_score    = insights.get("engagement_score"),
             topics_mentioned    = insights.get("topics_mentioned"),
             ai_summary          = insights.get("ai_summary"),
             ai_insights         = insights.get("ai_insights"),
+            industry_insights   = _industry_insights,
             processed_at        = now,
             processing_version  = insights.get("processing_version", "v1.0-website"),
         )
@@ -615,23 +592,12 @@ async def upsert_website_conversation_insights(
             set_=dict(
                 lead_score          = insights.get("lead_score"),
                 lead_tier           = insights.get("lead_tier"),
-                intent              = insights.get("intent"),
-
-                budget_min          = None,
-                budget_max          = None,
-                bedrooms_wanted     = None,
-
-                budget_currency     = subscription_preference,
-                suburbs_mentioned   = pain_points,
-                cities_mentioned    = business_locations,
-                property_types      = business_type,
-
-                timeline            = insights.get("timeline"),
                 sentiment           = insights.get("sentiment"),
                 engagement_score    = insights.get("engagement_score"),
                 topics_mentioned    = insights.get("topics_mentioned"),
                 ai_summary          = insights.get("ai_summary"),
                 ai_insights         = insights.get("ai_insights"),
+                industry_insights   = _industry_insights,
                 processed_at        = now,
                 processing_version  = insights.get("processing_version", "v1.0-website"),
             )

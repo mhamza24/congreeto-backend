@@ -44,14 +44,14 @@ _CSV_MIME_TYPES = {
 @router.get(
     "/{tenant_public_id}/listings",
     response_model=PagedApiResponse[List[schemas.ListingResponse]],
-    summary="List all listings for the tenant",
+    summary="List listings — filter by industry, status, location, or any attribute",
 )
 async def list_listings(
     tenant_public_id: str,
     db: DBDep,
     ctx: CtxDep,
+    industry: Optional[str] = None,
     suburb: Optional[str] = None,
-    listing_type: Optional[str] = None,
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -60,8 +60,8 @@ async def list_listings(
         data, total = await service.list_listings(
             db,
             tenant_id=ctx.tenant.id,
+            industry=industry,
             suburb=suburb,
-            listing_type=listing_type,
             status_filter=status_filter,
             limit=limit,
             offset=offset,
@@ -125,14 +125,22 @@ async def create_listing(
     "/{tenant_public_id}/listings/upload",
     response_model=ApiResponse[schemas.ListingUploadJobResponse],
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload an Excel (.xlsx/.xls) or CSV (.csv) file — rows parsed by LLM and imported in background",
+    summary="Upload an Excel or CSV file — rows parsed by LLM and imported in background",
 )
 async def upload_listing_file(
     tenant_public_id: str,
     db: DBDep,
     ctx: CtxDep,
-    file: UploadFile = File(..., description=".xlsx, .xls, or .csv file with one listing per row"),
+    file: UploadFile = File(..., description=".xlsx, .xls, or .csv file with one item per row"),
+    chatbot_id: Optional[str] = None,
+    industry: Optional[str] = None,
 ) -> ApiResponse[schemas.ListingUploadJobResponse]:
+    """
+    chatbot_id : public_id of the ChatbotConfig this upload belongs to.
+                 The chatbot's industry drives the LLM parsing prompt.
+    industry   : explicit override — used when chatbot_id is not provided.
+                 Defaults to 'real_estate' if both are omitted.
+    """
     require_write(ctx)
 
     filename = file.filename or "listings.xlsx"
@@ -150,7 +158,7 @@ async def upload_listing_file(
     else:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only Excel (.xlsx, .xls) or CSV (.csv) files are accepted for listing upload.",
+            detail="Only Excel (.xlsx, .xls) or CSV (.csv) files are accepted.",
         )
 
     file_bytes = await file.read()
@@ -162,6 +170,20 @@ async def upload_listing_file(
             detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB limit.",
         )
 
+    # Resolve chatbot + industry
+    resolved_chatbot_id: Optional[int] = None
+    resolved_industry: str = industry or "real_estate"
+
+    if chatbot_id:
+        from app.modules.chatbot import repository as chatbot_repo
+        chatbot = await chatbot_repo.get_chatbot_by_public_id(
+            db, tenant_id=ctx.tenant.id, public_id=chatbot_id
+        )
+        if not chatbot:
+            raise HTTPException(status_code=404, detail="Chatbot not found.")
+        resolved_chatbot_id = chatbot.id
+        resolved_industry = chatbot.industry
+
     try:
         data = await service.queue_listing_file_import(
             db,
@@ -169,6 +191,8 @@ async def upload_listing_file(
             file_bytes=file_bytes,
             filename=filename,
             file_type=file_type,
+            chatbot_config_id=resolved_chatbot_id,
+            industry=resolved_industry,
         )
     except HTTPException:
         raise

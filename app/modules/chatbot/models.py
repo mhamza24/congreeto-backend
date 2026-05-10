@@ -20,8 +20,8 @@ from app.core.enums import (
     SourceType, source_type_enum,
     CrawlStatus, crawl_status_enum,
     DocStatus, doc_status_enum,
-    ListingSource, ListingStatus, ListingType,
-    listing_source_enum, listing_status_enum, listing_type_enum,
+    ListingSource, ListingStatus,
+    listing_source_enum, listing_status_enum,
     UploadJobStatus, upload_job_status_enum,
 )
 
@@ -29,6 +29,78 @@ if TYPE_CHECKING:
     from app.modules.tenants.models import Tenant
     from app.modules.users.models import User
     from app.modules.campaigns.models import Campaign
+
+
+# =============================================================================
+# INDUSTRY SCHEMAS  (one row per industry — drives scraping, embedding, insights)
+# =============================================================================
+
+class IndustrySchema(Base, TimestampMixin):
+    """
+    One row per supported industry (real_estate, restaurant, ecommerce, …).
+    Stores all industry-specific LLM prompts and field definitions so the
+    system is 100% generic — adding a new industry is a DB insert, not a
+    code change.
+
+    industry          : machine-readable slug, e.g. "real_estate"
+    display_name      : human label, e.g. "Real Estate"
+    listing_label     : singular noun for one item, e.g. "Property"
+    listing_label_plural: plural noun, e.g. "Properties"
+    attributes_schema : JSONB — field definitions used for frontend rendering
+                        and LLM-output validation. Example:
+                        {"bedrooms": {"type": "int", "label": "Bedrooms"},
+                         "listing_type": {"type": "str", "label": "Type"}}
+    extraction_prompt : LLM prompt template for extracting items from
+                        scraped page text (appended with PAGE TEXT).
+    file_parse_prompt : LLM prompt template for normalising rows from an
+                        uploaded Excel/CSV file (appended with TABLE DATA).
+    insights_prompt   : LLM prompt template for extracting structured insights
+                        from a closed conversation.
+    is_active         : soft-disable without deleting.
+    """
+    __tablename__ = "industry_schemas"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    industry: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True,
+        comment="Machine-readable key, e.g. 'real_estate'. Never changes after creation."
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    listing_label: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="Item", server_default=text("'Item'"),
+        comment="Singular label shown in UI, e.g. 'Property', 'Menu Item', 'Product'."
+    )
+    listing_label_plural: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="Items", server_default=text("'Items'"),
+        comment="Plural label, e.g. 'Properties', 'Menu Items', 'Products'."
+    )
+    attributes_schema: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment="Field definitions for the attributes JSONB column on listings."
+    )
+    extraction_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment="LLM prompt for extracting items from scraped page text."
+    )
+    file_parse_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment="LLM prompt for normalising rows from an uploaded Excel/CSV file."
+    )
+    insights_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment="LLM prompt for extracting structured insights from a closed conversation."
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("TRUE")
+    )
+
+    __table_args__ = (
+        Index("ix_industry_schemas_industry", "industry"),
+        Index("ix_industry_schemas_active", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndustrySchema industry={self.industry!r} label={self.listing_label!r}>"
 
 
 # =============================================================================
@@ -129,14 +201,25 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
             "time awareness, returning-visitor recap) are appended at chat time."
         )
     )
+    # ── Industry ──────────────────────────────────────────────────────────────
+    industry: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        default="real_estate", server_default=text("'real_estate'"),
+        comment="Slug matching industry_schemas.industry. Drives scraping, RAG, and insights."
+    )
+
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     rag_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE"),
         comment="Flipped TRUE by worker after first DocumentChunk written. Never flip manually."
     )
-    allow_rental: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("FALSE"),
-        comment="When TRUE, listing search includes rental listings. Defaults to FALSE (sale only)."
+    listing_filter_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment=(
+            "Generic listing filter applied during RAG search. Industry-specific. "
+            "Examples: {'allowed_statuses': ['active']} or "
+            "{'attribute_filters': {'listing_type': 'sale'}}."
+        )
     )
     auto_close_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=15, server_default=text("15")
@@ -512,13 +595,17 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
         BigInteger, ForeignKey("crawl_jobs.id", ondelete="SET NULL"),
         nullable=True, default=None
     )
-    status: Mapped[ListingStatus] = mapped_column(
-        listing_status_enum, nullable=False,
-        default=ListingStatus.ACTIVE, server_default=text("'active'")
+    # ── Industry ──────────────────────────────────────────────────────────────
+    industry: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        default="real_estate", server_default=text("'real_estate'"),
+        comment="Matches chatbot_configs.industry. Tenant-scoped; never cross-query."
     )
-    listing_type: Mapped[ListingType] = mapped_column(
-        listing_type_enum, nullable=False,
-        default=ListingType.SALE, server_default=text("'sale'")
+
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False,
+        default="active", server_default=text("'active'"),
+        comment="VARCHAR — any industry-defined status (active, sold, out_of_stock, …)."
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -527,23 +614,27 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
     currency: Mapped[str] = mapped_column(
         String(3), nullable=False, default="AUD", server_default=text("'AUD'")
     )
+
+    # ── Location (optional — restaurants, clinics, RE need it; e-commerce may not) ──
     street: Mapped[str | None] = mapped_column(String(255), nullable=True)
     suburb: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     postcode: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    country: Mapped[str] = mapped_column(
-        String(5), nullable=False, default="AU", server_default=text("'AU'")
-    )
+    country: Mapped[str | None] = mapped_column(String(5), nullable=True)
     latitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
     longitude: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
-    bedrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    bathrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    garages: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    land_sqm: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    house_sqm: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    has_pool: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("FALSE")
+
+    # ── Industry-specific fields (JSONB — no migration needed to add new industries) ──
+    attributes: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+        comment=(
+            "Industry-specific fields. Validated at app layer against IndustrySchema.attributes_schema. "
+            "Examples — real_estate: {bedrooms, bathrooms, garages, listing_type, has_pool}; "
+            "restaurant: {category, dietary_tags, spice_level}; "
+            "ecommerce: {sku, brand, category, condition, stock_quantity}."
+        )
     )
+
     media: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
@@ -551,10 +642,8 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
-    # Semantic fallback when SQL filters return no results.
-    # Embedding of: listing_type | suburb | state | bedrooms | title | description
+    # Semantic embedding — built from title, description, location, and attributes.
     # Updated by embed_listing Celery task on create/update.
-    # Excluded from search when deleted_at IS NOT NULL (soft-deleted).
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(1536), nullable=True, default=None,
         comment="pgvector embedding for semantic listing search. HNSW-indexed."
@@ -571,22 +660,30 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
     )
 
     __table_args__ = (
-        Index("ix_listings_tenant", "tenant_id", "status",
+        # Primary access: all active listings for a tenant (list view)
+        Index("ix_listings_tenant_status",
+              "tenant_id", "status",
               postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_listings_bedrooms", "tenant_id", "bedrooms", "status",
+        # Industry-scoped list (e.g. fetch only restaurant menu items for tenant)
+        Index("ix_listings_tenant_industry",
+              "tenant_id", "industry", "status",
               postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_listings_suburb", "tenant_id", "suburb", "status",
+        # Location-based filtering (RE, restaurants, clinics, etc.)
+        Index("ix_listings_suburb",
+              "tenant_id", "suburb", "status",
               postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_listings_price", "tenant_id", "price", "status",
+        # Price range filtering
+        Index("ix_listings_price",
+              "tenant_id", "price", "status",
               postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_listings_type", "tenant_id", "listing_type", "status",
-              postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_listings_state", "tenant_id", "state", "status",
-              postgresql_where=text("deleted_at IS NULL")),
+        # Dedup key for crawled / imported items
         Index("ix_listings_external", "tenant_id", "external_id",
               postgresql_where=text("external_id IS NOT NULL")),
+        # GIN index on attributes JSONB — supports containment queries (@>)
+        # e.g. WHERE attributes @> '{"listing_type": "sale"}'
+        Index("ix_listings_attributes_gin", "attributes",
+              postgresql_using="gin"),
         # HNSW for semantic fallback on listing search.
-        # Partial index: only index non-deleted rows with an embedding set.
         Index(
             "ix_listings_embedding_hnsw", "embedding",
             postgresql_using="hnsw",
@@ -657,6 +754,16 @@ class ListingUploadJob(Base, TimestampMixin):
     )
     tenant_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    chatbot_config_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("chatbot_configs.id", ondelete="SET NULL"),
+        nullable=True, default=None,
+        comment="Which chatbot (and therefore which industry) this upload belongs to."
+    )
+    industry: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        default="real_estate", server_default=text("'real_estate'"),
+        comment="Denormalized from chatbot_config.industry — available after chatbot is deleted."
     )
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_type: Mapped[str] = mapped_column(

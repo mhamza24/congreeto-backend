@@ -21,9 +21,10 @@ async def list_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
+    industry: Optional[str] = None,
     suburb: Optional[str] = None,
-    listing_type: Optional[str] = None,
     status_filter: Optional[str] = None,
+    attribute_filters: Optional[dict] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[List[schemas.ListingResponse], int]:
@@ -31,21 +32,22 @@ async def list_listings(
         repo.list_listings(
             db,
             tenant_id=tenant_id,
+            industry=industry,
             suburb=suburb,
-            listing_type=listing_type,
             status_filter=status_filter,
+            attribute_filters=attribute_filters,
             limit=limit,
             offset=offset,
         ),
         repo.count_listings(
             db,
             tenant_id=tenant_id,
+            industry=industry,
             suburb=suburb,
-            listing_type=listing_type,
             status_filter=status_filter,
+            attribute_filters=attribute_filters,
         ),
     )
-    logger.debug("[listings] list_listings total=%d limit=%d offset=%d", total, limit, offset)
     return [schemas.ListingResponse.model_validate(lst) for lst in listings], total
 
 
@@ -54,9 +56,7 @@ async def get_listing(
 ) -> schemas.ListingResponse:
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
-        logger.warning("[listings] get_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
-    logger.debug("[listings] get_listing found public_id=%s", public_id)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -75,8 +75,8 @@ async def create_listing(
         tenant_id=tenant_id,
         public_id=_new_public_id(),
         source=ListingSource.MANUAL.value,
+        industry=payload.industry,
         title=payload.title,
-        listing_type=payload.listing_type,
         status=payload.status,
         description=payload.description,
         price=payload.price,
@@ -87,12 +87,7 @@ async def create_listing(
         state=payload.state,
         postcode=payload.postcode,
         country=payload.country,
-        bedrooms=payload.bedrooms,
-        bathrooms=payload.bathrooms,
-        garages=payload.garages,
-        land_sqm=payload.land_sqm,
-        house_sqm=payload.house_sqm,
-        has_pool=payload.has_pool,
+        attributes=payload.attributes,
         media=payload.media,
     )
     await audit.write(
@@ -102,7 +97,7 @@ async def create_listing(
         tenant_id=tenant_id,
         user_id=user_id,
         entity_id=listing.id,
-        diff={"after": {"title": listing.title, "listing_type": str(listing.listing_type)}},
+        diff={"after": {"title": listing.title, "industry": listing.industry}},
         request=request,
     )
 
@@ -110,7 +105,7 @@ async def create_listing(
     await db.refresh(listing)
 
     embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
-    logger.info("[listings] listing created public_id=%s title=%s", listing.public_id, listing.title)
+    logger.info("[listings] created public_id=%s title=%s industry=%s", listing.public_id, listing.title, listing.industry)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -127,11 +122,17 @@ async def update_listing(
 
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
-        logger.warning("[listings] update_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
 
-    changed_fields = list(payload.model_dump(exclude_none=True).keys())
-    for key, value in payload.model_dump(exclude_none=True).items():
+    updates = payload.model_dump(exclude_none=True)
+
+    # Merge attributes rather than replace — only provided keys are overwritten
+    if "attributes" in updates and updates["attributes"] is not None:
+        merged = dict(listing.attributes or {})
+        merged.update(updates.pop("attributes"))
+        listing.attributes = merged
+
+    for key, value in updates.items():
         setattr(listing, key, value)
 
     await audit.write(
@@ -141,7 +142,7 @@ async def update_listing(
         tenant_id=tenant_id,
         user_id=user_id,
         entity_id=listing.id,
-        diff={"after": {k: str(v) for k, v in payload.model_dump(exclude_none=True).items()}},
+        diff={"after": {k: str(v) for k, v in updates.items()}},
         request=request,
     )
 
@@ -149,7 +150,7 @@ async def update_listing(
     await db.refresh(listing)
 
     embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
-    logger.info("[listings] listing updated public_id=%s fields=%s", listing.public_id, changed_fields)
+    logger.info("[listings] updated public_id=%s", listing.public_id)
     return schemas.ListingResponse.model_validate(listing)
 
 
@@ -162,7 +163,6 @@ async def delete_listing(
 
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
-        logger.warning("[listings] delete_listing not found public_id=%s", public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
 
     listing.deleted_at = datetime.now(timezone.utc)
@@ -179,9 +179,8 @@ async def delete_listing(
     )
 
     await db.commit()
-
     clear_listing_embedding.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
-    logger.info("[listings] listing soft-deleted public_id=%s", listing.public_id)
+    logger.info("[listings] soft-deleted public_id=%s", listing.public_id)
 
 
 async def queue_listing_file_import(
@@ -191,11 +190,12 @@ async def queue_listing_file_import(
     file_bytes: bytes,
     filename: str,
     file_type: str,
+    chatbot_config_id: Optional[int] = None,
+    industry: str = "real_estate",
 ) -> schemas.ListingUploadJobResponse:
     """
-    Store the uploaded file as a blob and dispatch a background Celery task
-    to parse (via LLM), upsert, and embed all listing rows.
-    Returns immediately with a job record so the caller can poll status.
+    Store the uploaded file and dispatch a background Celery task.
+    Returns immediately with a job record for status polling.
     """
     from app.modules.chatbot import repository as chatbot_repo
     from app.modules.chatbot.tasks import process_listing_file
@@ -208,6 +208,8 @@ async def queue_listing_file_import(
         filename=filename,
         file_type=file_type,
         file_data=file_bytes,
+        chatbot_config_id=chatbot_config_id,
+        industry=industry,
     )
     await db.commit()
     await db.refresh(job)
@@ -216,8 +218,7 @@ async def queue_listing_file_import(
         kwargs=dict(job_id=job.id, tenant_id=tenant_id),
         queue=QUEUEEnum.ANALYSIS.value,
     )
-    logger.info("[listings] upload job queued public_id=%s filename=%s file_type=%s", job.public_id, filename, file_type)
-
+    logger.info("[listings] upload job queued public_id=%s filename=%s industry=%s", job.public_id, filename, industry)
     return schemas.ListingUploadJobResponse.model_validate(job)
 
 
@@ -227,7 +228,6 @@ async def retry_listing_upload_job(
     tenant_id: int,
     job_public_id: str,
 ) -> schemas.ListingUploadJobResponse:
-    """Re-queue a failed (or stuck) listing upload job."""
     from app.modules.chatbot import repository as chatbot_repo
     from app.modules.chatbot.tasks import process_listing_file
     from app.config.celery_worker import QUEUEEnum
@@ -236,11 +236,9 @@ async def retry_listing_upload_job(
         db, tenant_id=tenant_id, public_id=job_public_id
     )
     if not job:
-        logger.warning("[listings] retry_job not found public_id=%s", job_public_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload job not found.")
 
     if job.status not in (UploadJobStatus.FAILED, UploadJobStatus.QUEUED):
-        logger.warning("[listings] retry_job invalid status public_id=%s status=%s", job.public_id, job.status)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Job is currently '{job.status}'. Only failed or queued jobs can be retried.",
@@ -257,87 +255,4 @@ async def retry_listing_upload_job(
         queue=QUEUEEnum.ANALYSIS.value,
     )
     logger.info("[listings] upload job re-queued public_id=%s", job.public_id)
-
     return schemas.ListingUploadJobResponse.model_validate(job)
-
-
-async def import_from_excel(
-    db: AsyncSession,
-    *,
-    tenant_id: int,
-    file_bytes: bytes,
-    filename: str,
-) -> schemas.ListingImportResponse:
-    from app.modules.chatbot.parsers.excel_parser import parse_excel_listings
-
-    try:
-        rows = parse_excel_listings(file_bytes)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-    if not rows:
-        raise HTTPException(status_code=422, detail="No valid listing rows found in the file.")
-
-    from app.modules.chatbot.tasks import embed_listings_batch, _EMBED_BATCH_SIZE
-
-    _IMPORT_BATCH = 100
-    imported = 0
-
-    for batch_start in range(0, len(rows), _IMPORT_BATCH):
-        batch = rows[batch_start: batch_start + _IMPORT_BATCH]
-
-        # Build external_ids for the whole batch
-        external_ids = [
-            f"excel::{filename}::{item.get('title', '')}::{item.get('suburb', '')}"
-            for item in batch
-        ]
-
-        # ONE query for all existing listings in this batch
-        existing_map = await repo.get_listings_by_external_ids(
-            db, tenant_id=tenant_id, external_ids=external_ids
-        )
-
-        batch_listing_ids: List[int] = []
-        for item, external_id in zip(batch, external_ids):
-            existing = existing_map.get(external_id)
-            listing, _ = await repo.upsert_listing(
-                db,
-                tenant_id=tenant_id,
-                external_id=external_id,
-                public_id=_new_public_id() if not existing else existing.public_id,
-                source=ListingSource.MANUAL.value,
-                title=item.get("title", "Untitled"),
-                listing_type=item.get("listing_type", "sale"),
-                status=item.get("status", "active"),
-                description=item.get("description"),
-                price=item.get("price"),
-                price_display=item.get("price_display"),
-                currency=item.get("currency", "AUD"),
-                street=item.get("street"),
-                suburb=item.get("suburb"),
-                state=item.get("state"),
-                postcode=item.get("postcode"),
-                bedrooms=item.get("bedrooms"),
-                bathrooms=item.get("bathrooms"),
-                garages=item.get("garages"),
-                land_sqm=item.get("land_sqm"),
-                house_sqm=item.get("house_sqm"),
-                has_pool=item.get("has_pool", False),
-                raw_data=item.get("raw_data", {}),
-            )
-            batch_listing_ids.append(listing.id)
-            imported += 1
-
-        # ONE commit for the whole batch
-        await db.commit()
-
-        # ONE embed task per _EMBED_BATCH_SIZE chunk (avoids oversized payloads)
-        for i in range(0, len(batch_listing_ids), _EMBED_BATCH_SIZE):
-            embed_listings_batch.apply_async(
-                kwargs=dict(
-                    listing_ids=batch_listing_ids[i: i + _EMBED_BATCH_SIZE],
-                    tenant_id=tenant_id,
-                )
-            )
-
-    return schemas.ListingImportResponse(imported=imported, filename=filename)

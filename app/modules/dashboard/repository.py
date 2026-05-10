@@ -25,9 +25,6 @@ async def get_dashboard_summary(
                 c.lead_phone,
                 c.created_at,
                 ci.lead_tier,
-                ci.budget_min,
-                ci.budget_max,
-                ci.suburbs_mentioned,
                 ci.engagement_score
             FROM conversations c
             LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
@@ -49,15 +46,7 @@ async def get_dashboard_summary(
                         AND lead_email IS NOT NULL
                         AND lead_phone IS NOT NULL THEN id END)::numeric
                     / NULLIF(COUNT(DISTINCT id), 0) * 100, 2
-                )                                                                       AS conversion_rate_pct,
-                ROUND(AVG(
-                    CASE
-                        WHEN budget_min IS NOT NULL AND budget_max IS NOT NULL
-                            THEN (budget_min + budget_max) / 2.0
-                        WHEN budget_min IS NOT NULL
-                            THEN budget_min
-                    END
-                ))                                                                      AS avg_budget_aud
+                )                                                                       AS conversion_rate_pct
             FROM base
         ),
 
@@ -92,60 +81,6 @@ async def get_dashboard_summary(
             FROM base
         ),
 
-        budget_dist AS (
-            SELECT JSON_AGG(
-                JSON_BUILD_OBJECT(
-                    'range',      budget_range,
-                    'count',      count,
-                    'percentage', percentage
-                ) ORDER BY min_val
-            ) AS budget_distribution
-            FROM (
-                SELECT
-                    CASE
-                        WHEN midpoint < 500000                     THEN '<$500K'
-                        WHEN midpoint BETWEEN 500000 AND 799999    THEN '$500K–$800K'
-                        WHEN midpoint BETWEEN 800000 AND 1199999   THEN '$800K–$1.2M'
-                        WHEN midpoint >= 1200000                   THEN '$1.2M+'
-                    END                                                                 AS budget_range,
-                    MIN(midpoint)                                                       AS min_val,
-                    COUNT(*)                                                            AS count,
-                    ROUND(COUNT(*)::numeric / NULLIF(SUM(COUNT(*)) OVER (), 0) * 100, 2) AS percentage
-                FROM (
-                    SELECT
-                        CASE
-                            WHEN budget_min IS NOT NULL AND budget_max IS NOT NULL
-                                THEN (budget_min + budget_max) / 2.0
-                            WHEN budget_min IS NOT NULL
-                                THEN budget_min::numeric
-                        END AS midpoint
-                    FROM base
-                    WHERE budget_min IS NOT NULL OR budget_max IS NOT NULL
-                ) mp
-                WHERE midpoint IS NOT NULL
-                GROUP BY budget_range
-            ) bd
-        ),
-
-        suburb_heat AS (
-            SELECT JSON_AGG(
-                JSON_BUILD_OBJECT(
-                    'suburb',     suburb,
-                    'lead_count', lead_count
-                ) ORDER BY lead_count DESC
-            ) AS suburb_heatmap
-            FROM (
-                SELECT
-                    UNNEST(suburbs_mentioned)                                           AS suburb,
-                    COUNT(DISTINCT id)                                                  AS lead_count
-                FROM base
-                WHERE suburbs_mentioned IS NOT NULL
-                GROUP BY UNNEST(suburbs_mentioned)
-                ORDER BY lead_count DESC
-                LIMIT 20
-            ) sh
-        ),
-
         response_time AS (
             SELECT
                 CONCAT(
@@ -166,18 +101,13 @@ async def get_dashboard_summary(
             k.nurture_leads,
             k.total_conversions,
             k.conversion_rate_pct,
-            k.avg_budget_aud,
             rt.avg_response_time_formatted,
             rt.avg_response_time_sec,
             w.weekly_activity,
-            f.lead_funnel,
-            b.budget_distribution,
-            sh.suburb_heatmap
+            f.lead_funnel
         FROM kpis k
         CROSS JOIN weekly w
         CROSS JOIN funnel f
-        CROSS JOIN budget_dist b
-        CROSS JOIN suburb_heat sh
         CROSS JOIN response_time rt
     """)
 
@@ -209,16 +139,11 @@ async def get_leads_paginated(
                 c.created_at,
                 ci.lead_tier,
                 ci.lead_score,
-                ci.intent,
                 ci.sentiment,
                 ci.engagement_score,
                 ci.ai_summary,
-                ci.budget_min,
-                ci.budget_max,
-                ci.budget_currency,
-                ci.suburbs_mentioned,
-                ci.property_types,
-                ci.timeline
+                ci.industry,
+                ci.industry_insights
             FROM conversations c
             LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
             WHERE c.tenant_id = :tenant_id
@@ -295,15 +220,8 @@ async def get_lead_detail(
             c.closed_at,
             ci.lead_score,
             ci.lead_tier,
-            ci.intent,
-            ci.budget_min,
-            ci.budget_max,
-            ci.budget_currency,
-            ci.suburbs_mentioned,
-            ci.cities_mentioned,
-            ci.property_types,
-            ci.bedrooms_wanted,
-            ci.timeline,
+            ci.industry,
+            ci.industry_insights,
             ci.sentiment,
             ci.engagement_score,
             ci.topics_mentioned,
@@ -396,15 +314,8 @@ async def get_leads_for_export(
             c.created_at,
             ci.lead_tier,
             ci.lead_score,
-            ci.intent,
-            ci.budget_min,
-            ci.budget_max,
-            ci.budget_currency,
-            ci.suburbs_mentioned,
-            ci.cities_mentioned,
-            ci.property_types,
-            ci.bedrooms_wanted,
-            ci.timeline,
+            ci.industry,
+            ci.industry_insights,
             ci.sentiment,
             ci.engagement_score,
             ci.topics_mentioned,

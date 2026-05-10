@@ -26,7 +26,7 @@ from sqlalchemy import (
     DateTime, Enum, ForeignKey, Index,
 )
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import ENUM
+from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from app.core.db_base import Base
 
 
@@ -357,59 +357,66 @@ class ConversationCampaign(Base):
 
 
 class ConversationInsights(Base):
+    """
+    Denormalized insight extraction for a closed conversation.
+
+    Generic columns (industry-agnostic) are first-class columns so the
+    dashboard can filter/sort without touching JSONB.
+
+    Industry-specific extractions (budget for RE, party_size for restaurant,
+    price_range for ecommerce, …) live in industry_insights JSONB so adding
+    a new industry never requires a schema migration.
+    """
     __tablename__ = "conversation_insights"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id = Column(BigInteger, ForeignKey(
         "conversations.id", ondelete="CASCADE"), unique=True, nullable=False)
-    # ALWAYS denormalized here for fast dashboard queries
     tenant_id = Column(String, nullable=False)
 
-    # ── Lead Scoring ─────────────────────────────────────────────────────────
+    # ── Industry ──────────────────────────────────────────────────────────────
+    industry = Column(String, nullable=True,
+                      comment="Denormalized from chatbot_config.industry.")
+
+    # ── Generic Lead Scoring (all industries) ────────────────────────────────
     lead_score = Column(Integer, nullable=True)   # 0–100, LLM-generated
-    lead_tier = Column(String,  nullable=True)   # "hot" | "nurture" | "cold"
-    # "buy" | "rent" | "invest" | "browse"
-    intent = Column(String,  nullable=True)
+    lead_tier  = Column(String,  nullable=True)   # "hot" | "nurture" | "cold"
 
-    # ── Real Estate Specifics ─────────────────────────────────────────────────
-    budget_min = Column(Integer, nullable=True)   # extracted PKR/USD value
-    budget_max = Column(Integer, nullable=True)
-    budget_currency = Column(String,  nullable=True)   # "PKR" | "USD"
-    # ["DHA", "Bahria Town", "Gulberg"]
-    suburbs_mentioned = Column(ARRAY(String), nullable=True)
-    cities_mentioned = Column(ARRAY(String), nullable=True)
-    # ["apartment", "plot", "house"]
-    property_types = Column(ARRAY(String), nullable=True)
-    bedrooms_wanted = Column(Integer, nullable=True)
-    # "immediate" | "3_months" | "6_months" | "browsing"
-    timeline = Column(String,  nullable=True)
+    # ── Sentiment & Engagement (all industries) ───────────────────────────────
+    sentiment        = Column(String,  nullable=True)  # positive | neutral | negative
+    engagement_score = Column(Integer, nullable=True)  # 0–100
 
-    # ── Sentiment & Engagement ────────────────────────────────────────────────
-    # "positive" | "neutral" | "negative"
-    sentiment = Column(String,  nullable=True)
-    # based on message count, depth
-    engagement_score = Column(Integer, nullable=True)
-
-    # ── Topics (for heatmap + frequency analysis) ─────────────────────────────
-    # ["payment plan", "NOC", "possession"]
+    # ── Topics (all industries — powers heatmap / frequency analysis) ─────────
     topics_mentioned = Column(ARRAY(String), nullable=True)
 
-    # ── AI Narrative ──────────────────────────────────────────────────────────
-    # 2-3 sentence human-readable summary
-    ai_summary = Column(Text, nullable=True)
-    # trend observations for this conversation
+    # ── AI Narrative (all industries) ────────────────────────────────────────
+    ai_summary  = Column(Text, nullable=True)
     ai_insights = Column(Text, nullable=True)
 
+    # ── Industry-Specific Insights ────────────────────────────────────────────
+    # Keyed by industry — written by the per-industry insights extraction task.
+    # Examples:
+    #   real_estate : {budget_min, budget_max, suburbs_mentioned, bedrooms_wanted,
+    #                  listing_type_interest, timeline, intent}
+    #   restaurant  : {cuisine_preferences, dietary_restrictions, party_size,
+    #                  occasion, intent}
+    #   ecommerce   : {price_range_max, categories, brands_mentioned, intent}
+    #   clinic      : {service_interest, insurance_query, urgency, intent}
+    industry_insights = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="'{}'::jsonb",
+        comment="Industry-specific extracted fields. Schema defined by IndustrySchema.insights_prompt output.",
+    )
+
     # ── Processing State ──────────────────────────────────────────────────────
-    processed_at = Column(DateTime(timezone=True), nullable=True)
-    # "v1.2" — lets you reprocess if prompt changes
+    processed_at       = Column(DateTime(timezone=True), nullable=True)
     processing_version = Column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_insights_tenant_id",        "tenant_id"),
         Index("ix_insights_tenant_lead_tier", "tenant_id", "lead_tier"),
-        Index("ix_insights_tenant_intent",    "tenant_id", "intent"),
-        Index("ix_insights_tenant_budget",
-              "tenant_id", "budget_min", "budget_max"),
+        Index("ix_insights_tenant_industry",  "tenant_id", "industry"),
         Index("ix_insights_conversation_id",  "conversation_id"),
     )

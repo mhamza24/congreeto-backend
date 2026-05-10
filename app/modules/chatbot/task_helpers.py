@@ -206,97 +206,209 @@ async def embed_chunks(
 
 def build_listing_embed_text(listing: Any) -> str:
     """
-    Build a single string that captures all queryable listing attributes.
-    Embedded as a single vector on the listings table for semantic fallback.
+    Build a single human-readable string from a generic listing row.
+    Works for any industry — reads from listing.attributes JSONB instead of
+    industry-specific columns.
 
-    Format keeps it human-readable so the model can use it well:
-    "For sale | 3 bed | 2 bath | Paddington NSW | $1.2M–$1.4M | ..."
+    Format: "real estate | active | bedrooms: 3 | bathrooms: 2 | Paddington, NSW | $1.2M | Title | Desc…"
     """
     parts: List[str] = []
 
-    # Type + status
-    if hasattr(listing, "listing_type") and listing.listing_type:
-        parts.append(str(listing.listing_type.value).replace("_", " "))
-    if hasattr(listing, "status") and listing.status:
-        parts.append(str(listing.status.value).replace("_", " "))
+    # Industry + status
+    if getattr(listing, "industry", None):
+        parts.append(str(listing.industry).replace("_", " "))
+    status_val = getattr(listing, "status", None)
+    if status_val:
+        s = status_val.value if hasattr(status_val, "value") else str(status_val)
+        parts.append(s.replace("_", " "))
 
-    # Bedrooms / bathrooms / garages
-    features: List[str] = []
-    if listing.bedrooms:
-        features.append(f"{listing.bedrooms} bed")
-    if listing.bathrooms:
-        features.append(f"{listing.bathrooms} bath")
-    if listing.garages:
-        features.append(f"{listing.garages} garage")
-    if listing.has_pool:
-        features.append("pool")
-    if features:
-        parts.append(" / ".join(features))
+    # Attributes (industry-specific fields — all treated uniformly)
+    attrs: Dict[str, Any] = getattr(listing, "attributes", None) or {}
+    attr_parts: List[str] = []
+    for key, val in attrs.items():
+        if val is None or val == "" or val is False:
+            continue
+        label = key.replace("_", " ")
+        if isinstance(val, bool):
+            attr_parts.append(label)
+        elif isinstance(val, list):
+            joined = ", ".join(str(v) for v in val if v)
+            if joined:
+                attr_parts.append(f"{label}: {joined}")
+        else:
+            attr_parts.append(f"{label}: {val}")
+    if attr_parts:
+        parts.extend(attr_parts)
 
-    # Location
+    # Location (kept as first-class columns — useful for RE, restaurants, clinics)
     location: List[str] = []
-    if listing.suburb:
+    if getattr(listing, "suburb", None):
         location.append(listing.suburb)
-    if listing.state:
+    if getattr(listing, "state", None):
         location.append(listing.state)
-    if listing.postcode:
+    if getattr(listing, "postcode", None):
         location.append(listing.postcode)
     if location:
         parts.append(", ".join(location))
 
     # Price
-    if listing.price_display:
+    if getattr(listing, "price_display", None):
         parts.append(listing.price_display)
-    elif listing.price:
-        parts.append(f"{listing.currency} {listing.price:,.0f}")
+    elif getattr(listing, "price", None):
+        currency = getattr(listing, "currency", "AUD") or "AUD"
+        parts.append(f"{currency} {listing.price:,.0f}")
 
-    # Title and description (capped to avoid token bloat)
-    if listing.title:
+    # Title + description (capped to avoid token bloat)
+    if getattr(listing, "title", None):
         parts.append(listing.title)
-    if listing.description:
+    if getattr(listing, "description", None):
         parts.append(listing.description[:600])
 
     return " | ".join(p for p in parts if p)
 
 
 # =============================================================================
-# LISTING EXTRACTION FROM CRAWLED PAGE TEXT
+# DEFAULT INDUSTRY EXTRACTION PROMPTS
+# Used as fallback when IndustrySchema.extraction_prompt is NULL.
+# These are also the seed values written to the industry_schemas table by
+# the Alembic migration — edit there (or update the DB row) to change them.
 # =============================================================================
 
-_LISTING_EXTRACT_PROMPT = """\
-You are a data extraction assistant for a real-estate platform.
+_DEFAULT_EXTRACTION_PROMPTS: Dict[str, str] = {
+    "real_estate": """\
+You are a data extraction assistant. Given text scraped from a real estate webpage, \
+extract all property listings.
 
-Given the text scraped from a property listing webpage, extract all property listings you can find.
-
-Return a JSON object with a single key "listings" whose value is an array.
-Each element in the array must have these fields (use null when unknown):
+Return JSON: {"listings": [...]}. Each element:
 {
-  "title": "string — property title or address",
-  "listing_type": "sale | rent",
-  "status": "active | sold | leased",
+  "title": "property title or address",
+  "status": "active | sold | leased | inactive",
   "description": "string or null",
   "price": float or null,
-  "price_display": "string like $1,200,000 or $450/week or null",
+  "price_display": "e.g. $1,200,000 or $450/week or null",
   "currency": "AUD",
   "street": "string or null",
   "suburb": "string or null",
   "state": "string or null",
   "postcode": "string or null",
-  "bedrooms": integer or null,
-  "bathrooms": integer or null,
-  "garages": integer or null,
-  "land_sqm": float or null,
-  "house_sqm": float or null,
-  "has_pool": true | false
+  "attributes": {
+    "listing_type": "sale | rent",
+    "bedrooms": integer or null,
+    "bathrooms": integer or null,
+    "garages": integer or null,
+    "land_sqm": float or null,
+    "house_sqm": float or null,
+    "has_pool": true | false
+  }
+}
+If NO listings found, return {"listings": []}.
+PAGE TEXT:
+""",
+    "restaurant": """\
+You are a data extraction assistant. Given text scraped from a restaurant or food website, \
+extract all menu items.
+
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "item name",
+  "status": "available | unavailable | seasonal",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "e.g. $12.50 or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {
+    "category": "e.g. Pizza, Burger, Dessert or null",
+    "dietary_tags": ["vegan", "halal", "gluten-free"] or [],
+    "spice_level": "mild | medium | hot | extra_hot or null",
+    "preparation_time_minutes": integer or null
+  }
+}
+If NO menu items found, return {"listings": []}.
+PAGE TEXT:
+""",
+    "ecommerce": """\
+You are a data extraction assistant. Given text scraped from an e-commerce webpage, \
+extract all products.
+
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "product name",
+  "status": "active | out_of_stock | discontinued",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "e.g. $49.99 or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {
+    "sku": "string or null",
+    "brand": "string or null",
+    "category": "string or null",
+    "condition": "new | used | refurbished or null",
+    "stock_quantity": integer or null,
+    "weight_kg": float or null
+  }
+}
+If NO products found, return {"listings": []}.
+PAGE TEXT:
+""",
+    "ux_template": """\
+You are a data extraction assistant. Given text scraped from a UI/UX template marketplace, \
+extract all templates.
+
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "template name",
+  "status": "active | inactive",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "e.g. $29 or Free or null",
+  "currency": "USD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {
+    "tier": "free | premium",
+    "framework": "e.g. React, Vue, Figma or null",
+    "page_count": integer or null,
+    "license_type": "personal | commercial | extended or null",
+    "preview_url": "string or null",
+    "category": "e.g. Dashboard, Landing Page, E-commerce or null"
+  }
+}
+If NO templates found, return {"listings": []}.
+PAGE TEXT:
+""",
 }
 
-If the page contains NO property listings, return {"listings": []}.
+# Default prompt for unknown industries — generic enough to work for anything
+_GENERIC_EXTRACTION_PROMPT = """\
+You are a data extraction assistant. Given text scraped from a business webpage, \
+extract all listed items (products, services, menu items, properties, etc.).
 
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "item name or title",
+  "status": "active | inactive",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "formatted price string or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {}
+}
+If NO items found, return {"listings": []}.
 PAGE TEXT:
 """
 
-# Max tokens for a page extraction response — enough for ~15 listings with descriptions
+# Max tokens for a page extraction response
 _EXTRACT_MAX_TOKENS = _settings.LLM_EXTRACT_MAX_TOKENS
+
+
+def get_extraction_prompt(industry: str, custom_prompt: Optional[str] = None) -> str:
+    """Return the extraction prompt for the given industry.
+    custom_prompt (from IndustrySchema.extraction_prompt) takes priority."""
+    if custom_prompt and custom_prompt.strip():
+        return custom_prompt
+    return _DEFAULT_EXTRACTION_PROMPTS.get(industry, _GENERIC_EXTRACTION_PROMPT)
 
 
 def _try_parse_listings_json(raw: str) -> Optional[List[Dict[str, Any]]]:
@@ -348,34 +460,28 @@ async def extract_listings_from_page(
     page_text: str,
     openai_service: Any,
     source_url: Optional[str] = None,
+    industry: str = "real_estate",
+    custom_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Ask the LLM to extract structured listing data from a scraped page.
+    Industry-aware: uses the prompt from IndustrySchema (custom_prompt) if
+    provided, otherwise falls back to the built-in default for that industry.
 
-    Improvements over naive approach:
-    - Cleans HTML noise from the input before sending to the LLM
-    - Uses response_format=json_object to guarantee syntactically valid JSON
-    - Falls back to regex array extraction if the outer wrapper is mangled
-    - Never raises — returns [] on any failure
+    Never raises — returns [] on any failure.
     """
-    import json
-
-    # Clean HTML noise (excess whitespace, nav debris) before tokenising
     cleaned = clean_html_text(page_text)
-
     if len(cleaned.strip()) < 100:
         return []
 
-    # Truncate to ~10k chars (~2500 tokens) — leaves headroom for the JSON response
-    truncated = cleaned[:10000]
-    prompt = _LISTING_EXTRACT_PROMPT + truncated
+    prompt = get_extraction_prompt(industry, custom_prompt) + cleaned[:10000]
 
     try:
         raw = await openai_service.openai_call_json(
             messages=[{"role": "user", "content": prompt}],
             system_instructions=(
-                "You extract structured property listing data from webpage text. "
-                "Always return a JSON object with a 'listings' key."
+                f"You extract structured {industry.replace('_', ' ')} item data from webpage text. "
+                "Always return a JSON object with a 'listings' key containing an array."
             ),
             max_tokens=_EXTRACT_MAX_TOKENS,
         )
@@ -383,22 +489,24 @@ async def extract_listings_from_page(
         listings = _try_parse_listings_json(raw)
         if listings is None:
             logger.warning(
-                f"Listing extraction: unparseable JSON for {source_url}. raw={raw[:200]!r}"
+                "Listing extraction: unparseable JSON for %s. raw=%r", source_url, raw[:200]
             )
             return []
 
-        # Attach source_url for traceability
         for item in listings:
             if source_url:
                 item.setdefault("raw_data", {})["source_url"] = source_url
+            # Ensure attributes key always exists
+            item.setdefault("attributes", {})
 
         logger.info(
-            f"Listing extraction: found {len(listings)} listings from {source_url or 'page'}"
+            "Listing extraction: found %d items from %s (industry=%s)",
+            len(listings), source_url or "page", industry,
         )
         return listings
 
     except Exception as exc:
-        logger.warning(f"Listing extraction failed for {source_url}: {exc}")
+        logger.warning("Listing extraction failed for %s: %s", source_url, exc)
         return []
 
 
@@ -417,69 +525,143 @@ def clean_html_text(raw: str) -> str:
 # LLM PARSING FOR UPLOADED LISTING FILES (Excel / CSV)
 # =============================================================================
 
-_LISTING_FILE_PARSE_PROMPT = """\
+_DEFAULT_FILE_PARSE_PROMPTS: Dict[str, str] = {
+    "real_estate": """\
 You are a real-estate data cleaning and extraction assistant.
 
-Below is tabular data from an uploaded property listing file (Excel or CSV).
-Each row is one property listing. The first line is column headers; the rest are data rows separated by tabs.
+Below is tabular data from an uploaded property listing file. Each row is one property.
+The first line is headers; the rest are data rows separated by tabs.
 
-The table contains exactly {row_count} data row(s). Return exactly {row_count} element(s) in the same order.
+The table contains exactly {row_count} row(s). Return exactly {row_count} element(s) in order.
 
-== YOUR TASKS ==
+TASKS:
+1. Map each row to the output schema.
+2. Clean text: strip noise (***,!!!,@@,##,---), trim whitespace, Title Case titles.
+   If title is null/gibberish after cleaning → "Property Listing".
+3. Fix geography: correct state to match suburb (Sydney→NSW, Melbourne→VIC, etc.).
+4. Fix price/type: price_display with "per week"/"pw"/"/wk" → listing_type "rent".
+5. Null out: invalid postcodes, negative values, zero prices.
 
-1. EXTRACT: Map each row to the output schema below.
-
-2. CLEAN text fields:
-   - Strip ALL noise from text: remove `***`, `!!!`, `@@`, `##`, `---`, excessive punctuation, trailing standalone numbers used as row IDs, and any random symbols.
-   - After stripping noise, keep only the meaningful words/sentences that remain. Examples:
-       "Nice place!!! needs cleanup @@ 5"  → "Nice place!"
-       "Great home ## 42"                  → "Great home"
-       "Spacious living --- @@@ test data" → "Spacious living"
-   - Trim whitespace. Convert ALL CAPS titles to Title Case.
-   - If after cleaning nothing meaningful remains (e.g. the entire field was noise/placeholder like "test data", "lorem ipsum", random symbols only), set it to null.
-   - If a title is null or placeholder/gibberish after cleaning, set it to "Property Listing".
-
-3. FIX geographic inconsistencies:
-   - If suburb and state are contradictory (e.g. suburb=Melbourne but state=NSW), correct the state to match the suburb using your knowledge of Australian geography.
-   - Known mappings: Sydney→NSW, Melbourne→VIC, Brisbane→QLD, Perth→WA, Adelaide→SA, Hobart→TAS, Darwin→NT, Canberra→ACT.
-   - Apply the same logic for well-known suburbs (e.g. Surry Hills→NSW, St Kilda→VIC, Fortitude Valley→QLD).
-
-4. FIX price vs listing_type inconsistency:
-   - If price_display contains "per week" or "pw" or "/wk", listing_type must be "rent".
-   - If price_display contains a large lump sum (e.g. "$500,000") without weekly mention, listing_type should be "sale".
-   - Price should be the numeric value only. If price and price_display clearly contradict each other, trust price_display and derive price from it.
-   - If price is suspiciously low for a sale (e.g. < 10,000) but looks like a weekly rent, correct listing_type to "rent".
-
-5. NULL out obviously wrong values:
-   - Postcodes that don't match Australian format (4 digits) → null.
-   - Negative or zero bedrooms/bathrooms/garages/sqm → null.
-   - Prices of 0 or negative → null.
-   - States that are not valid Australian states/territories → null.
-
-== OUTPUT SCHEMA ==
-
-Return a JSON array. Each element:
+OUTPUT — JSON array, each element:
 {{
-  "title": "string — cleaned property title",
-  "listing_type": "sale | rent",
+  "title": "string",
   "status": "active | sold | leased | inactive",
-  "description": "cleaned string or null",
+  "description": "string or null",
   "price": float or null,
-  "price_display": "formatted string or null",
+  "price_display": "string or null",
   "currency": "AUD",
   "street": "string or null",
   "suburb": "string or null",
-  "state": "corrected 2–3 letter state code or null",
+  "state": "2–3 letter code or null",
   "postcode": "4-digit string or null",
-  "bedrooms": integer or null,
-  "bathrooms": integer or null,
-  "garages": integer or null,
-  "land_sqm": float or null,
-  "house_sqm": float or null,
-  "has_pool": true | false
+  "attributes": {{
+    "listing_type": "sale | rent",
+    "bedrooms": integer or null,
+    "bathrooms": integer or null,
+    "garages": integer or null,
+    "land_sqm": float or null,
+    "house_sqm": float or null,
+    "has_pool": true | false
+  }}
 }}
 
-Return ONLY the JSON array. No explanation, no markdown, no extra text.
+Return ONLY the JSON array. No markdown, no explanation.
+
+TABLE DATA:
+""",
+    "restaurant": """\
+You are a restaurant menu data cleaning assistant.
+
+Below is tabular data from an uploaded menu file. Each row is one menu item.
+The first line is headers; the rest are data rows separated by tabs.
+
+The table contains exactly {row_count} row(s). Return exactly {row_count} element(s) in order.
+
+TASKS:
+1. Map each row to the output schema.
+2. Clean text: strip noise, trim whitespace, Title Case item names.
+3. Null out: negative prices, zero prices.
+
+OUTPUT — JSON array, each element:
+{{
+  "title": "string — item name",
+  "status": "available | unavailable | seasonal",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "string or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {{
+    "category": "string or null",
+    "dietary_tags": ["vegan", "halal", ...] or [],
+    "spice_level": "mild | medium | hot | extra_hot or null",
+    "preparation_time_minutes": integer or null
+  }}
+}}
+
+Return ONLY the JSON array. No markdown, no explanation.
+
+TABLE DATA:
+""",
+    "ecommerce": """\
+You are an e-commerce product data cleaning assistant.
+
+Below is tabular data from an uploaded product file. Each row is one product.
+The first line is headers; the rest are data rows separated by tabs.
+
+The table contains exactly {row_count} row(s). Return exactly {row_count} element(s) in order.
+
+TASKS:
+1. Map each row to the output schema.
+2. Clean text: strip noise, trim whitespace, Title Case product names.
+3. Null out: negative prices, zero prices, invalid quantities.
+
+OUTPUT — JSON array, each element:
+{{
+  "title": "string — product name",
+  "status": "active | out_of_stock | discontinued",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "string or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {{
+    "sku": "string or null",
+    "brand": "string or null",
+    "category": "string or null",
+    "condition": "new | used | refurbished or null",
+    "stock_quantity": integer or null,
+    "weight_kg": float or null
+  }}
+}}
+
+Return ONLY the JSON array. No markdown, no explanation.
+
+TABLE DATA:
+""",
+}
+
+_GENERIC_FILE_PARSE_PROMPT = """\
+You are a data cleaning assistant.
+
+Below is tabular data from an uploaded file. Each row is one item.
+The first line is headers; the rest are data rows separated by tabs.
+
+The table contains exactly {row_count} row(s). Return exactly {row_count} element(s) in order.
+
+OUTPUT — JSON array, each element:
+{{
+  "title": "string",
+  "status": "active",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "string or null",
+  "currency": "AUD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {{}}
+}}
+
+Return ONLY the JSON array. No markdown, no explanation.
 
 TABLE DATA:
 """
@@ -488,25 +670,34 @@ TABLE DATA:
 _LLM_BATCH_SIZE = _settings.LLM_FILE_PARSE_BATCH_SIZE
 
 
+def get_file_parse_prompt(industry: str, custom_prompt: Optional[str] = None) -> str:
+    """Return the file parse prompt for the given industry."""
+    if custom_prompt and custom_prompt.strip():
+        return custom_prompt
+    return _DEFAULT_FILE_PARSE_PROMPTS.get(industry, _GENERIC_FILE_PARSE_PROMPT)
+
+
 async def parse_listings_from_table(
     rows: List[Dict[str, Any]],
     openai_service: Any,
     batch_size: int = _LLM_BATCH_SIZE,
+    industry: str = "real_estate",
+    custom_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Use the LLM to normalize and structure raw rows parsed from a CSV/Excel file.
+    Use the LLM to normalise and structure raw rows from a CSV/Excel file.
+    Industry-aware: uses the prompt from IndustrySchema if provided.
 
-    Batching strategy:
-    - Each LLM call receives `batch_size` rows (default 20).
-    - All batches are fired concurrently with asyncio.gather so the total
-      wall-clock time is ~1 LLM call instead of N sequential calls.
-    - On failure for any batch, falls back to the raw parsed rows for that batch.
+    Batches are fired concurrently — total wall-clock ≈ 1 LLM call instead of N.
+    On failure for any batch, falls back to the raw parsed rows.
     """
     import asyncio
-    import json
 
     if not rows:
         return []
+
+    prompt_template = get_file_parse_prompt(industry, custom_prompt)
+    industry_label = industry.replace("_", " ")
 
     async def _call_llm(batch: List[Dict[str, Any]], batch_start: int) -> List[Dict[str, Any]]:
         headers = list(batch[0].keys())
@@ -515,14 +706,13 @@ async def parse_listings_from_table(
             table_lines.append("\t".join(str(row.get(h, "") or "") for h in headers))
         table_text = "\n".join(table_lines)
 
-        prompt = _LISTING_FILE_PARSE_PROMPT.format(row_count=len(batch)) + table_text
+        prompt = prompt_template.format(row_count=len(batch)) + table_text
 
-        # max_tokens: 20 rows × ~60 tokens/row of JSON ≈ 1200 + buffer
         try:
             raw = await openai_service.openai_call_json(
                 messages=[{"role": "user", "content": prompt}],
                 system_instructions=(
-                    "You extract structured property listing data from tabular data. "
+                    f"You extract structured {industry_label} item data from tabular data. "
                     "Return only a valid JSON object with a 'listings' key containing the array."
                 ),
                 max_tokens=1500,
@@ -530,31 +720,28 @@ async def parse_listings_from_table(
 
             parsed = _try_parse_listings_json(raw)
             if isinstance(parsed, list):
+                # Ensure every item has an attributes key
+                for item in parsed:
+                    item.setdefault("attributes", {})
                 logger.info(
-                    f"LLM parsed rows {batch_start}–{batch_start + len(batch)}: "
-                    f"{len(parsed)} listings"
+                    "LLM parsed rows %d–%d: %d items (industry=%s)",
+                    batch_start, batch_start + len(batch), len(parsed), industry,
                 )
                 return parsed
 
             logger.warning(
-                f"LLM returned unparseable JSON for rows {batch_start}. "
-                f"raw={raw[:200]!r} — falling back to raw rows."
+                "LLM returned unparseable JSON for rows %d (industry=%s). raw=%r — falling back.",
+                batch_start, industry, raw[:200],
             )
             return batch
 
         except Exception as exc:
             logger.error(
-                f"LLM parse error for rows {batch_start}–{batch_start + len(batch)}: {exc}. "
-                "Falling back to raw rows."
+                "LLM parse error for rows %d–%d (industry=%s): %s. Falling back.",
+                batch_start, batch_start + len(batch), industry, exc,
             )
             return batch
 
-    # Fire all batch calls concurrently
-    batches = [
-        (rows[i: i + batch_size], i)
-        for i in range(0, len(rows), batch_size)
-    ]
+    batches = [(rows[i: i + batch_size], i) for i in range(0, len(rows), batch_size)]
     batch_results = await asyncio.gather(*[_call_llm(b, start) for b, start in batches])
-
-    # Flatten results preserving order
     return [item for batch in batch_results for item in batch]

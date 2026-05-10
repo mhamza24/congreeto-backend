@@ -43,8 +43,7 @@ async def get_listings_by_external_ids(
     tenant_id: int,
     external_ids: List[str],
 ) -> Dict[str, Listing]:
-    """Fetch multiple listings by external_id in ONE query.
-    Returns a dict keyed by external_id for O(1) lookup."""
+    """Fetch multiple listings by external_id in ONE query."""
     if not external_ids:
         return {}
     result = await db.execute(
@@ -61,9 +60,10 @@ async def list_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
-    suburb: Optional[str] = None,
-    listing_type: Optional[str] = None,
+    industry: Optional[str] = None,
     status_filter: Optional[str] = None,
+    suburb: Optional[str] = None,
+    attribute_filters: Optional[Dict] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Sequence[Listing]:
@@ -71,12 +71,15 @@ async def list_listings(
         Listing.tenant_id == tenant_id,
         Listing.deleted_at.is_(None),
     )
-    if suburb:
-        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
-    if listing_type:
-        q = q.where(Listing.listing_type == listing_type)
+    if industry:
+        q = q.where(Listing.industry == industry)
     if status_filter:
         q = q.where(Listing.status == status_filter)
+    if suburb:
+        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
+    if attribute_filters:
+        # JSONB containment filter — safe, no SQL injection (dict literal, not user string)
+        q = q.where(Listing.attributes.contains(attribute_filters))
     q = q.order_by(Listing.updated_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
     return result.scalars().all()
@@ -86,20 +89,23 @@ async def count_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
-    suburb: Optional[str] = None,
-    listing_type: Optional[str] = None,
+    industry: Optional[str] = None,
     status_filter: Optional[str] = None,
+    suburb: Optional[str] = None,
+    attribute_filters: Optional[Dict] = None,
 ) -> int:
     q = select(func.count()).select_from(Listing).where(
         Listing.tenant_id == tenant_id,
         Listing.deleted_at.is_(None),
     )
-    if suburb:
-        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
-    if listing_type:
-        q = q.where(Listing.listing_type == listing_type)
+    if industry:
+        q = q.where(Listing.industry == industry)
     if status_filter:
         q = q.where(Listing.status == status_filter)
+    if suburb:
+        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
+    if attribute_filters:
+        q = q.where(Listing.attributes.contains(attribute_filters))
     result = await db.execute(q)
     return result.scalar_one()
 
@@ -111,7 +117,7 @@ async def create_listing(
     public_id: str,
     source: str,
     title: str,
-    listing_type: str,
+    industry: str = "real_estate",
     status: str = "active",
     crawl_job_id: Optional[int] = None,
     external_id: Optional[str] = None,
@@ -123,13 +129,8 @@ async def create_listing(
     suburb: Optional[str] = None,
     state: Optional[str] = None,
     postcode: Optional[str] = None,
-    country: str = "AU",
-    bedrooms: Optional[int] = None,
-    bathrooms: Optional[int] = None,
-    garages: Optional[int] = None,
-    land_sqm: Optional[float] = None,
-    house_sqm: Optional[float] = None,
-    has_pool: bool = False,
+    country: Optional[str] = None,
+    attributes: Optional[dict] = None,
     media: Optional[list] = None,
     raw_data: Optional[dict] = None,
 ) -> Listing:
@@ -139,8 +140,8 @@ async def create_listing(
         source=source,
         crawl_job_id=crawl_job_id,
         external_id=external_id,
+        industry=industry,
         title=title,
-        listing_type=listing_type,
         status=status,
         description=description,
         price=price,
@@ -151,12 +152,7 @@ async def create_listing(
         state=state,
         postcode=postcode,
         country=country,
-        bedrooms=bedrooms,
-        bathrooms=bathrooms,
-        garages=garages,
-        land_sqm=land_sqm,
-        house_sqm=house_sqm,
-        has_pool=has_pool,
+        attributes=attributes or {},
         media=media or [],
         raw_data=raw_data or {},
     )

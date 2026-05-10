@@ -21,6 +21,7 @@ from app.modules.chatbot.models import (
     CrawlJob,
     Document,
     DocumentChunk,
+    IndustrySchema,
     KnowledgeSource,
     Listing,
     ListingUploadJob,
@@ -51,7 +52,8 @@ async def create_chatbot(
     lead_capture_config: dict | None = None,
     company_profile: dict | None = None,
     prompt_personality_id: Optional[int] = None,
-    allow_rental: bool = False,
+    industry: str = "real_estate",
+    listing_filter_config: dict | None = None,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -67,7 +69,8 @@ async def create_chatbot(
         lead_capture_config=lead_capture_config or {},
         company_profile=company_profile or {},
         prompt_personality_id=prompt_personality_id,
-        allow_rental=allow_rental,
+        industry=industry,
+        listing_filter_config=listing_filter_config or {},
         public_id=public_id,
     )
     db.add(chatbot)
@@ -141,6 +144,23 @@ async def list_prompt_personalities(db: AsyncSession) -> Sequence[PromptPersonal
         .order_by(PromptPersonality.name)
     )
     return result.scalars().all()
+
+
+# =============================================================================
+# INDUSTRY SCHEMA
+# =============================================================================
+
+async def get_industry_schema(
+    db: AsyncSession, *, industry: str
+) -> Optional[IndustrySchema]:
+    """Return the IndustrySchema row for the given industry slug, or None."""
+    result = await db.execute(
+        select(IndustrySchema).where(
+            IndustrySchema.industry == industry,
+            IndustrySchema.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 # =============================================================================
@@ -1004,7 +1024,7 @@ async def list_listings(
     *,
     tenant_id: int,
     suburb: Optional[str] = None,
-    listing_type: Optional[str] = None,
+    industry: Optional[str] = None,
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -1015,8 +1035,8 @@ async def list_listings(
     )
     if suburb:
         q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
-    if listing_type:
-        q = q.where(Listing.listing_type == listing_type)
+    if industry:
+        q = q.where(Listing.industry == industry)
     if status_filter:
         q = q.where(Listing.status == status_filter)
     q = q.order_by(Listing.updated_at.desc()).limit(limit).offset(offset)
@@ -1028,7 +1048,7 @@ async def count_active_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
-    listing_type: Optional[str] = None,
+    industry: Optional[str] = None,
 ) -> int:
     """Total active, non-deleted listings for a tenant."""
     q = select(func.count(Listing.id)).where(
@@ -1036,8 +1056,8 @@ async def count_active_listings(
         Listing.deleted_at.is_(None),
         Listing.status == ListingStatus.ACTIVE,
     )
-    if listing_type:
-        q = q.where(Listing.listing_type == listing_type)
+    if industry:
+        q = q.where(Listing.industry == industry)
     result = await db.execute(q)
     return result.scalar_one()
 
@@ -1048,7 +1068,8 @@ async def listing_similarity_search(
     tenant_id: int,
     query_embedding: List[float],
     top_k: int = 5,
-    listing_type: Optional[str] = None,
+    industry: Optional[str] = None,
+    attribute_filters: Optional[dict] = None,
 ) -> Sequence[Listing]:
     """
     Semantic search on the listings table.
@@ -1062,8 +1083,10 @@ async def listing_similarity_search(
         Listing.deleted_at.is_(None),
         Listing.status == ListingStatus.ACTIVE,
     ]
-    if listing_type:
-        _active_filters.append(Listing.listing_type == listing_type)
+    if industry:
+        _active_filters.append(Listing.industry == industry)
+    if attribute_filters:
+        _active_filters.append(Listing.attributes.contains(attribute_filters))
 
     _active_scope = tuple(_active_filters)
 
@@ -1196,8 +1219,8 @@ async def create_listing(
     crawl_job_id: Optional[int] = None,
     source: str,
     external_id: Optional[str] = None,
+    industry: str = "real_estate",
     title: str,
-    listing_type: str,
     status: str = "active",
     description: Optional[str] = None,
     price: Optional[float] = None,
@@ -1208,12 +1231,7 @@ async def create_listing(
     state: Optional[str] = None,
     postcode: Optional[str] = None,
     country: str = "AU",
-    bedrooms: Optional[int] = None,
-    bathrooms: Optional[int] = None,
-    garages: Optional[int] = None,
-    land_sqm: Optional[float] = None,
-    house_sqm: Optional[float] = None,
-    has_pool: bool = False,
+    attributes: Optional[dict] = None,
     media: Optional[list] = None,
     raw_data: Optional[dict] = None,
     public_id: str = "",
@@ -1223,8 +1241,8 @@ async def create_listing(
         crawl_job_id=crawl_job_id,
         source=source,
         external_id=external_id,
+        industry=industry,
         title=title,
-        listing_type=listing_type,
         status=status,
         description=description,
         price=price,
@@ -1235,12 +1253,7 @@ async def create_listing(
         state=state,
         postcode=postcode,
         country=country,
-        bedrooms=bedrooms,
-        bathrooms=bathrooms,
-        garages=garages,
-        land_sqm=land_sqm,
-        house_sqm=house_sqm,
-        has_pool=has_pool,
+        attributes=attributes or {},
         media=media or [],
         raw_data=raw_data or {},
         public_id=public_id,
@@ -1346,6 +1359,8 @@ async def create_listing_upload_job(
     file_type: str,
     file_data: Optional[bytes] = None,
     storage_path: Optional[str] = None,
+    chatbot_config_id: Optional[int] = None,
+    industry: str = "real_estate",
 ) -> ListingUploadJob:
     job = ListingUploadJob(
         tenant_id=tenant_id,
@@ -1354,6 +1369,8 @@ async def create_listing_upload_job(
         file_type=file_type,
         file_data=file_data,
         storage_path=storage_path,
+        chatbot_config_id=chatbot_config_id,
+        industry=industry,
     )
     db.add(job)
     await db.flush()

@@ -167,6 +167,16 @@ async def _crawl_and_embed_async(
         )
         extract_listings = bool(ks and ks.config.get("extract_listings", False))
 
+        # Load industry and custom extraction prompt from chatbot config
+        chatbot = await repo.get_chatbot_by_id(
+            db, tenant_id=tenant_id, chatbot_id=chatbot_config_id
+        )
+        chatbot_industry = chatbot.industry if chatbot else "real_estate"
+
+        # Load custom extraction prompt from IndustrySchema (if any)
+        industry_schema = await repo.get_industry_schema(db, industry=chatbot_industry)
+        custom_extraction_prompt = industry_schema.extraction_prompt if industry_schema else None
+
         max_pages = await get_effective_limit(
             db, tenant_id=tenant_id, metric_key="max_pages_crawled", default=200
         )
@@ -307,9 +317,11 @@ async def _crawl_and_embed_async(
                 chatbot_config_id=chatbot_config_id,
                 extract_listings=extract_listings,
                 pages_found=pages_found,
+                industry=chatbot_industry,
+                custom_extraction_prompt=custom_extraction_prompt,
             ),
             queue=QUEUEEnum.ANALYSIS.value,
-            ignore_result=True,  # prevents child UUIDs accumulating in parent's children list
+            ignore_result=True,
         )
 
     logger.info(
@@ -342,6 +354,8 @@ def embed_crawled_page(
     chatbot_config_id: int,
     extract_listings: bool,
     pages_found: int,
+    industry: str = "real_estate",
+    custom_extraction_prompt: str | None = None,
 ) -> str:
     """
     Process a single crawled page: write pre-embedded chunks to DB (or embed
@@ -365,6 +379,8 @@ def embed_crawled_page(
                 chatbot_config_id=chatbot_config_id,
                 extract_listings=extract_listings,
                 pages_found=pages_found,
+                industry=industry,
+                custom_extraction_prompt=custom_extraction_prompt,
             )
         )
         return f"embed_crawled_page completed for {page_url}"
@@ -403,6 +419,8 @@ async def _embed_crawled_page_async(
     chatbot_config_id: int,
     extract_listings: bool,
     pages_found: int,
+    industry: str = "real_estate",
+    custom_extraction_prompt: str | None = None,
 ) -> None:
     """
     Checkpoint-session pattern for large SaaS:
@@ -457,7 +475,11 @@ async def _embed_crawled_page_async(
         extracted_listings: list[dict] = []
         if extract_listings:
             extracted_listings = await extract_listings_from_page(
-                page_text, openai_service, source_url=page_url
+                page_text,
+                openai_service,
+                source_url=page_url,
+                industry=industry,
+                custom_prompt=custom_extraction_prompt,
             )
     except Exception as exc:
         # External I/O failed — mark document FAILED in its own tiny session
@@ -522,8 +544,8 @@ async def _embed_crawled_page_async(
                         external_id=external_id,
                         crawl_job_id=crawl_job_id,
                         source=ListingSource.CRAWLED.value,
+                        industry=industry,
                         title=item.get("title") or page_url,
-                        listing_type=item.get("listing_type", "sale"),
                         status=item.get("status", "active"),
                         description=item.get("description"),
                         price=item.get("price"),
@@ -533,12 +555,7 @@ async def _embed_crawled_page_async(
                         suburb=item.get("suburb"),
                         state=item.get("state"),
                         postcode=item.get("postcode"),
-                        bedrooms=item.get("bedrooms"),
-                        bathrooms=item.get("bathrooms"),
-                        garages=item.get("garages"),
-                        land_sqm=item.get("land_sqm"),
-                        house_sqm=item.get("house_sqm"),
-                        has_pool=item.get("has_pool", False),
+                        attributes=item.get("attributes", {}),
                         raw_data=item.get("raw_data", {}),
                         public_id=_new_public_id() if not existing else existing.public_id,
                     )
@@ -1167,6 +1184,11 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
         await repo.update_listing_upload_job(db, job=job, status=UploadJobStatus.PROCESSING)
         await db.commit()
 
+        # Resolve industry + custom file-parse prompt from IndustrySchema
+        job_industry: str = job.industry or "real_estate"
+        industry_schema = await repo.get_industry_schema(db, industry=job_industry)
+        custom_file_parse_prompt = industry_schema.file_parse_prompt if industry_schema else None
+
         # ── Step 1: Fetch file bytes ──────────────────────────────────────
         try:
             file_bytes = _get_listing_file_bytes(job)
@@ -1204,7 +1226,12 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
 
         # ── Step 3: LLM normalization ─────────────────────────────────────
         try:
-            structured_rows = await parse_listings_from_table(raw_rows, openai_service)
+            structured_rows = await parse_listings_from_table(
+                raw_rows,
+                openai_service,
+                industry=job_industry,
+                custom_prompt=custom_file_parse_prompt,
+            )
         except Exception as exc:
             logger.warning(
                 f"ListingUploadJob {job_id}: LLM normalization failed ({exc}), "
@@ -1216,8 +1243,6 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
         # Each batch: 1 SELECT (bulk existence check) + 1 flush + 1 commit
         # instead of N SELECTs + N flushes + N commits.
         processed = 0
-        _VALID_STATUSES = {"active", "inactive", "sold", "leased"}
-        _VALID_TYPES = {"sale", "rent"}
 
         for i in range(0, len(structured_rows), _BATCH_SIZE):
             batch = structured_rows[i: i + _BATCH_SIZE]
@@ -1226,7 +1251,6 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
             normalized: list[dict] = []
             for item in batch:
                 raw_status = str(item.get("status") or "active").strip().lower()
-                raw_type = str(item.get("listing_type") or "sale").strip().lower()
                 external_id = (
                     f"upload::{job_id}::{item.get('title', '')}"
                     f"::{item.get('suburb', '')}"
@@ -1234,8 +1258,7 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
                 normalized.append({
                     "item": item,
                     "external_id": external_id,
-                    "status": raw_status if raw_status in _VALID_STATUSES else "active",
-                    "listing_type": raw_type if raw_type in _VALID_TYPES else "sale",
+                    "status": raw_status or "active",
                     "currency": str(item.get("currency") or "AUD").strip().upper(),
                 })
 
@@ -1254,8 +1277,8 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
                 existing = existing_map.get(external_id)
                 fields = dict(
                     source=ListingSource.MANUAL.value,
+                    industry=job_industry,
                     title=item.get("title") or "Untitled",
-                    listing_type=n["listing_type"],
                     status=n["status"],
                     description=item.get("description"),
                     price=item.get("price"),
@@ -1265,12 +1288,7 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
                     suburb=item.get("suburb"),
                     state=item.get("state"),
                     postcode=item.get("postcode"),
-                    bedrooms=item.get("bedrooms"),
-                    bathrooms=item.get("bathrooms"),
-                    garages=item.get("garages"),
-                    land_sqm=item.get("land_sqm"),
-                    house_sqm=item.get("house_sqm"),
-                    has_pool=bool(item.get("has_pool", False)),
+                    attributes=item.get("attributes", {}),
                     raw_data=item.get("raw_data", {}),
                 )
                 try:

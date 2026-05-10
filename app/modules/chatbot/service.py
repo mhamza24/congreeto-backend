@@ -87,7 +87,8 @@ async def create_chatbot(
         lead_capture_config=payload.lead_capture_config,
         company_profile=company_profile_dict,
         prompt_personality_id=personality.id if personality else None,
-        allow_rental=payload.allow_rental,
+        industry=payload.industry,
+        listing_filter_config=payload.listing_filter_config,
         public_id=_new_public_id(),
     )
 
@@ -776,26 +777,28 @@ async def rag_search(
     ]
 
     # ── Leg 2: semantic search on listings (live data, no stale chunks) ───────
-    # allow_rental is a chatbot-level toggle (default False). When False, restrict to 'sale' only.
-    listing_type_filter: Optional[str] = None if chatbot.allow_rental else "sale"
+    # Filter by the chatbot's industry; apply any attribute-level filters from listing_filter_config.
+    chatbot_industry: Optional[str] = chatbot.industry or None
+    attribute_filters: Optional[dict] = chatbot.listing_filter_config or None
 
     logger.info(
-        "[rag] listing search tenant=%s allow_rental=%s type_filter=%s query=%r",
-        tenant_id, chatbot.allow_rental, listing_type_filter, query,
+        "[rag] listing search tenant=%s industry=%s attribute_filters=%s query=%r",
+        tenant_id, chatbot_industry, attribute_filters, query,
     )
 
     # Fetch total count and semantic results in parallel
     import asyncio as _asyncio
     total_listings, listings = await _asyncio.gather(
         repo.count_active_listings(
-            db, tenant_id=tenant_id, listing_type=listing_type_filter
+            db, tenant_id=tenant_id, industry=chatbot_industry
         ),
         repo.listing_similarity_search(
             db,
             tenant_id=tenant_id,
             query_embedding=query_embedding,
             top_k=listing_top_k,
-            listing_type=listing_type_filter,
+            industry=chatbot_industry,
+            attribute_filters=attribute_filters,
         ),
     )
 
@@ -837,32 +840,27 @@ def _listing_to_context(listing) -> str:
     parts = []
     if listing.title:
         parts.append(f"**{listing.title}**")
-    if listing.listing_type:
-        parts.append(f"Type: {listing.listing_type.value}")
-    if listing.status:
-        parts.append(f"Status: {listing.status.value}")
+    if listing.industry:
+        parts.append(f"Industry: {listing.industry}")
+    status_val = listing.status.value if hasattr(listing.status, "value") else listing.status
+    if status_val:
+        parts.append(f"Status: {status_val}")
     addr = " ".join(filter(None, [listing.street, listing.suburb, listing.state, listing.postcode]))
     if addr:
         parts.append(f"Address: {addr}")
-    feats = []
-    if listing.bedrooms:
-        feats.append(f"{listing.bedrooms} bed")
-    if listing.bathrooms:
-        feats.append(f"{listing.bathrooms} bath")
-    if listing.garages:
-        feats.append(f"{listing.garages} garage")
-    if listing.has_pool:
-        feats.append("pool")
-    if feats:
-        parts.append("Features: " + ", ".join(feats))
     if listing.price_display:
         parts.append(f"Price: {listing.price_display}")
     elif listing.price:
         parts.append(f"Price: {listing.currency} {listing.price:,.0f}")
+    # Industry-specific attributes (generic key-value rendering)
+    attrs: dict = listing.attributes or {}
+    if attrs:
+        attr_parts = [f"{k.replace('_', ' ').title()}: {v}" for k, v in attrs.items() if v not in (None, "", False, [])]
+        if attr_parts:
+            parts.append("Attributes: " + " | ".join(attr_parts))
     if listing.description:
         parts.append(listing.description[:500])
     # Include the source URL so the LLM can share the direct link with visitors.
-    # Check raw_data first, then fall back to the first URL found in media items.
     raw_data: dict = listing.raw_data or {}
     source_url = raw_data.get("source_url")
     if not source_url:

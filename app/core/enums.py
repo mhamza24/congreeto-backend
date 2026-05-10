@@ -148,15 +148,21 @@ class ListingSource(str, enum.Enum):
     CRAWLED = "crawled"
 
 class ListingStatus(str, enum.Enum):
-    ACTIVE   = "active"
-    INACTIVE = "inactive"
-    SOLD     = "sold"
-    LEASED   = "leased"
+    """
+    Built-in listing statuses. Stored as VARCHAR — not a native PG ENUM —
+    so any industry can define additional statuses (e.g. "out_of_stock",
+    "discontinued", "seasonal") without a migration.
+    """
+    ACTIVE       = "active"
+    INACTIVE     = "inactive"
+    SOLD         = "sold"       # real estate
+    LEASED       = "leased"     # real estate
+    AVAILABLE    = "available"
+    UNAVAILABLE  = "unavailable"
+    OUT_OF_STOCK = "out_of_stock"
+    DISCONTINUED = "discontinued"
 
-class ListingType(str, enum.Enum):
-    SALE  = "sale"
-    RENT  = "rent"
-    
+
 class BillingInterval(str, enum.Enum):
     MONTHLY = "monthly"
     ANNUAL  = "annual"
@@ -307,17 +313,13 @@ listing_source_enum = PgEnum(
     values_callable=lambda x: [e.value for e in x],
 )
 
+# VARCHAR-backed — native_enum=False so any industry can use any status string.
+# Validation is enforced at the Pydantic / service layer, not at the DB level.
 listing_status_enum = PgEnum(
     ListingStatus,
     name="listing_status",
-    create_type=True,
-    values_callable=lambda x: [e.value for e in x],
-)
-
-listing_type_enum = PgEnum(
-    ListingType,
-    name="listing_type",
-    create_type=True,
+    create_type=False,
+    native_enum=False,
     values_callable=lambda x: [e.value for e in x],
 )
 

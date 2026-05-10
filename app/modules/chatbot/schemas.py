@@ -80,9 +80,15 @@ class ChatbotCreateRequest(BaseModel):
         default="aria",
         description="Personality template slug (e.g. 'aria'). Defaults to 'aria'.",
     )
-    allow_rental: bool = Field(
-        default=False,
-        description="When True, listing search includes rental listings. Defaults to False (sale only).",
+    industry: str = Field(
+        default="real_estate",
+        max_length=100,
+        description="Industry this chatbot serves (e.g. 'real_estate', 'restaurant', 'ecommerce'). "
+                    "Drives listing extraction prompts and RAG search behaviour.",
+    )
+    listing_filter_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Industry-specific listing filter overrides (e.g. {'listing_type': 'rent'} for RE).",
     )
 
 
@@ -101,9 +107,14 @@ class ChatbotUpdateRequest(BaseModel):
         default=None,
         description="Switch personality. Triggers system prompt regeneration.",
     )
-    allow_rental: Optional[bool] = Field(
+    industry: Optional[str] = Field(
         default=None,
-        description="Set to True to include rental listings in search results.",
+        max_length=100,
+        description="Change the industry this chatbot serves.",
+    )
+    listing_filter_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Update industry-specific listing filter overrides.",
     )
 
 
@@ -121,7 +132,8 @@ class ChatbotResponse(BaseModel):
     system_prompt_template: Optional[str]
     welcome_message: Optional[str]
     rag_enabled: bool
-    allow_rental: bool
+    industry: str
+    listing_filter_config: Dict[str, Any]
     auto_close_minutes: int
     allowed_domains: List[str]
     branding: Dict[str, Any]
