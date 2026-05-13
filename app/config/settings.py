@@ -72,10 +72,10 @@ class Settings(BaseSettings):
     MAIL_USERNAME: str
     MAIL_PASSWORD: str
     MAIL_FROM: str
-    MAIL_SERVER: str = "smtp.office365.com"
+    MAIL_SERVER: str = "smtp.gmail.com" #"smtp.office365.com"
     MAIL_PORT: int = 587
 
-    SENTRY_DSN: str
+    SENTRY_DSN: str 
 
     CHAT_IDLE_THRESHOLD_MINUTES: int = 15
     CHAT_IDLE_BATCH_SIZE: int = 100
