@@ -438,7 +438,7 @@ async def serve_asset(
             content=bytes(asset.file_data),
             media_type=asset.content_type,
             headers={
-                "Cache-Control": "public, max-age=86400",
+                "Cache-Control": f"public, max-age={settings.CHATBOT_ASSET_CACHE_MAX_AGE_SECONDS}",
                 "Content-Disposition": f'inline; filename="{asset.file_name}"',
             },
         )
@@ -461,6 +461,7 @@ async def serve_asset(
 )
 async def get_chatbot_embed(
     iframe_token: str,
+    request: Request,
     db: DBDep,
     page_url: Optional[str] = Query(default=None, max_length=2048),
 ) -> ApiResponse[schemas.ChatbotEmbedResponse]:
@@ -469,9 +470,18 @@ async def get_chatbot_embed(
     Returns branding, welcome message, theme, and lead capture config.
     No authentication required — the iframe_token is the access key.
     Pass page_url to get the campaign-specific welcome message for that page.
+
+    The Origin (or Referer) header is checked against the chatbot's
+    allowed_domains list — embeds from unauthorised hosts get 403.
     """
     try:
-        data = await service.get_chatbot_embed(db, iframe_token=iframe_token, page_url=page_url)
+        data = await service.get_chatbot_embed(
+            db,
+            iframe_token=iframe_token,
+            page_url=page_url,
+            request_origin=request.headers.get("origin"),
+            request_referer=request.headers.get("referer"),
+        )
         return ApiResponse(success=True, message="OK", data=data)
     except HTTPException:
         raise

@@ -47,53 +47,59 @@ class PlanCreateRequest(BaseModel):
 
 
 class PlanUpdateRequest(BaseModel):
-    name:            Optional[str]        = None
-    description:     Optional[str]        = None
-    price_aud_cents: Optional[int]        = Field(None, ge=0)
-    price_usd_cents: Optional[int]        = Field(None, ge=0)
-    limits:          Optional[PlanLimits] = None
-    is_active:       Optional[bool]       = None
-    is_public:       Optional[bool]       = None
-    sort_order:      Optional[int]        = None
+    name:                    Optional[str]        = None
+    description:             Optional[str]        = None
+    price_aud_cents:         Optional[int]        = Field(None, ge=0)
+    price_usd_cents:         Optional[int]        = Field(None, ge=0)
+    limits:                  Optional[PlanLimits] = None
+    is_active:               Optional[bool]       = None
+    is_public:               Optional[bool]       = None
+    sort_order:              Optional[int]        = None
+    stripe_monthly_price_id: Optional[str]        = Field(None, max_length=255)
+    stripe_annual_price_id:  Optional[str]        = Field(None, max_length=255)
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
 class PlanResponse(BaseModel):
-    public_id:        str
-    name:             str
-    slug:             str
-    description:      Optional[str]
-    billing_interval: BillingInterval
-    price_aud_cents:  int
-    price_usd_cents:  int
-    price_aud:        float
-    price_usd:        float
-    limits:           dict
-    is_active:        bool
-    is_public:        bool
-    sort_order:       int
-    created_at:       datetime
+    public_id:               str
+    name:                    str
+    slug:                    str
+    description:             Optional[str]
+    billing_interval:        BillingInterval
+    price_aud_cents:         int
+    price_usd_cents:         int
+    price_aud:               float
+    price_usd:               float
+    limits:                  dict
+    is_active:               bool
+    is_public:               bool
+    sort_order:              int
+    stripe_monthly_price_id: Optional[str]
+    stripe_annual_price_id:  Optional[str]
+    created_at:              datetime
 
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def from_plan(cls, plan) -> "PlanResponse":
         return cls(
-            public_id        = plan.public_id,
-            name             = plan.name,
-            slug             = plan.slug,
-            description      = plan.description,
-            billing_interval = plan.billing_interval,
-            price_aud_cents  = plan.price_aud_cents,
-            price_usd_cents  = plan.price_usd_cents,
-            price_aud        = plan.price_aud,
-            price_usd        = plan.price_usd,
-            limits           = plan.limits,
-            is_active        = plan.is_active,
-            is_public        = plan.is_public,
-            sort_order       = plan.sort_order,
-            created_at       = plan.created_at,
+            public_id               = plan.public_id,
+            name                    = plan.name,
+            slug                    = plan.slug,
+            description             = plan.description,
+            billing_interval        = plan.billing_interval,
+            price_aud_cents         = plan.price_aud_cents,
+            price_usd_cents         = plan.price_usd_cents,
+            price_aud               = plan.price_aud,
+            price_usd               = plan.price_usd,
+            limits                  = plan.limits,
+            is_active               = plan.is_active,
+            is_public               = plan.is_public,
+            sort_order              = plan.sort_order,
+            stripe_monthly_price_id = getattr(plan, "stripe_monthly_price_id", None),
+            stripe_annual_price_id  = getattr(plan, "stripe_annual_price_id", None),
+            created_at              = plan.created_at,
         )
 
 

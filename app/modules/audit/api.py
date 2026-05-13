@@ -2,14 +2,14 @@
 app/modules/audit/api.py
 
 Two audit log endpoints:
-  GET /audit/admin/logs                        — super admin: all tenants
-  GET /audit/{tenant_public_id}/logs     — tenant admin: their own tenant only
+  GET /audit/admin/logs                — super admin: all tenants
+  GET /audit/{tenant_public_id}/logs   — tenant admin: their own tenant only
 
-Both use the project-standard PagedApiResponse + PaginationMeta pattern.
+Both use cursor (keyset) pagination — see app/core/pagination.py.
+The legacy ?offset/?limit params are gone; clients pass ?cursor= instead.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Annotated, List, Optional
 
@@ -17,8 +17,10 @@ import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.database import get_db
-from app.core.response import PagedApiResponse, PaginationMeta
+from app.core.pagination import CursorPage
+from app.core.response import ApiResponse
 from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.modules.audit import repository as audit_repo
@@ -27,6 +29,7 @@ from app.modules.tenants import repository as tenant_repo
 from app.modules.users import repository as user_repo
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
@@ -39,8 +42,8 @@ DBDep = Annotated[AsyncSession, Depends(get_db)]
 
 @router.get(
     "/admin/logs",
-    response_model=PagedApiResponse[List[AuditLogResponse]],
-    summary="List all audit logs across all tenants (super admin only)",
+    response_model=ApiResponse[CursorPage[AuditLogResponse]],
+    summary="List audit logs across all tenants (super admin only)",
 )
 async def admin_list_audit_logs(
     db: DBDep,
@@ -49,9 +52,13 @@ async def admin_list_audit_logs(
     user_public_id: Optional[str] = Query(default=None, description="Filter by user public id"),
     entity_type: Optional[str] = Query(default=None, description="e.g. 'tenants', 'listings'"),
     action: Optional[str] = Query(default=None, description="e.g. 'create', 'login'"),
-    limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-) -> PagedApiResponse[List[AuditLogResponse]]:
+    page_size: int = Query(
+        default=settings.AUDIT_PAGE_SIZE_DEFAULT,
+        ge=1, le=settings.AUDIT_PAGE_SIZE_MAX,
+        description="Items per page.",
+    ),
+    cursor: Optional[str] = Query(default=None, description="Opaque cursor from previous response."),
+) -> ApiResponse[CursorPage[AuditLogResponse]]:
     tenant_id: Optional[int] = None
     user_id: Optional[int] = None
 
@@ -67,33 +74,16 @@ async def admin_list_audit_logs(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         user_id = user.id
 
-    try:
-        logs, total = await _fetch(
-            db,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            entity_type=entity_type,
-            action=action,
-            limit=limit,
-            offset=offset,
-        )
-    except Exception as exc:
-        sentry_sdk.capture_exception(exc)
-        logger.exception("admin_list_audit_logs failed")
-        raise HTTPException(status_code=500, detail="Could not fetch audit logs.")
-
-    return PagedApiResponse(
-        success=True,
-        message=f"{total} audit log(s) found.",
-        data=logs,
-        meta=PaginationMeta(
-            total=total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < total,
-            has_prev=offset > 0,
-        ),
+    page = await _fetch_page(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        action=action,
+        page_size=page_size,
+        cursor=cursor,
     )
+    return ApiResponse(success=True, message="Audit logs fetched.", data=page)
 
 
 # =============================================================================
@@ -102,7 +92,7 @@ async def admin_list_audit_logs(
 
 @router.get(
     "/{tenant_public_id}/logs",
-    response_model=PagedApiResponse[List[AuditLogResponse]],
+    response_model=ApiResponse[CursorPage[AuditLogResponse]],
     summary="List audit logs for a specific tenant (tenant admin or super admin)",
 )
 async def tenant_list_audit_logs(
@@ -111,9 +101,13 @@ async def tenant_list_audit_logs(
     user_public_id: Optional[str] = Query(default=None, description="Filter by member user public id"),
     entity_type: Optional[str] = Query(default=None, description="e.g. 'listings', 'chatbot_configs'"),
     action: Optional[str] = Query(default=None, description="e.g. 'create', 'update'"),
-    limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-) -> PagedApiResponse[List[AuditLogResponse]]:
+    page_size: int = Query(
+        default=settings.AUDIT_PAGE_SIZE_DEFAULT,
+        ge=1, le=settings.AUDIT_PAGE_SIZE_MAX,
+        description="Items per page.",
+    ),
+    cursor: Optional[str] = Query(default=None, description="Opaque cursor from previous response."),
+) -> ApiResponse[CursorPage[AuditLogResponse]]:
     if not ctx.membership.is_owner_or_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -127,65 +121,50 @@ async def tenant_list_audit_logs(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         user_id = user.id
 
-    try:
-        logs, total = await _fetch(
-            db,
-            tenant_id=ctx.tenant.id,
-            user_id=user_id,
-            entity_type=entity_type,
-            action=action,
-            limit=limit,
-            offset=offset,
-        )
-    except Exception as exc:
-        sentry_sdk.capture_exception(exc)
-        logger.exception("tenant_list_audit_logs failed tenant=%s", ctx.tenant.public_id)
-        raise HTTPException(status_code=500, detail="Could not fetch audit logs.")
-
-    return PagedApiResponse(
-        success=True,
-        message=f"{total} audit log(s) found.",
-        data=logs,
-        meta=PaginationMeta(
-            total=total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < total,
-            has_prev=offset > 0,
-        ),
+    page = await _fetch_page(
+        db,
+        tenant_id=ctx.tenant.id,
+        user_id=user_id,
+        entity_type=entity_type,
+        action=action,
+        page_size=page_size,
+        cursor=cursor,
     )
+    return ApiResponse(success=True, message="Audit logs fetched.", data=page)
 
 
 # =============================================================================
 # SHARED HELPER
 # =============================================================================
 
-async def _fetch(
+async def _fetch_page(
     db: AsyncSession,
     *,
     tenant_id: Optional[int],
     user_id: Optional[int],
     entity_type: Optional[str],
     action: Optional[str],
-    limit: int,
-    offset: int,
-) -> tuple[List[AuditLogResponse], int]:
-    logs_raw, total = await asyncio.gather(
-        audit_repo.list_logs(
+    page_size: int,
+    cursor: Optional[str],
+) -> CursorPage[AuditLogResponse]:
+    try:
+        rows = await audit_repo.list_logs_keyset(
             db,
             tenant_id=tenant_id,
             user_id=user_id,
             entity_type=entity_type,
             action=action,
-            limit=limit,
-            offset=offset,
-        ),
-        audit_repo.count_logs(
-            db,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            entity_type=entity_type,
-            action=action,
-        ),
-    )
-    return [AuditLogResponse.model_validate(log) for log in logs_raw], total
+            page_size=page_size,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        # Bad cursor — give the client a clear 400 instead of leaking 500.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("audit fetch_page failed tenant_id=%s user_id=%s", tenant_id, user_id)
+        raise HTTPException(status_code=500, detail="Could not fetch audit logs.")
+
+    page = CursorPage.build(rows, page_size, sort_attr="created_at", id_attr="id")
+    page.items = [AuditLogResponse.model_validate(item) for item in page.items]
+    return page

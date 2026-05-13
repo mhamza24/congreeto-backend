@@ -5,11 +5,15 @@ import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.database import get_db
-from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
+from app.core.pagination import CursorPage
+from app.core.response import ApiResponse
 from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context
 from app.modules.dashboard import schemas, service
+
+settings = get_settings()
 
 import logging
 logger = logging.getLogger(__name__)
@@ -50,26 +54,32 @@ async def get_summary(
 
 @router.get(
     "/{tenant_public_id}/leads",
-    response_model=ApiResponse[schemas.LeadsListResponse],
+    response_model=ApiResponse[CursorPage[schemas.LeadListItem]],
     status_code=status.HTTP_200_OK,
-    summary="List all leads with pagination",
+    summary="List leads (cursor paginated)",
 )
 async def list_leads(
     tenant_public_id: str,
     db: DBDep,
     ctx: CtxDep,
-    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(default=10, ge=1, le=100, description="Items per page (max 100)"),
+    page_size: int = Query(
+        default=settings.DASHBOARD_LEADS_PAGE_SIZE_DEFAULT,
+        ge=1, le=settings.DASHBOARD_LEADS_PAGE_SIZE_MAX,
+        description="Items per page.",
+    ),
+    cursor: Optional[str] = Query(default=None, description="Opaque cursor from previous response."),
 ):
     try:
         result = await service.fetch_leads(
             db,
             tenant_id=str(ctx.tenant.id),
-            page=page,
             page_size=page_size,
+            cursor=cursor,
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in list_leads")
         sentry_sdk.capture_exception()
@@ -183,17 +193,23 @@ async def admin_overview(
 
 @router.get(
     "/admin/tenants",
-    response_model=PagedApiResponse[list[schemas.TenantRow]],
-    summary="Paginated tenant table with plan and usage stats (super admin only)",
+    response_model=ApiResponse[CursorPage[schemas.TenantRow]],
+    summary="Tenant table with plan and usage stats (cursor paginated, super admin only)",
 )
 async def admin_tenants(
     db: DBDep,
     _=Depends(require_superadmin),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page_size: int = Query(
+        default=settings.DASHBOARD_TENANTS_PAGE_SIZE_DEFAULT,
+        ge=1, le=settings.DASHBOARD_TENANTS_PAGE_SIZE_MAX,
+        description="Items per page.",
+    ),
+    cursor: Optional[str] = Query(default=None, description="Opaque cursor from previous response."),
 ):
     try:
-        result = await service.fetch_admin_tenants(db, limit=limit, offset=offset)
+        result = await service.fetch_admin_tenants(db, page_size=page_size, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error in admin tenants endpoint")
         sentry_sdk.capture_exception()
@@ -201,15 +217,4 @@ async def admin_tenants(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not fetch tenants.",
         )
-    return PagedApiResponse(
-        success=True,
-        message=f"{result.total} tenant(s) found.",
-        data=result.tenants,
-        meta=PaginationMeta(
-            total=result.total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < result.total,
-            has_prev=offset > 0,
-        ),
-    )
+    return ApiResponse(success=True, message="Tenants fetched successfully.", data=result)

@@ -12,6 +12,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     Index,
+    PrimaryKeyConstraint,
     String,
     Text,
     text,
@@ -30,14 +31,19 @@ class AuditLog(Base):
       - Rows are INSERT-only.  Never call session.delete() or UPDATE on this table.
       - tenant_id / user_id are nullable: platform-level or system actions have no
         tenant or user context.
-      - ON DELETE SET NULL: deleting a tenant/user preserves the audit history.
       - diff should always be { "before": {...}, "after": {...} }.
         Pass {} when there is no meaningful diff (e.g. pure CREATE actions).
+
+    Partitioning note:
+      The table is range-partitioned by created_at (monthly).  PostgreSQL requires
+      the partition key to be part of the primary key, so the PK is (id, created_at).
+      id is still auto-generated via BIGSERIAL — uniqueness within each partition is
+      guaranteed; global uniqueness is provided by the sequence.
     """
 
     __tablename__ = "audit_logs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, autoincrement=True, nullable=False)
 
     # NULL for platform-level actions (no tenant context)
     tenant_id: Mapped[int | None] = mapped_column(
@@ -99,11 +105,14 @@ class AuditLog(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         server_default=text("NOW()"),
-        comment="UTC timestamp. Set once on INSERT, never changed.",
+        comment="UTC timestamp. Partition key — set once on INSERT, never changed.",
     )
 
-    # ── Indexes (matches exact SQL in the DB spec) ────────────────────────────
+    # ── Table args ────────────────────────────────────────────────────────────
+    # PK is composite (id, created_at) because Postgres range-partitioned tables
+    # require the partition key in every primary/unique constraint.
     __table_args__ = (
+        PrimaryKeyConstraint("id", "created_at", name="pk_audit_logs"),
         Index(
             "ix_audit_tenant",
             "tenant_id",

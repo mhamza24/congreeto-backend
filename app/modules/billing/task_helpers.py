@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.modules.billing import repository as repo
 from app.core.enums import UsageMetric, LimitStatus
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 def current_period_month() -> str:
@@ -100,7 +102,7 @@ async def can_start_new_conversation(
         tenant_id=tenant_id,
         metric=UsageMetric.CONVERSATIONS,
         metric_key="max_conversations_per_month",
-        default_limit=750,
+        default_limit=settings.BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH,
     )
     allowed = status != LimitStatus.EXCEEDED
     if not allowed:
@@ -125,7 +127,7 @@ async def can_continue_conversation(
         tenant_id=tenant_id,
         metric=UsageMetric.TOKENS_USED,
         metric_key="max_tokens_per_month",
-        default_limit=1_000_000,
+        default_limit=settings.BILLING_DEFAULT_MAX_TOKENS_PER_MONTH,
     )
     allowed = status != LimitStatus.EXCEEDED
     if not allowed:

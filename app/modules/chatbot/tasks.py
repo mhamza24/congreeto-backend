@@ -178,7 +178,8 @@ async def _crawl_and_embed_async(
         custom_extraction_prompt = industry_schema.extraction_prompt if industry_schema else None
 
         max_pages = await get_effective_limit(
-            db, tenant_id=tenant_id, metric_key="max_pages_crawled", default=200
+            db, tenant_id=tenant_id, metric_key="max_pages_crawled",
+            default=settings.BILLING_DEFAULT_MAX_PAGES_CRAWLED,
         )
 
         # Incremental crawl: only fetch pages not already in the knowledge base
@@ -1021,7 +1022,7 @@ async def _embed_listing_async(*, listing_id: int, tenant_id: int) -> None:
 # TASK D2 — EMBED LISTINGS BATCH  (bulk import / crawl)
 # =============================================================================
 
-_EMBED_BATCH_SIZE = 100  # max listings per OpenAI embeddings call
+_EMBED_BATCH_SIZE = settings.EMBED_BATCH_SIZE  # max listings per OpenAI embeddings call
 
 
 @celery_app.task(
@@ -1173,7 +1174,7 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
     from app.modules.chatbot.task_helpers import parse_listings_from_table
     from app.modules.open_ai import service as openai_service
 
-    _BATCH_SIZE = 20  # listings committed per DB transaction
+    _BATCH_SIZE = settings.LISTING_FILE_DB_BATCH_SIZE  # listings committed per DB transaction
 
     async with get_task_db_session() as db:
         job = await repo.get_listing_upload_job(db, tenant_id=tenant_id, job_id=job_id)

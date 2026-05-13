@@ -15,6 +15,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import CursorPage, decode_cursor
+
 from . import repository as repo
 from . import schemas
 
@@ -89,17 +91,36 @@ async def fetch_admin_overview(db: AsyncSession) -> schemas.AdminOverviewRespons
 async def fetch_admin_tenants(
     db: AsyncSession,
     *,
-    limit: int,
-    offset: int,
-) -> schemas.AdminTenantsResponse:
-    logger.debug("[dashboard] fetch_admin_tenants limit=%s offset=%s", limit, offset)
-    rows, total = await repo.get_admin_tenants(db, limit=limit, offset=offset)
-    return schemas.AdminTenantsResponse(
-        tenants=[schemas.TenantRow(**r) for r in rows],
-        total=total,
-        limit=limit,
-        offset=offset,
+    page_size: int,
+    cursor: Optional[str] = None,
+) -> CursorPage[schemas.TenantRow]:
+    logger.debug("[dashboard] fetch_admin_tenants page_size=%s cursor=%s", page_size, bool(cursor))
+    cursor_dt = cursor_id = None
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+
+    rows = await repo.get_admin_tenants_keyset(
+        db, page_size=page_size, cursor_dt=cursor_dt, cursor_id=cursor_id,
     )
+    page = CursorPage.build(
+        rows, page_size,
+        key_fn=lambda r: (r["created_at"], r["id"]),
+    )
+    page.items = [
+        schemas.TenantRow(
+            public_id=r["public_id"],
+            name=r["name"],
+            slug=r["slug"],
+            status=r["status"],
+            plan_name=r.get("plan_name"),
+            subscription_status=r.get("subscription_status"),
+            total_conversations=r["total_conversations"],
+            member_count=r["member_count"],
+            created_at=r["created_at_str"],
+        )
+        for r in page.items
+    ]
+    return page
 
 
 # =============================================================================
@@ -160,15 +181,29 @@ async def fetch_leads(
     db: AsyncSession,
     *,
     tenant_id: str,
-    page: int,
     page_size: int,
-) -> schemas.LeadsListResponse:
-    data = await repo.get_leads_paginated(
-        db, tenant_id=tenant_id, page=page, page_size=page_size
+    cursor: Optional[str] = None,
+) -> CursorPage[schemas.LeadListItem]:
+    cursor_dt = cursor_id = None
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+
+    rows = await repo.get_leads_keyset(
+        db,
+        tenant_id=tenant_id,
+        page_size=page_size,
+        cursor_dt=cursor_dt,
+        cursor_id=cursor_id,
     )
-    leads = [schemas.LeadListItem(**row) for row in data["leads"]]
-    pagination = schemas.PaginationMeta(**data["pagination"])
-    return schemas.LeadsListResponse(leads=leads, pagination=pagination)
+    page = CursorPage.build(
+        rows, page_size,
+        key_fn=lambda r: (r["created_at"], r["id"]),
+    )
+    # Drop the bare `id` from outgoing items — `LeadListItem` uses public_id.
+    for r in page.items:
+        r.pop("id", None)
+    page.items = [schemas.LeadListItem(**r) for r in page.items]
+    return page
 
 
 async def fetch_lead_detail(

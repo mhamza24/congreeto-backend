@@ -9,11 +9,15 @@ from __future__ import annotations
 import logging
 import uuid
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.db_base import _new_public_id
+
+settings = get_settings()
 from app.core.enums import DocStatus, CrawlStatus
 from app.modules.audit import repository as audit
 from app.modules.billing import repository as billing_repo
@@ -137,20 +141,93 @@ async def list_chatbots(
     return [schemas.ChatbotResponse.model_validate(c) for c in chatbots]
 
 
+def _hostname_of(url_or_host: str) -> str | None:
+    """
+    Return the lowercase hostname from a URL or bare host string.
+    "https://app.example.com:443/x" → "app.example.com"
+    "app.example.com"              → "app.example.com"
+    Returns None for inputs that have no resolvable hostname.
+    """
+    if not url_or_host:
+        return None
+    s = url_or_host.strip().lower()
+    if "://" not in s:
+        s = "//" + s  # urlparse needs a scheme to populate netloc
+    try:
+        host = urlparse(s).hostname
+    except Exception:
+        return None
+    return host or None
+
+
+def _origin_allowed(origin: str | None, allowed: list[str] | None) -> bool:
+    """
+    Decide whether a browser Origin (or Referer fallback) may load the
+    embedded widget.
+
+    Rules:
+      - Empty / None allowed_domains  → permit any origin (no enforcement)
+      - "example.com"                 → exact host match
+      - "*.example.com"               → match any subdomain (and the apex)
+      - Any entry may be a full URL — only the hostname is compared
+    """
+    if not allowed:
+        return True
+    host = _hostname_of(origin or "")
+    if not host:
+        return False
+    for raw in allowed:
+        entry = (raw or "").strip().lower()
+        if not entry:
+            continue
+        # Wildcard subdomain — strip "*." then match suffix
+        if entry.startswith("*."):
+            suffix = entry[2:]
+            if host == suffix or host.endswith("." + suffix):
+                return True
+            continue
+        # Plain entry — pull hostname out in case the admin pasted a URL
+        entry_host = _hostname_of(entry) or entry
+        if host == entry_host:
+            return True
+    return False
+
+
 async def get_chatbot_embed(
     db: AsyncSession,
     *,
     iframe_token: str,
     page_url: Optional[str] = None,
+    request_origin: Optional[str] = None,
+    request_referer: Optional[str] = None,
 ) -> schemas.ChatbotEmbedResponse:
     """
     Public endpoint — no auth required.
     Returns chatbot branding, config, and active theme based on iframe token.
     If page_url is provided, matches the best campaign and uses its welcome_message.
+
+    When the chatbot has a non-empty allowed_domains list, the caller's Origin
+    (Referer fallback) is enforced — mismatched embedders get 403.
     """
     chatbot = await repo.get_chatbot_by_iframe_token(db, iframe_token=iframe_token)
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
+
+    # ── Allowed-domain enforcement ────────────────────────────────────────────
+    # We trust Origin first (set by browsers on cross-origin requests, hard to
+    # forge from a real browser context) and fall back to Referer for legacy
+    # embedders. Same-origin GETs from Postman/curl have neither header — those
+    # are blocked iff the chatbot has any allowed_domains configured.
+    candidate = request_origin or request_referer
+    if not _origin_allowed(candidate, chatbot.allowed_domains):
+        logger.warning(
+            "[embed] blocked iframe_token=%s origin=%r allowed=%s",
+            iframe_token, candidate, chatbot.allowed_domains,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This domain is not authorised to embed this chatbot.",
+        )
 
     active_theme = await repo.get_active_theme(db, chatbot_config_id=chatbot.id)
     theme_data = None
@@ -507,7 +584,7 @@ async def submit_crawl_jobs(
         tenant_id=tenant_id,
         metric=UsageMetric.PAGES_CRAWLED,
         metric_key="max_pages_crawled",
-        default_limit=200,
+        default_limit=settings.BILLING_DEFAULT_MAX_PAGES_CRAWLED,
     )
     if limit_status == LimitStatus.EXCEEDED:
         today = date.today()
@@ -1007,8 +1084,19 @@ async def create_theme(
         layout=payload.layout,
         public_id=_new_public_id(),
     )
+
+    await audit.write(
+        db,
+        entity_type="widget_themes",
+        action=audit.CREATE,
+        tenant_id=tenant_id,
+        entity_id=theme.id,
+        diff={"after": {"name": theme.name, "is_paid_theme": theme.is_paid_theme, "chatbot_public_id": chatbot_public_id}},
+    )
+
     await db.commit()
     await db.refresh(theme)
+    logger.info("[chatbot] theme created public_id=%s tenant=%s chatbot=%s", theme.public_id, tenant_id, chatbot_public_id)
     return schemas.ThemeResponse.model_validate(theme)
 
 
@@ -1034,8 +1122,19 @@ async def update_theme(
 
     updates = payload.model_dump(exclude_none=True)
     theme = await repo.update_widget_theme(db, theme=theme, **updates)
+
+    await audit.write(
+        db,
+        entity_type="widget_themes",
+        action=audit.UPDATE,
+        tenant_id=tenant_id,
+        entity_id=theme.id,
+        diff={"after": {k: str(v) for k, v in updates.items()}},
+    )
+
     await db.commit()
     await db.refresh(theme)
+    logger.info("[chatbot] theme updated public_id=%s tenant=%s fields=%s", theme_public_id, tenant_id, list(updates.keys()))
     return schemas.ThemeResponse.model_validate(theme)
 
 
@@ -1065,8 +1164,19 @@ async def activate_theme(
     # Deactivate all, then activate the target — inside one flush block
     await repo.deactivate_all_themes(db, chatbot_config_id=chatbot.id)
     theme = await repo.update_widget_theme(db, theme=theme, is_active=True)
+
+    await audit.write(
+        db,
+        entity_type="widget_themes",
+        action=audit.ACTIVATE,
+        tenant_id=tenant_id,
+        entity_id=theme.id,
+        diff={"after": {"is_active": True, "name": theme.name, "chatbot_public_id": chatbot_public_id}},
+    )
+
     await db.commit()
     await db.refresh(theme)
+    logger.info("[chatbot] theme activated public_id=%s tenant=%s chatbot=%s", theme_public_id, tenant_id, chatbot_public_id)
     return schemas.ThemeResponse.model_validate(theme)
 
 
@@ -1078,7 +1188,7 @@ _ALLOWED_IMAGE_TYPES = {
     "image/png", "image/jpeg", "image/gif",
     "image/webp", "image/svg+xml",
 }
-_ASSET_MAX_MB = 5  # per-image hard cap
+_ASSET_MAX_MB = settings.CHATBOT_ASSET_MAX_MB  # per-image hard cap
 
 
 async def upload_chatbot_asset(

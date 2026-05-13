@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-from fastapi import Depends
+from datetime import datetime, timedelta, timezone
+
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
+
 from app.config.settings import get_settings
-from app.core import exceptions
 
 settings = get_settings()
 security = HTTPBearer()
@@ -20,9 +21,11 @@ def create_access_token(data: dict):
 def verify_token(token: str):
     try:
         return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-    except Exception:
-        raise exceptions.http_exception_handler(
-            status_code=401, detail="Invalid token")()
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        ) from exc
 
 
 def auth_barrier(

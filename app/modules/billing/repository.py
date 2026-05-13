@@ -122,6 +122,54 @@ async def get_subscription_by_public_id(
     return result.scalar_one_or_none()
 
 
+# ── Stripe lookup helpers (used by webhook handler) ──────────────────────────
+
+async def get_subscription_by_stripe_subscription_id(
+    db: AsyncSession, *, stripe_subscription_id: str
+) -> Optional[TenantSubscription]:
+    """Resolve our internal subscription row from a Stripe subscription id."""
+    result = await db.execute(
+        select(TenantSubscription)
+        .options(selectinload(TenantSubscription.plan))
+        .where(TenantSubscription.stripe_subscription_id == stripe_subscription_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_latest_subscription_by_stripe_customer_id(
+    db: AsyncSession, *, stripe_customer_id: str
+) -> Optional[TenantSubscription]:
+    """
+    Find the most recent subscription for a Stripe customer.
+    Used by webhook handlers when only the customer id is available
+    (e.g. invoice.payment_failed for a one-time charge).
+    """
+    result = await db.execute(
+        select(TenantSubscription)
+        .options(selectinload(TenantSubscription.plan))
+        .where(TenantSubscription.stripe_customer_id == stripe_customer_id)
+        .order_by(TenantSubscription.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_plan_by_stripe_price_id(
+    db: AsyncSession, *, stripe_price_id: str
+) -> Optional[Plan]:
+    """
+    Resolve a Plan from a Stripe price id (monthly OR annual).
+    Used during checkout.session.completed to find which plan was purchased.
+    """
+    result = await db.execute(
+        select(Plan).where(
+            (Plan.stripe_monthly_price_id == stripe_price_id)
+            | (Plan.stripe_annual_price_id == stripe_price_id)
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_tenant_subscriptions(
     db: AsyncSession, *, tenant_id: int
 ) -> List[TenantSubscription]:

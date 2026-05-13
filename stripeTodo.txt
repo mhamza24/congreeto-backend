@@ -1,0 +1,29 @@
+⚙️ What you need to do before Stripe goes live
+These are placeholders — replace before deployment:
+
+
+# .env
+STRIPE_SECRET_KEY=sk_test_...           # ← from dashboard.stripe.com → Developers → API Keys
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...         # ← from Stripe → Developers → Webhooks (per endpoint)
+STRIPE_API_VERSION=2024-06-20
+STRIPE_CHECKOUT_SUCCESS_URL=https://your-frontend.com/billing/success?session_id={CHECKOUT_SESSION_ID}
+STRIPE_CHECKOUT_CANCEL_URL=https://your-frontend.com/billing/cancelled
+STRIPE_PORTAL_RETURN_URL=https://your-frontend.com/billing
+STRIPE_DEFAULT_TRIAL_DAYS=0             # ← set to 7/14 if you want trials
+Steps to go live:
+
+pip install -r requirements.txt (adds stripe==11.4.1)
+In Stripe dashboard, create products + prices for each Plan (one monthly price + one annual price per plan)
+Copy each Stripe price id back into your DB via:
+
+PATCH /api/v1/billing/admin/plans/{plan_public_id}
+{ "stripe_monthly_price_id": "price_...", "stripe_annual_price_id": "price_..." }
+(Hmm — actually the existing PlanUpdateRequest doesn't include those fields yet. They're on the model but not the schema. Quick add needed, see below.)
+In Stripe dashboard → Developers → Webhooks → Add endpoint:
+URL: https://your-api.com/api/v1/webhooks/stripe
+Events: checkout.session.completed, customer.subscription.created, customer.subscription.updated, customer.subscription.deleted, invoice.paid, invoice.payment_succeeded, invoice.payment_failed
+Copy the signing secret → STRIPE_WEBHOOK_SECRET
+Test with Stripe CLI: stripe listen --forward-to localhost:8000/api/v1/webhooks/stripe
+One small follow-up I noticed while wiring Stripe
+The PlanUpdateRequest Pydantic schema doesn't expose stripe_monthly_price_id / stripe_annual_price_id — so you can't currently set them via the admin API even though the columns exist. Want me to add those fields to the schema? It's a 2-line edit.

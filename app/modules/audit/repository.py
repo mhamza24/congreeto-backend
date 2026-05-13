@@ -225,3 +225,79 @@ async def count_logs(
         q = q.where(AuditLog.action == action)
     result = await db.execute(q)
     return result.scalar_one()
+
+
+# ── Keyset (cursor) pagination ───────────────────────────────────────────────
+from sqlalchemy import and_, or_
+from app.core.pagination import decode_cursor
+
+
+async def list_logs_keyset(
+    db: AsyncSession,
+    *,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    entity_type: Optional[str] = None,
+    action: Optional[str] = None,
+    page_size: int = 50,
+    cursor: Optional[str] = None,
+) -> list[dict]:
+    """
+    Cursor-paginated variant of list_logs. Returns one extra row when more
+    pages exist so the caller (CursorPage.build) can set has_next.
+
+    No COUNT query — keyset pagination is a single index seek; adding a count
+    would defeat the purpose for large tables.
+    """
+    q = (
+        select(
+            AuditLog,
+            Tenant.public_id.label("tenant_public_id"),
+            User.public_id.label("user_public_id"),
+            User.first_name.label("user_first_name"),
+            User.last_name.label("user_last_name"),
+        )
+        .outerjoin(Tenant, AuditLog.tenant_id == Tenant.id)
+        .outerjoin(User, AuditLog.user_id == User.id)
+    )
+    if tenant_id is not None:
+        q = q.where(AuditLog.tenant_id == tenant_id)
+    if user_id is not None:
+        q = q.where(AuditLog.user_id == user_id)
+    if entity_type:
+        q = q.where(AuditLog.entity_type == entity_type)
+    if action:
+        q = q.where(AuditLog.action == action)
+
+    if cursor:
+        cur_dt, cur_id = decode_cursor(cursor)
+        q = q.where(
+            or_(
+                AuditLog.created_at < cur_dt,
+                and_(AuditLog.created_at == cur_dt, AuditLog.id < cur_id),
+            )
+        )
+
+    q = (
+        q.order_by(desc(AuditLog.created_at), desc(AuditLog.id))
+         .limit(page_size + 1)
+    )
+    result = await db.execute(q)
+    rows = result.all()
+    return [
+        {
+            "id": row.AuditLog.id,
+            "_sort_value": row.AuditLog.created_at,  # consumed by CursorPage.build
+            "tenant_public_id": row.tenant_public_id,
+            "user_public_id": row.user_public_id,
+            "user_name": " ".join(filter(None, [row.user_first_name, row.user_last_name])) or None,
+            "entity_type": row.AuditLog.entity_type,
+            "entity_id": row.AuditLog.entity_id,
+            "action": row.AuditLog.action,
+            "diff": row.AuditLog.diff,
+            "ip_address": row.AuditLog.ip_address,
+            "user_agent": row.AuditLog.user_agent,
+            "created_at": row.AuditLog.created_at,
+        }
+        for row in rows
+    ]

@@ -1,0 +1,247 @@
+VELOCE — Frontend Developer Change Notes
+Branch: veloce-ph-3 | Prepared: 2026-05-11
+
+PART 1 — UNIVERSAL PAGINATION CHANGE ⚠️ Breaking
+Every list endpoint switched from offset pagination to cursor (keyset) pagination. This is the most impactful change.
+
+Response shape — before vs after
+Before (every list):
+
+
+{
+  "success": true,
+  "data": [ {...}, {...} ],
+  "meta": {
+    "total": 247,
+    "limit": 50,
+    "offset": 100,
+    "has_next": true,
+    "has_prev": true
+  }
+}
+After (every list):
+
+
+{
+  "success": true,
+  "data": {
+    "items": [ {...}, {...} ],
+    "meta": {
+      "page_size": 20,
+      "next_cursor": "MjAyNi0wNS0wMVQxMDowMDowMCswMDowMHwxMjM0NQ",
+      "has_next": true
+    }
+  }
+}
+Field	Before	After
+data	Array directly	Object with items + meta
+data.items	Did not exist	Array of items
+meta.total	Integer count	Removed
+meta.limit	Items per page	Removed
+meta.offset	Current offset	Removed
+meta.has_prev	Boolean	Removed
+meta.page / meta.page_size	Various	Removed
+meta.next_cursor	Did not exist	Opaque string or null
+meta.has_next	Boolean	Boolean (kept)
+meta.page_size	Did not exist	Integer
+How to paginate — code pattern
+
+// FIRST PAGE — no cursor
+const res = await api.get(`/endpoint?page_size=20`);
+const { items, meta } = res.data.data;
+
+// NEXT PAGE — pass cursor back
+if (meta.has_next) {
+  const next = await api.get(`/endpoint?page_size=20&cursor=${meta.next_cursor}`);
+}
+
+// LAST PAGE
+// meta.has_next === false && meta.next_cursor === null
+
+// INVALID CURSOR — server returns HTTP 400:
+// { "success": false, "detail": "Invalid pagination cursor: '...'" }
+// Handle by fetching page 1 again (drop the cursor)
+Back button / "Page N of M"
+Cursor pagination is forward-only. Options:
+
+Use a "Load More" button (no back needed) — recommended
+Keep a cursor stack client-side: push on Next, pop on Back
+total is not returned — remove any "X of Y results" counter, or call a separate count endpoint
+PART 2 — ENDPOINT-BY-ENDPOINT CHANGES
+2.1 Leads list
+
+GET /api/v1/dashboard/{tenant_public_id}/leads
+Before	After
+Query params	?page=1&page_size=10	?page_size=10&cursor=<token>
+data shape	{ leads: [...], pagination: { page, page_size, total, total_pages } }	{ items: [...], meta: { page_size, next_cursor, has_next } }
+2.2 Admin tenant table (super admin)
+
+GET /api/v1/dashboard/admin/tenants
+Before	After
+Query params	?limit=50&offset=0	?page_size=50&cursor=<token>
+Item shape	TenantRow	TenantRow — unchanged
+Bug fixed	total_conversations always returned 0	Now returns the real count
+2.3 Listings
+
+GET /api/v1/listings/{tenant_public_id}/listings
+Before	After
+Query params	?limit=50&offset=0	?page_size=20&cursor=<token>
+Filters	?industry=&suburb=&status_filter=	Same — unchanged
+Default page size	50	20
+Max page size	Unlimited	200
+Sort	updated_at DESC	updated_at DESC, id DESC — same visible order, now stable
+2.4 Listing upload jobs
+
+GET /api/v1/listings/{tenant_public_id}/listings/uploads
+Before	After
+Query params	?limit=50&offset=0	?page_size=20&cursor=<token>
+Filter	?status_filter=	Same — unchanged
+2.5 Campaigns
+
+GET /api/v1/campaigns/{tenant_public_id}/chatbots/{chatbot_id}/campaigns
+Before	After
+Query params	?limit=50&offset=0	?page_size=20&cursor=<token>
+Sort order	sort_order ASC, created_at DESC	created_at DESC (newest first)
+⚠️ If you were displaying campaigns in sort_order sequence, they now appear newest-first. The sort_order field is still in each item — sort client-side if you need to restore the display order.
+
+2.6 Audit logs — admin (super admin)
+
+GET /api/v1/audit/admin/logs
+Before	After
+Query params	?limit=50&offset=0	?page_size=50&cursor=<token>
+Filters	?tenant_public_id=&user_public_id=&entity_type=&action=	Same — unchanged
+2.7 Audit logs — tenant
+
+GET /api/v1/audit/{tenant_public_id}/logs
+Same change as admin audit logs above.
+
+2.8 Page size reference table
+Endpoint	Default	Max
+Audit logs	50	500
+Dashboard leads	10	100
+Admin tenants	50	200
+Listings	20	200
+Listing upload jobs	20	100
+Campaigns	20	100
+PART 3 — NEW STRIPE ENDPOINTS
+3.1 Start checkout (subscribe to a plan)
+
+POST /api/v1/billing/stripe/{tenant_public_id}/checkout
+Auth required. Creates a Stripe Checkout Session.
+
+Request:
+
+
+{
+  "plan_public_id": "abc123",
+  "billing_interval": "monthly",
+  "success_url": "https://yourapp.com/billing/success?session_id={CHECKOUT_SESSION_ID}",
+  "cancel_url": "https://yourapp.com/billing/cancelled",
+  "promotion_code": null
+}
+billing_interval: "monthly" or "annual". success_url / cancel_url / promotion_code are optional.
+
+Response:
+
+
+{
+  "success": true,
+  "data": {
+    "session_id": "cs_test_abc123...",
+    "url": "https://checkout.stripe.com/pay/cs_test_abc123..."
+  }
+}
+Frontend flow:
+
+
+const res = await api.post(`/billing/stripe/${tenantId}/checkout`, {
+  plan_public_id: plan.public_id,
+  billing_interval: "monthly"
+});
+window.location.href = res.data.data.url;  // redirect to Stripe
+3.2 Billing self-service portal
+
+POST /api/v1/billing/stripe/{tenant_public_id}/portal
+Auth required. Opens Stripe's hosted portal — Stripe handles card management, invoices, plan changes, cancellation. No UI to build on your side.
+
+Request:
+
+
+{ "return_url": "https://yourapp.com/billing" }
+Response:
+
+
+{
+  "success": true,
+  "data": { "url": "https://billing.stripe.com/session/..." }
+}
+Frontend flow:
+
+
+const res = await api.post(`/billing/stripe/${tenantId}/portal`, {});
+window.location.href = res.data.data.url;
+Use this for: "Manage Card", "View Invoices", "Change Plan", "Cancel Subscription" buttons.
+
+3.3 Webhook — no frontend work needed
+POST /api/v1/webhooks/stripe — Stripe calls this server-to-server automatically after payment. Nothing for frontend to do.
+
+PART 4 — PLAN RESPONSE — NEW FIELDS (additive, not breaking)
+
+GET /api/v1/billing/admin/plans
+Each plan now includes two new nullable fields:
+
+
+{
+  "stripe_monthly_price_id": "price_1ABC..." | null,
+  "stripe_annual_price_id":  "price_1XYZ..." | null
+}
+No existing code breaks — extra fields are ignored. You may want to display these in the admin plan management UI so ops staff can verify the Stripe price IDs.
+
+PART 5 — HEADERS
+X-Request-ID (new on every response)
+Every API response now includes:
+
+
+X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
+Log this on the frontend when reporting errors to support — it maps directly to the backend log line for that request.
+
+
+const requestId = response.headers['x-request-id'];
+// Include in error reports / Sentry context
+PART 6 — CHATBOT EMBED — DOMAIN ENFORCEMENT
+
+GET /api/v1/chatbot/embed/{iframe_token}
+The embed endpoint now validates the Origin / Referer header against the chatbot's allowed_domains list.
+
+If the widget is embedded on a domain not in the allowed list → HTTP 403.
+
+If your widget starts returning 403: add your frontend domain to the chatbot's allowed_domains config via the admin API. Wildcards are supported: *.yourdomain.com.
+
+PART 7 — CHATBOT FALLBACK MESSAGE (behaviour change, not API)
+When OpenAI is unreachable (circuit breaker open), the chat endpoint now returns:
+
+"The AI service is temporarily unavailable. Please try again in a moment."
+
+Previously this would hang or return a generic error. No API shape change — the chatbot message field is still a string. No frontend code change needed, but this is good to know for customer support.
+
+PART 8 — NOTHING CHANGED (safe to ignore)
+These were modified internally but their request and response shapes are identical:
+
+POST /api/v1/auth/logout — now writes an audit log, same response
+All chatbot CRUD endpoints
+All billing admin endpoints
+GET /api/v1/dashboard/{tenant_public_id}/summary
+GET /api/v1/dashboard/{tenant_public_id}/leads/{public_id} (single lead detail)
+GET /api/v1/listings/{tenant_public_id}/listings/uploads/{job_id} (single job)
+GET /api/v1/listings/{tenant_public_id}/listings/{listing_id} (single listing)
+QUICK MIGRATION CHECKLIST FOR FRONTEND
+
+[ ] All list API calls: change ?limit=N&offset=M → ?page_size=N&cursor=<token>
+[ ] All list API calls: read data.items instead of data (or data.leads etc.)
+[ ] All list API calls: read data.meta.next_cursor instead of calculating offset
+[ ] Remove all "Page X of Y" or "Total: N" displays (total no longer returned)
+[ ] Replace "Previous page" logic with cursor stack or "Load More" pattern
+[ ] Add Stripe checkout button → POST /billing/stripe/{id}/checkout → redirect to .url
+[ ] Add billing portal button → POST /billing/stripe/{id}/portal → redirect to .url
+[ ] Log X-Request-ID from response headers for support tracing
+[ ] Campaigns list: if displaying in sort_order sequence, sort client-side on item.sort_order

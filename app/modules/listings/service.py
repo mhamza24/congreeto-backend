@@ -21,34 +21,37 @@ async def list_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
+    page_size: int,
+    cursor: Optional[str] = None,
     industry: Optional[str] = None,
     suburb: Optional[str] = None,
     status_filter: Optional[str] = None,
     attribute_filters: Optional[dict] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> Tuple[List[schemas.ListingResponse], int]:
-    listings, total = await asyncio.gather(
-        repo.list_listings(
-            db,
-            tenant_id=tenant_id,
-            industry=industry,
-            suburb=suburb,
-            status_filter=status_filter,
-            attribute_filters=attribute_filters,
-            limit=limit,
-            offset=offset,
-        ),
-        repo.count_listings(
-            db,
-            tenant_id=tenant_id,
-            industry=industry,
-            suburb=suburb,
-            status_filter=status_filter,
-            attribute_filters=attribute_filters,
-        ),
+):
+    """
+    Cursor-paginated listings. Sort key: (updated_at, id) DESC — newest
+    edits surface first. Returns a CursorPage[ListingResponse].
+    """
+    from app.core.pagination import CursorPage, decode_cursor
+
+    cursor_dt = cursor_id = None
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+
+    rows = await repo.list_listings_keyset(
+        db,
+        tenant_id=tenant_id,
+        page_size=page_size,
+        industry=industry,
+        suburb=suburb,
+        status_filter=status_filter,
+        attribute_filters=attribute_filters,
+        cursor_dt=cursor_dt,
+        cursor_id=cursor_id,
     )
-    return [schemas.ListingResponse.model_validate(lst) for lst in listings], total
+    page = CursorPage.build(rows, page_size, sort_attr="updated_at", id_attr="id")
+    page.items = [schemas.ListingResponse.model_validate(lst) for lst in page.items]
+    return page
 
 
 async def get_listing(

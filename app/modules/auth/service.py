@@ -585,14 +585,42 @@ async def logout_user(
     *,
     access_token: str,
     refresh_token: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
+    request: Optional[Request] = None,
 ) -> None:
     """
     Blacklists the provided tokens so they cannot be reused even before expiry.
     Both access and (optionally) refresh tokens are revoked.
+
+    When db + request are supplied, a logout audit row is written. Token
+    decode failures are swallowed — the blacklist still happens so a malformed
+    token cannot be replayed.
     """
     await blacklist_token(access_token)
     if refresh_token:
         await blacklist_token(refresh_token)
+
+    if db is not None:
+        user_id: Optional[int] = None
+        try:
+            payload = decode_token(access_token)
+            sub = payload.sub or {}
+            raw_id = sub.get("id") if isinstance(sub, dict) else None
+            user_id = int(raw_id) if raw_id is not None else None
+        except Exception:
+            logger.debug("[auth] logout audit: token decode failed, writing without user_id")
+
+        await audit.write(
+            db,
+            entity_type="users",
+            action=audit.LOGOUT,
+            user_id=user_id,
+            entity_id=user_id,
+            diff={},
+            request=request,
+        )
+        await db.commit()
+
     logger.info("[auth] tokens blacklisted (logout)")
 
 

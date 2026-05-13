@@ -11,6 +11,10 @@ from app.modules.users.api import router as users_router
 from app.modules.billing.api import router as billing_router
 from app.modules.listings.api import router as listings_router
 from app.modules.audit.api import router as audit_router
+from app.modules.stripe.api import (
+    billing_stripe_router,
+    webhook_router as stripe_webhook_router,
+)
 
 router = APIRouter()
 
@@ -24,5 +28,7 @@ router.include_router(auth_router)
 router.include_router(tenants_router)
 router.include_router(users_router)
 router.include_router(billing_router)
+router.include_router(billing_stripe_router)
+router.include_router(stripe_webhook_router)
 router.include_router(listings_router)
 router.include_router(audit_router)

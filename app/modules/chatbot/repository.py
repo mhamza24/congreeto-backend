@@ -1432,6 +1432,38 @@ async def count_listing_upload_jobs(
     return result.scalar_one()
 
 
+async def list_listing_upload_jobs_keyset(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    page_size: int,
+    status: Optional[str] = None,
+    cursor_dt: Optional[object] = None,
+    cursor_id: Optional[int] = None,
+) -> Sequence[ListingUploadJob]:
+    """Cursor-paginated upload jobs. Sort: created_at DESC, id DESC."""
+    from sqlalchemy import and_, or_
+
+    q = select(ListingUploadJob).where(ListingUploadJob.tenant_id == tenant_id)
+    if status:
+        q = q.where(ListingUploadJob.status == status)
+    if cursor_dt is not None and cursor_id is not None:
+        q = q.where(
+            or_(
+                ListingUploadJob.created_at < cursor_dt,
+                and_(
+                    ListingUploadJob.created_at == cursor_dt,
+                    ListingUploadJob.id < cursor_id,
+                ),
+            )
+        )
+    q = q.order_by(
+        ListingUploadJob.created_at.desc(), ListingUploadJob.id.desc()
+    ).limit(page_size + 1)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
 async def update_listing_upload_job(
     db: AsyncSession, *, job: ListingUploadJob, **kwargs
 ) -> ListingUploadJob:

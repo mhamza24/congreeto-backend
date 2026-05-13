@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-INVITE_TTL_HOURS = 72
+# Sourced from Settings so the entire invite lifecycle (email TTL copy,
+# OTP expiry, resend window) can be tuned in one place.
+INVITE_TTL_HOURS = settings.TENANT_INVITE_TTL_HOURS
 
 
 # =============================================================================

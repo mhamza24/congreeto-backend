@@ -110,6 +110,51 @@ async def count_listings(
     return result.scalar_one()
 
 
+async def list_listings_keyset(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    page_size: int,
+    industry: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    suburb: Optional[str] = None,
+    attribute_filters: Optional[Dict] = None,
+    cursor_dt: Optional[object] = None,
+    cursor_id: Optional[int] = None,
+) -> Sequence[Listing]:
+    """
+    Cursor-paginated variant of list_listings. Sorts by updated_at DESC,
+    id DESC for a stable, index-friendly seek. Fetches one extra row so the
+    caller (CursorPage.build) can flip has_next.
+    """
+    from sqlalchemy import and_, or_
+
+    q = select(Listing).where(
+        Listing.tenant_id == tenant_id,
+        Listing.deleted_at.is_(None),
+    )
+    if industry:
+        q = q.where(Listing.industry == industry)
+    if status_filter:
+        q = q.where(Listing.status == status_filter)
+    if suburb:
+        q = q.where(Listing.suburb.ilike(f"%{suburb}%"))
+    if attribute_filters:
+        q = q.where(Listing.attributes.contains(attribute_filters))
+
+    if cursor_dt is not None and cursor_id is not None:
+        q = q.where(
+            or_(
+                Listing.updated_at < cursor_dt,
+                and_(Listing.updated_at == cursor_dt, Listing.id < cursor_id),
+            )
+        )
+
+    q = q.order_by(Listing.updated_at.desc(), Listing.id.desc()).limit(page_size + 1)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
 async def create_listing(
     db: AsyncSession,
     *,

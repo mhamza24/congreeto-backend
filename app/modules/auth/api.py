@@ -316,6 +316,8 @@ async def verify_login_otp_endpoint(
 )
 async def logout_endpoint(
     payload: schemas.LogoutRequest,
+    request: Request,
+    db: DBDep,
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> ApiResponse[None]:
     access_token = credentials.credentials if credentials else None
@@ -325,6 +327,8 @@ async def logout_endpoint(
         await service.logout_user(
             access_token=access_token,
             refresh_token=payload.refresh_token,
+            db=db,
+            request=request,
         )
     except Exception:
         logger.exception("Unexpected error during logout")

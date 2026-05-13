@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
 from app.core.database import get_db
-from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
+from app.core.pagination import CursorPage
+from app.core.response import ApiResponse
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.modules.listings import schemas, service
 
@@ -43,8 +44,8 @@ _CSV_MIME_TYPES = {
 
 @router.get(
     "/{tenant_public_id}/listings",
-    response_model=PagedApiResponse[List[schemas.ListingResponse]],
-    summary="List listings — filter by industry, status, location, or any attribute",
+    response_model=ApiResponse[CursorPage[schemas.ListingResponse]],
+    summary="List listings (cursor paginated) — filter by industry, status, location",
 )
 async def list_listings(
     tenant_public_id: str,
@@ -53,37 +54,33 @@ async def list_listings(
     industry: Optional[str] = None,
     suburb: Optional[str] = None,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> PagedApiResponse[List[schemas.ListingResponse]]:
+    page_size: int = settings.LISTINGS_PAGE_SIZE_DEFAULT,
+    cursor: Optional[str] = None,
+) -> ApiResponse[CursorPage[schemas.ListingResponse]]:
+    if page_size < 1 or page_size > settings.LISTINGS_PAGE_SIZE_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"page_size must be between 1 and {settings.LISTINGS_PAGE_SIZE_MAX}.",
+        )
     try:
-        data, total = await service.list_listings(
+        page = await service.list_listings(
             db,
             tenant_id=ctx.tenant.id,
             industry=industry,
             suburb=suburb,
             status_filter=status_filter,
-            limit=limit,
-            offset=offset,
+            page_size=page_size,
+            cursor=cursor,
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception:
         logger.exception("Unexpected error listing listings tenant=%s", tenant_public_id)
         sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not fetch listings. Please try again later.")
-    return PagedApiResponse(
-        success=True,
-        message="OK",
-        data=data,
-        meta=PaginationMeta(
-            total=total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < total,
-            has_prev=offset > 0,
-        ),
-    )
+    return ApiResponse(success=True, message="OK", data=page)
 
 
 @router.post(
@@ -212,27 +209,41 @@ async def upload_listing_file(
 
 @router.get(
     "/{tenant_public_id}/listings/uploads",
-    response_model=PagedApiResponse[List[schemas.ListingUploadJobResponse]],
-    summary="List all listing file import jobs (all statuses)",
+    response_model=ApiResponse[CursorPage[schemas.ListingUploadJobResponse]],
+    summary="List listing file import jobs (cursor paginated)",
 )
 async def list_listing_upload_jobs(
     tenant_public_id: str,
     db: DBDep,
     ctx: CtxDep,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> PagedApiResponse[List[schemas.ListingUploadJobResponse]]:
+    page_size: int = settings.LISTING_UPLOAD_JOBS_PAGE_SIZE_DEFAULT,
+    cursor: Optional[str] = None,
+) -> ApiResponse[CursorPage[schemas.ListingUploadJobResponse]]:
     from app.modules.chatbot import repository as chatbot_repo
+    from app.core.pagination import decode_cursor
+
+    if page_size < 1 or page_size > settings.LISTING_UPLOAD_JOBS_PAGE_SIZE_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"page_size must be between 1 and {settings.LISTING_UPLOAD_JOBS_PAGE_SIZE_MAX}.",
+        )
+
+    cursor_dt = cursor_id = None
+    if cursor:
+        try:
+            cursor_dt, cursor_id = decode_cursor(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     try:
-        jobs, total = await asyncio.gather(
-            chatbot_repo.list_listing_upload_jobs(
-                db, tenant_id=ctx.tenant.id, status=status_filter, limit=limit, offset=offset
-            ),
-            chatbot_repo.count_listing_upload_jobs(
-                db, tenant_id=ctx.tenant.id, status=status_filter
-            ),
+        jobs = await chatbot_repo.list_listing_upload_jobs_keyset(
+            db,
+            tenant_id=ctx.tenant.id,
+            page_size=page_size,
+            status=status_filter,
+            cursor_dt=cursor_dt,
+            cursor_id=cursor_id,
         )
     except HTTPException:
         raise
@@ -240,18 +251,10 @@ async def list_listing_upload_jobs(
         logger.exception("Unexpected error listing upload jobs tenant=%s", tenant_public_id)
         sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not fetch upload jobs. Please try again later.")
-    return PagedApiResponse(
-        success=True,
-        message="OK",
-        data=[schemas.ListingUploadJobResponse.model_validate(j) for j in jobs],
-        meta=PaginationMeta(
-            total=total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < total,
-            has_prev=offset > 0,
-        ),
-    )
+
+    page = CursorPage.build(jobs, page_size, sort_attr="created_at", id_attr="id")
+    page.items = [schemas.ListingUploadJobResponse.model_validate(j) for j in page.items]
+    return ApiResponse(success=True, message="OK", data=page)
 
 
 @router.get(

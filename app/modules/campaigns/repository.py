@@ -147,32 +147,42 @@ async def list_campaigns(
     *,
     tenant_id: int,
     chatbot_config_id: Optional[int] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> Tuple[List[Campaign], int]:
+    page_size: int = 50,
+    cursor_dt: Optional[object] = None,
+    cursor_id: Optional[int] = None,
+) -> List[Campaign]:
     """
-    Returns (campaigns, total_count).
-    Optionally filtered to a specific chatbot.
-    Ordered by sort_order ASC, then created_at DESC.
+    Cursor-paginated campaign list.
+
+    Sort: created_at DESC, id DESC — newest first.
+    NOTE: previous behaviour sorted by sort_order ASC then created_at DESC.
+    `sort_order` still drives match prioritisation in
+    `match_campaign_for_url`; it is no longer the list-display order.
+
+    Returns one extra row when more pages exist so the caller
+    (CursorPage.build) can flip has_next.
     """
+    from sqlalchemy import or_
+
     base_filter = [Campaign.tenant_id == tenant_id]
     if chatbot_config_id is not None:
         base_filter.append(Campaign.chatbot_config_id == chatbot_config_id)
 
-    count_q = await db.execute(
-        select(func.count()).select_from(Campaign).where(and_(*base_filter))
-    )
-    total = count_q.scalar_one()
+    if cursor_dt is not None and cursor_id is not None:
+        base_filter.append(
+            or_(
+                Campaign.created_at < cursor_dt,
+                and_(Campaign.created_at == cursor_dt, Campaign.id < cursor_id),
+            )
+        )
 
     rows = await db.execute(
         select(Campaign)
         .where(and_(*base_filter))
-        .order_by(Campaign.sort_order.asc(), Campaign.created_at.desc())
-        .limit(limit)
-        .offset(offset)
+        .order_by(Campaign.created_at.desc(), Campaign.id.desc())
+        .limit(page_size + 1)
     )
-    campaigns = list(rows.scalars().all())
-    return campaigns, total
+    return list(rows.scalars().all())
 
 
 async def count_campaigns_for_tenant(

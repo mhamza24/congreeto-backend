@@ -17,11 +17,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.database import get_db
-from app.core.response import ApiResponse, PagedApiResponse, PaginationMeta
+from app.core.pagination import CursorPage
+from app.core.response import ApiResponse
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 
 from . import schemas, service
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -67,36 +71,34 @@ async def create_campaign(
 
 @router.get(
     "/{tenant_public_id}/chatbots/{chatbot_id}/campaigns",
-    response_model=PagedApiResponse[list[schemas.CampaignResponse]],
-    summary="List all campaigns for a chatbot",
+    response_model=ApiResponse[CursorPage[schemas.CampaignResponse]],
+    summary="List campaigns for a chatbot (cursor paginated)",
 )
 async def list_campaigns(
     tenant_public_id: str,
     chatbot_id: str,
     db: DBDep,
     ctx: CtxDep,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page_size: int = Query(
+        default=settings.CAMPAIGNS_PAGE_SIZE_DEFAULT,
+        ge=1, le=settings.CAMPAIGNS_PAGE_SIZE_MAX,
+        description="Items per page.",
+    ),
+    cursor: str | None = Query(default=None, description="Opaque cursor from previous response."),
 ):
-    items, total = await service.list_campaigns(
-        db,
-        tenant_id=ctx.tenant.id,
-        chatbot_public_id=chatbot_id,
-        limit=limit,
-        offset=offset,
-    )
-    return PagedApiResponse(
-        success=True,
-        message=f"{total} campaign(s) found.",
-        data=items,
-        meta=PaginationMeta(
-            total=total,
-            limit=limit,
-            offset=offset,
-            has_next=offset + limit < total,
-            has_prev=offset > 0,
-        ),
-    )
+    from fastapi import HTTPException
+
+    try:
+        page = await service.list_campaigns(
+            db,
+            tenant_id=ctx.tenant.id,
+            chatbot_public_id=chatbot_id,
+            page_size=page_size,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ApiResponse(success=True, message="OK", data=page)
 
 
 # ---------------------------------------------------------------------------

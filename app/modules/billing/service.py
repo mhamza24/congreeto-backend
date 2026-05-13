@@ -29,13 +29,15 @@ from app.config.settings import get_settings
 
 settings = get_settings()
 
-# Maps usage metric → plan limits key → default value
+# Maps usage metric → (plan.limits key, fallback default).
+# Defaults are sourced from Settings — keep all plan-level fallbacks
+# in one place so they can be tuned without code edits.
 METRIC_CONFIG: dict[UsageMetric, tuple[str, int]] = {
-    UsageMetric.CONVERSATIONS:      ("max_conversations_per_month", 750),
-    UsageMetric.TOKENS_USED:        ("max_tokens_per_month",        1_000_000),
-    UsageMetric.MESSAGES:           ("max_conversations_per_month", 750),
-    UsageMetric.DOCUMENTS_UPLOADED: ("max_documents",               120),
-    UsageMetric.PAGES_CRAWLED:      ("max_pages_crawled",           50),
+    UsageMetric.CONVERSATIONS:      ("max_conversations_per_month", settings.BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH),
+    UsageMetric.TOKENS_USED:        ("max_tokens_per_month",        settings.BILLING_DEFAULT_MAX_TOKENS_PER_MONTH),
+    UsageMetric.MESSAGES:           ("max_conversations_per_month", settings.BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH),
+    UsageMetric.DOCUMENTS_UPLOADED: ("max_documents",               settings.BILLING_DEFAULT_MAX_DOCUMENTS),
+    UsageMetric.PAGES_CRAWLED:      ("max_pages_crawled",           settings.BILLING_DEFAULT_MAX_PAGES_CRAWLED),
     UsageMetric.ACTIVE_USERS:       ("max_users",                   settings.DEFAULT_SEAT_LIMIT),
 }
 

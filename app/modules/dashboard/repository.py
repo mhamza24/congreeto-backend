@@ -116,69 +116,58 @@ async def get_dashboard_summary(
     return dict(row) if row else {}
 
 
-async def get_leads_paginated(
+async def get_leads_keyset(
     db: AsyncSession,
     *,
     tenant_id: str,
-    page: int = 1,
-    page_size: int = 10,
-) -> dict:
-    offset = (page - 1) * page_size
-    query = text("""
-        WITH lead_data AS (
-            SELECT
-                c.public_id,
-                c.is_lead,
-                c.lead_name,
-                c.lead_email,
-                c.lead_phone,
-                c.total_messages,
-                c.summary,
-                c.status,
-                c.last_activity_at,
-                c.created_at,
-                ci.lead_tier,
-                ci.lead_score,
-                ci.sentiment,
-                ci.engagement_score,
-                ci.ai_summary,
-                ci.industry,
-                ci.industry_insights
-            FROM conversations c
-            LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
-            WHERE c.tenant_id = :tenant_id
-            ORDER BY c.created_at DESC
-        ),
-        total_count AS (
-            SELECT COUNT(*) AS total FROM lead_data
-        )
+    page_size: int,
+    cursor_dt: Optional[object] = None,
+    cursor_id: Optional[int] = None,
+) -> list[dict]:
+    """
+    Cursor-paginated leads list. Returns one extra row when more pages exist
+    so the caller (CursorPage.build) can flip has_next.
+
+    Sort order: c.created_at DESC, c.id DESC. Tuple comparison gives a
+    deterministic, index-friendly seek.
+    """
+    cursor_clause = ""
+    params: dict = {"tenant_id": tenant_id, "limit": page_size + 1}
+    if cursor_dt is not None and cursor_id is not None:
+        cursor_clause = "AND (c.created_at, c.id) < (:cursor_dt, :cursor_id)"
+        params["cursor_dt"] = cursor_dt
+        params["cursor_id"] = cursor_id
+
+    query = text(f"""
         SELECT
-            ld.*,
-            tc.total
-        FROM lead_data ld
-        CROSS JOIN total_count tc
-        LIMIT :page_size OFFSET :offset
+            c.id,
+            c.public_id,
+            c.is_lead,
+            c.lead_name,
+            c.lead_email,
+            c.lead_phone,
+            c.total_messages,
+            c.summary,
+            c.status,
+            c.last_activity_at,
+            c.created_at,
+            ci.lead_tier,
+            ci.lead_score,
+            ci.sentiment,
+            ci.engagement_score,
+            ci.ai_summary,
+            ci.industry,
+            ci.industry_insights
+        FROM conversations c
+        LEFT JOIN conversation_insights ci ON ci.conversation_id = c.id
+        WHERE c.tenant_id = :tenant_id
+        {cursor_clause}
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT :limit
     """)
 
-    result = await db.execute(
-        query,
-        {"tenant_id": tenant_id, "page_size": page_size, "offset": offset},
-    )
-    rows = result.mappings().all()
-    total = rows[0]["total"] if rows else 0
-    leads = [dict(r) for r in rows]
-    for lead in leads:
-        lead.pop("total", None)
-
-    return {
-        "leads": leads,
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": -(-total // page_size),  # ceiling division
-        },
-    }
+    result = await db.execute(query, params)
+    return [dict(r) for r in result.mappings().all()]
 
 
 async def get_lead_detail(
@@ -486,27 +475,37 @@ async def get_admin_overview(db: AsyncSession) -> dict:
     return dict(row) if row else {}
 
 
-async def get_admin_tenants(
+async def get_admin_tenants_keyset(
     db: AsyncSession,
     *,
-    limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[dict], int]:
+    page_size: int,
+    cursor_dt: Optional[object] = None,
+    cursor_id: Optional[int] = None,
+) -> list[dict]:
     """
-    Paginated tenant table for the super-admin dashboard.
-    Returns (rows, total_count).
+    Cursor-paginated tenant table for the super-admin dashboard.
+    Sort: t.created_at DESC, t.id DESC. Returns one extra row for has_next.
     """
-    rows_query = text("""
+    cursor_clause = ""
+    params: dict = {"limit": page_size + 1}
+    if cursor_dt is not None and cursor_id is not None:
+        cursor_clause = "AND (t.created_at, t.id) < (:cursor_dt, :cursor_id)"
+        params["cursor_dt"] = cursor_dt
+        params["cursor_id"] = cursor_id
+
+    rows_query = text(f"""
         SELECT
+            t.id,
             t.public_id,
             t.name,
             t.slug,
             t.status,
+            t.created_at,
             p.name                                              AS plan_name,
             ts.status                                           AS subscription_status,
             COALESCE(conv_counts.total_conversations, 0)        AS total_conversations,
             COALESCE(member_counts.member_count, 0)             AS member_count,
-            TO_CHAR(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+            TO_CHAR(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at_str
         FROM tenants t
         LEFT JOIN tenant_subscriptions ts
                ON ts.tenant_id = t.id
@@ -516,7 +515,7 @@ async def get_admin_tenants(
             SELECT tenant_id, COUNT(*) AS total_conversations
             FROM conversations
             GROUP BY tenant_id
-        ) conv_counts ON conv_counts.tenant_id = t.slug
+        ) conv_counts ON conv_counts.tenant_id = t.id
         LEFT JOIN (
             SELECT tenant_id, COUNT(*) AS member_count
             FROM tenant_users
@@ -524,19 +523,11 @@ async def get_admin_tenants(
             GROUP BY tenant_id
         ) member_counts ON member_counts.tenant_id = t.id
         WHERE t.deleted_at IS NULL
-        ORDER BY t.created_at DESC
-        LIMIT :limit OFFSET :offset
+        {cursor_clause}
+        ORDER BY t.created_at DESC, t.id DESC
+        LIMIT :limit
     """)
 
-    count_query = text("""
-        SELECT COUNT(*) FROM tenants WHERE deleted_at IS NULL
-    """)
+    rows_result = await db.execute(rows_query, params)
 
-    rows_result, count_result = await asyncio.gather(
-        db.execute(rows_query, {"limit": limit, "offset": offset}),
-        db.execute(count_query),
-    )
-
-    rows = [dict(r) for r in rows_result.mappings().all()]
-    total = count_result.scalar_one()
-    return rows, total
+    return [dict(r) for r in rows_result.mappings().all()]

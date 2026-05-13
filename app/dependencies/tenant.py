@@ -25,14 +25,18 @@ Gate order enforced here so individual endpoints don't repeat the logic:
 """
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import get_settings
 from app.core.database import get_db
 from app.core.enums import TenantStatus
+from app.core.redis import redis_client
 from app.dependencies.auth import get_current_user
 from app.modules.billing import repository as billing_repo
 from app.modules.billing.models import TenantSubscription
@@ -40,6 +44,15 @@ from app.modules.models.tenant_user import TenantUser
 from app.modules.tenants import repository as tenant_repo
 from app.modules.tenants.models import Tenant
 from app.modules.users.models import User
+
+settings = get_settings()
+logger = logging.getLogger(__name__)
+
+_CTX_CACHE_TTL = settings.TENANT_CONTEXT_CACHE_TTL
+
+
+def _ctx_cache_key(tenant_public_id: str, user_id: int) -> str:
+    return f"tc:{tenant_public_id}:{user_id}"
 
 
 @dataclass
@@ -60,27 +73,16 @@ class TenantContext:
     is_read_only: bool
 
 
-async def get_tenant_context(
+async def _build_context_from_db(
+    db: AsyncSession,
     tenant_public_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User,
 ) -> TenantContext:
-    # ── Step 0: email must be verified ───────────────────────────────────────
-    if current_user.email_verified_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email address not verified. Please verify your email before accessing tenant resources.",
-        )
-
-    # ── Step 1: tenant exists ─────────────────────────────────────────────────
+    """Full DB path: validates status, returns TenantContext and the IDs to cache."""
     tenant = await tenant_repo.get_tenant_by_public_id(db, public_id=tenant_public_id)
     if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
 
-    # ── Step 2: Gate 1 — tenant status ───────────────────────────────────────
     if tenant.status == TenantStatus.PENDING_PLAN:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -92,22 +94,16 @@ async def get_tenant_context(
             detail="This tenant account is suspended or cancelled. Please contact support.",
         )
 
-    # ── Step 3: membership ────────────────────────────────────────────────────
     tu = await tenant_repo.get_tenant_user(db, tenant_id=tenant.id, user_id=current_user.id)
     if not tu:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this tenant.",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this tenant.")
 
-    # ── Step 4: member status ─────────────────────────────────────────────────
     if not tu.is_accessible:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your access to this tenant has been suspended or deactivated.",
         )
 
-    # ── Step 5: Gate 2 — subscription status ─────────────────────────────────
     sub = await billing_repo.get_active_subscription(db, tenant_id=tenant.id)
     is_read_only = False
 
@@ -120,12 +116,57 @@ async def get_tenant_context(
         if sub.is_past_due:
             is_read_only = True
 
-    return TenantContext(
-        tenant=tenant,
-        membership=tu,
-        subscription=sub,
-        is_read_only=is_read_only,
-    )
+    return TenantContext(tenant=tenant, membership=tu, subscription=sub, is_read_only=is_read_only)
+
+
+async def get_tenant_context(
+    tenant_public_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantContext:
+    # ── Step 0: email must be verified ───────────────────────────────────────
+    if current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email address not verified. Please verify your email before accessing tenant resources.",
+        )
+
+    cache_key = _ctx_cache_key(tenant_public_id, current_user.id)
+
+    # ── Fast path: cache hit ──────────────────────────────────────────────────
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            data = json.loads(cached)
+            tenant = await db.get(Tenant, data["tenant_id"])
+            tu = await db.get(TenantUser, data["tu_id"])
+            sub = await db.get(TenantSubscription, data["sub_id"]) if data.get("sub_id") else None
+            if tenant and tu:
+                return TenantContext(
+                    tenant=tenant,
+                    membership=tu,
+                    subscription=sub,
+                    is_read_only=data["is_read_only"],
+                )
+    except Exception:
+        logger.debug("TenantContext cache read failed — falling back to DB", exc_info=True)
+
+    # ── Slow path: full DB validation ─────────────────────────────────────────
+    ctx = await _build_context_from_db(db, tenant_public_id, current_user)
+
+    # ── Write cache (fire-and-forget; never block the response on cache errors) ─
+    try:
+        payload = json.dumps({
+            "tenant_id":   ctx.tenant.id,
+            "tu_id":       ctx.membership.id,
+            "sub_id":      ctx.subscription.id if ctx.subscription else None,
+            "is_read_only": ctx.is_read_only,
+        })
+        await redis_client.setex(cache_key, _CTX_CACHE_TTL, payload)
+    except Exception:
+        logger.debug("TenantContext cache write failed — continuing without cache", exc_info=True)
+
+    return ctx
 
 
 def require_write(ctx: TenantContext) -> None:

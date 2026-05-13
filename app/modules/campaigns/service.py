@@ -150,9 +150,12 @@ async def list_campaigns(
     *,
     tenant_id: int,
     chatbot_public_id: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[schemas.CampaignResponse], int]:
+    page_size: int = 50,
+    cursor: Optional[str] = None,
+):
+    """Cursor-paginated campaigns. Returns CursorPage[CampaignResponse]."""
+    from app.core.pagination import CursorPage, decode_cursor
+
     chatbot_config_id: Optional[int] = None
     if chatbot_public_id:
         chatbot = await chatbot_repo.get_chatbot_by_public_id(
@@ -162,27 +165,35 @@ async def list_campaigns(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
         chatbot_config_id = chatbot.id
 
-    campaigns, total = await repo.list_campaigns(
+    cursor_dt = cursor_id = None
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+
+    campaigns = await repo.list_campaigns(
         db, tenant_id=tenant_id, chatbot_config_id=chatbot_config_id,
-        limit=limit, offset=offset,
+        page_size=page_size, cursor_dt=cursor_dt, cursor_id=cursor_id,
     )
 
-    logger.debug("[campaigns] list_campaigns total=%d tenant=%s chatbot=%s", total, tenant_id, chatbot_public_id)
+    page = CursorPage.build(campaigns, page_size, sort_attr="created_at", id_attr="id")
+    logger.debug(
+        "[campaigns] list_campaigns tenant=%s chatbot=%s page_size=%d cursor=%s items=%d",
+        tenant_id, chatbot_public_id, page_size, bool(cursor), len(page.items),
+    )
 
     # Build chatbot_public_id map to avoid N+1
     chatbot_id_map: dict[int, str] = {}
-    for c in campaigns:
+    for c in page.items:
         if c.chatbot_config_id not in chatbot_id_map:
             cb = await chatbot_repo.get_chatbot_by_id(
                 db, tenant_id=tenant_id, chatbot_id=c.chatbot_config_id
             )
             chatbot_id_map[c.chatbot_config_id] = cb.public_id if cb else ""
 
-    items = [
+    page.items = [
         _to_response(c, chatbot_public_id=chatbot_id_map.get(c.chatbot_config_id, ""))
-        for c in campaigns
+        for c in page.items
     ]
-    return items, total
+    return page
 
 
 async def update_campaign(
