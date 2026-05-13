@@ -43,7 +43,7 @@ app = FastAPI(
     openapi_url=None,
 )
 
-if ENVIRONMENT != "PRODUCTION":
+if ENVIRONMENT in ("PRODUCTION", "DEVELOPMENT", "STAGING"):
 
     @app.get("/docs", include_in_schema=False)
     async def get_docs(credentials=Depends(verify_docs_credentials)):
