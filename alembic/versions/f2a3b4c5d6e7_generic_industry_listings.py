@@ -87,23 +87,17 @@ def upgrade() -> None:
     op.drop_column("chatbot_configs", "allow_rental")
 
     # ── 3. listings — major reshape ──────────────────────────────────────────
-    # 3a. Drop old RE-specific columns
+    # 3a. Drop old RE-specific columns (IF EXISTS avoids aborting the transaction)
     for col in ("listing_type", "bedrooms", "bathrooms", "garages", "land_sqm", "house_sqm", "has_pool"):
-        try:
-            op.drop_column("listings", col)
-        except Exception:
-            pass  # column may not exist on a fresh DB
+        op.execute(f"ALTER TABLE listings DROP COLUMN IF EXISTS {col}")
 
-    # 3b. Drop old RE-specific indexes (ignore if they don't exist)
+    # 3b. Drop old RE-specific indexes (IF EXISTS avoids aborting the transaction)
     for idx in (
         "ix_listings_tenant_listing_type",
         "ix_listings_tenant_suburb",
         "ix_listings_tenant_status",
     ):
-        try:
-            op.drop_index(idx, table_name="listings")
-        except Exception:
-            pass
+        op.execute(f"DROP INDEX IF EXISTS {idx}")
 
     # 3c. Add new generic columns
     op.add_column(
@@ -126,16 +120,9 @@ def upgrade() -> None:
     )
 
     # 3d. Convert status column to plain VARCHAR (drop old PG ENUM if it exists)
-    # We use a raw EXECUTE so we can handle the case where the type doesn't exist.
-    op.execute("ALTER TABLE listings ALTER COLUMN status TYPE VARCHAR(50)")
-    op.execute("""
-        DO $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'listing_status') THEN
-                DROP TYPE listing_status;
-            END IF;
-        END $$;
-    """)
+    op.execute("ALTER TABLE listings ALTER COLUMN status DROP DEFAULT")
+    op.execute("ALTER TABLE listings ALTER COLUMN status TYPE VARCHAR(50) USING status::text")
+    op.execute("DROP TYPE IF EXISTS listing_status CASCADE")
 
     # 3e. Create new indexes
     op.create_index("ix_listings_tenant_industry", "listings", ["tenant_id", "industry"])
@@ -175,10 +162,7 @@ def upgrade() -> None:
         "suburbs_mentioned", "cities_mentioned", "property_types",
         "bedrooms_wanted", "timeline", "intent",
     ):
-        try:
-            op.drop_column("conversation_insights", col)
-        except Exception:
-            pass
+        op.execute(f"ALTER TABLE conversation_insights DROP COLUMN IF EXISTS {col}")
 
     op.add_column(
         "conversation_insights",
