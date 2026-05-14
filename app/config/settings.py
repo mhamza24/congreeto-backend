@@ -13,7 +13,7 @@ ENV_FILES = {
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Veloce Backend"
+    APP_NAME: str = "Congreeto Backend"
 
     ENV: str
     DEBUG: bool = False
