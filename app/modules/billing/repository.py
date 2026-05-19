@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.modules.billing.models import (
     Plan, Addon,
     TenantSubscription, TenantAddonSubscription,
-    UsageRecord,
+    UsageRecord, UserSubscription,
 )
 from app.core.enums import SubscriptionStatus, UsageMetric
 
@@ -288,6 +288,57 @@ async def increment_usage(
             "amount":       amount,
         }
     )
+
+
+# =============================================================================
+# USER SUBSCRIPTION READS
+# =============================================================================
+
+async def get_active_user_subscription(
+    db: AsyncSession, *, user_id: int
+) -> Optional[UserSubscription]:
+    """Return the user's current active/trialing/past_due subscription."""
+    result = await db.execute(
+        select(UserSubscription)
+        .options(selectinload(UserSubscription.plan))
+        .where(
+            UserSubscription.user_id == user_id,
+            UserSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIALING,
+                SubscriptionStatus.PAST_DUE,
+            ])
+        )
+        .order_by(UserSubscription.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_subscription_by_stripe_id(
+    db: AsyncSession, *, stripe_subscription_id: str
+) -> Optional[UserSubscription]:
+    """Resolve a UserSubscription from a Stripe subscription id (used by webhook)."""
+    result = await db.execute(
+        select(UserSubscription)
+        .options(selectinload(UserSubscription.plan))
+        .where(UserSubscription.stripe_subscription_id == stripe_subscription_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_subscription_by_stripe_customer_id(
+    db: AsyncSession, *, stripe_customer_id: str
+) -> Optional[UserSubscription]:
+    """Find the most recent user subscription for a Stripe customer id."""
+    result = await db.execute(
+        select(UserSubscription)
+        .options(selectinload(UserSubscription.plan))
+        .where(UserSubscription.stripe_customer_id == stripe_customer_id)
+        .order_by(UserSubscription.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def mark_warned(

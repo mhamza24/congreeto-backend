@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.response import ApiResponse
 from app.dependencies.auth import require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context
+from app.dependencies.user import get_verified_user
 from app.core.enums import UsageMetric
 from app.modules.billing import schemas, service
 
@@ -55,6 +56,33 @@ async def list_addons(db: DBDep) -> ApiResponse[list[schemas.AddonResponse]]:
         sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not fetch addons.")
     return ApiResponse(success=True, message="Addons fetched.", data=result)
+
+
+# =============================================================================
+# USER — auth required (no tenant needed — used at paywall / post-login)
+# =============================================================================
+
+@router.get(
+    "/me",
+    response_model=ApiResponse[schemas.UserBillingResponse],
+    summary="Get the current user's subscription status and tenant usage",
+)
+async def get_my_billing(
+    db: DBDep,
+    current_user=Depends(get_verified_user),
+) -> ApiResponse[schemas.UserBillingResponse]:
+    """
+    Called immediately after login. Frontend reads this to decide:
+      - has_active_subscription = false → redirect to /onboarding/select-plan (paywall)
+      - has_active_subscription = true  → allow dashboard / tenant creation
+    """
+    try:
+        result = await service.get_user_billing(db, user_id=current_user.id)
+    except Exception:
+        logger.exception("Error fetching user billing user=%s", current_user.public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not fetch billing status.")
+    return ApiResponse(success=True, message="Billing status fetched.", data=result)
 
 
 # =============================================================================

@@ -78,11 +78,32 @@ async def create_tenant(
     Status starts as pending_plan — frontend redirects to billing.
     """
     logger.info("[tenants] create_tenant attempt slug=%s owner=%s", payload.slug, owner.public_id)
+
+    # Billing gate — owner must have an active UserSubscription before creating a workspace
+    user_sub = await billing_repo.get_active_user_subscription(db, user_id=owner.id)
+    if not user_sub or not user_sub.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="A subscription is required to create a workspace. Please select a plan.",
+        )
+
+    max_tenants  = user_sub.plan.get_limit("max_tenants", 1)
+    owned_count  = await repo.count_owned_tenants(db, user_id=owner.id)
+    if owned_count >= max_tenants:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Your plan allows a maximum of {max_tenants} workspace(s). "
+                "Upgrade your plan to create more."
+            ),
+        )
+
     if await repo.slug_exists(db, slug=payload.slug):
         logger.warning("[tenants] create_tenant slug conflict slug=%s", payload.slug)
         raise SlugExistError()
 
-    tenant = Tenant.from_schema(payload, status=TenantStatus.PENDING_PLAN)
+    # Tenant starts ACTIVE immediately — owner has already paid
+    tenant = Tenant.from_schema(payload, status=TenantStatus.ACTIVE)
     tenant = await repo.create_tenant(db, tenant=tenant)
 
     db.add(

@@ -37,6 +37,9 @@ from app.modules.billing import contracts, repository as billing_repo
 from app.modules.stripe import schemas
 from app.modules.tenants import repository as tenant_repo
 from app.modules.tenants.models import Tenant
+from app.modules.users import repository as user_repo
+from app.modules.users.models import User
+from app.modules.billing.models import UserSubscription
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -191,6 +194,143 @@ async def create_portal_session(
 
 
 # =============================================================================
+# USER-SCOPED CHECKOUT SESSION  — POST /billing/stripe/checkout
+# =============================================================================
+
+async def create_user_checkout_session(
+    db: AsyncSession,
+    *,
+    user: User,
+    payload: schemas.CheckoutCreateRequest,
+) -> schemas.CheckoutCreateResponse:
+    """
+    Build a Stripe Checkout Session for a user (no tenant required).
+    Called from the paywall page before any tenant has been created.
+    The webhook creates a UserSubscription on completion.
+    """
+    plan = await billing_repo.get_plan_by_public_id(db, public_id=payload.plan_public_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found.")
+    if not plan.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This plan is no longer available.",
+        )
+
+    if payload.billing_interval == BillingInterval.ANNUAL:
+        stripe_price_id = plan.stripe_annual_price_id
+    else:
+        stripe_price_id = plan.stripe_monthly_price_id
+
+    if not stripe_price_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Plan '{plan.slug}' has no Stripe price id configured for "
+                f"{payload.billing_interval.value} billing."
+            ),
+        )
+
+    # Reuse existing Stripe customer id if user has paid before
+    existing_sub = await billing_repo.get_active_user_subscription(db, user_id=user.id)
+    customer_id = existing_sub.stripe_customer_id if existing_sub else None
+
+    success_url = payload.success_url or settings.STRIPE_CHECKOUT_SUCCESS_URL
+    cancel_url  = payload.cancel_url  or settings.STRIPE_CHECKOUT_CANCEL_URL
+
+    subscription_data: dict = {
+        "metadata": {
+            "user_public_id":   user.public_id,
+            "plan_public_id":   plan.public_id,
+            "billing_interval": payload.billing_interval.value,
+            "checkout_type":    "user",
+        },
+    }
+    if settings.STRIPE_DEFAULT_TRIAL_DAYS > 0:
+        subscription_data["trial_period_days"] = settings.STRIPE_DEFAULT_TRIAL_DAYS
+
+    session_kwargs: dict = {
+        "mode": "subscription",
+        "line_items": [{"price": stripe_price_id, "quantity": 1}],
+        "success_url": success_url,
+        "cancel_url":  cancel_url,
+        "client_reference_id": user.public_id,
+        "customer_email": user.email if not customer_id else None,
+        "metadata": {
+            "user_public_id":   user.public_id,
+            "plan_public_id":   plan.public_id,
+            "billing_interval": payload.billing_interval.value,
+            "checkout_type":    "user",
+        },
+        "subscription_data": subscription_data,
+        "allow_promotion_codes": True,
+    }
+    if customer_id:
+        session_kwargs["customer"] = customer_id
+        session_kwargs.pop("customer_email", None)
+    if payload.promotion_code:
+        session_kwargs["discounts"] = [{"promotion_code": payload.promotion_code}]
+        session_kwargs.pop("allow_promotion_codes", None)
+
+    try:
+        session = stripe.checkout.Session.create(**session_kwargs)
+    except stripe.error.StripeError as exc:
+        logger.exception(
+            "[stripe] user checkout.Session.create failed user=%s plan=%s",
+            user.public_id, plan.slug,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stripe rejected the checkout request: {exc.user_message or str(exc)}",
+        )
+
+    logger.info(
+        "[stripe] user checkout session created user=%s plan=%s interval=%s session=%s",
+        user.public_id, plan.slug, payload.billing_interval.value, session.id,
+    )
+    return schemas.CheckoutCreateResponse(session_id=session.id, url=session.url)
+
+
+# =============================================================================
+# USER-SCOPED CUSTOMER PORTAL  — POST /billing/stripe/portal
+# =============================================================================
+
+async def create_user_portal_session(
+    db: AsyncSession,
+    *,
+    user: User,
+    payload: schemas.PortalCreateRequest,
+) -> schemas.PortalCreateResponse:
+    """
+    Generate a one-time Customer Portal URL for the user's own subscription.
+    No tenant context required.
+    """
+    sub = await billing_repo.get_active_user_subscription(db, user_id=user.id)
+    if not sub or not sub.stripe_customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="No Stripe customer record found. Complete a checkout first.",
+        )
+
+    return_url = payload.return_url or settings.STRIPE_PORTAL_RETURN_URL
+
+    try:
+        portal = stripe.billing_portal.Session.create(
+            customer=sub.stripe_customer_id,
+            return_url=return_url,
+        )
+    except stripe.error.StripeError as exc:
+        logger.exception("[stripe] user billing_portal.Session.create failed user=%s", user.public_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stripe rejected the portal request: {exc.user_message or str(exc)}",
+        )
+
+    logger.info("[stripe] user portal session created user=%s", user.public_id)
+    return schemas.PortalCreateResponse(url=portal.url)
+
+
+# =============================================================================
 # WEBHOOK HANDLER  — POST /webhooks/stripe
 # =============================================================================
 
@@ -294,8 +434,87 @@ async def handle_webhook_event(
 
 async def _on_checkout_completed(db: AsyncSession, *, session: dict) -> None:
     """
-    First-time activation: tenant just paid via Checkout.
-    Stripe attaches our metadata to the session so we know who/what.
+    Route to user-level or tenant-level activation based on checkout_type metadata.
+    checkout_type = "user"   → UserSubscription (new paywall flow)
+    checkout_type = "tenant" → TenantSubscription (legacy / admin flow)
+    """
+    metadata = session.get("metadata") or {}
+    checkout_type = metadata.get("checkout_type", "tenant")
+
+    if checkout_type == "user":
+        await _on_user_checkout_completed(db, session=session)
+    else:
+        await _on_tenant_checkout_completed(db, session=session)
+
+
+async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> None:
+    """User just paid from the paywall — create a UserSubscription."""
+    from datetime import datetime, timezone, timedelta
+
+    metadata               = session.get("metadata") or {}
+    user_public_id         = metadata.get("user_public_id") or session.get("client_reference_id")
+    plan_public_id         = metadata.get("plan_public_id")
+    stripe_subscription_id = session.get("subscription")
+    stripe_customer_id     = session.get("customer")
+
+    if not user_public_id or not plan_public_id:
+        logger.error(
+            "[stripe] user checkout.completed missing metadata session_id=%s", session.get("id")
+        )
+        return
+
+    user = await user_repo.get_user_by_public_id(db, public_id=user_public_id)
+    plan = await billing_repo.get_plan_by_public_id(db, public_id=plan_public_id)
+    if not user or not plan:
+        logger.error(
+            "[stripe] user checkout.completed unknown user=%s plan=%s",
+            user_public_id, plan_public_id,
+        )
+        return
+
+    # Cancel any existing user subscription before creating a new one
+    existing = await billing_repo.get_active_user_subscription(db, user_id=user.id)
+    if existing:
+        existing.status       = SubscriptionStatus.CANCELLED
+        existing.cancelled_at = datetime.now(timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    sub = UserSubscription(
+        user_id              = user.id,
+        plan_id              = plan.id,
+        status               = SubscriptionStatus.ACTIVE,
+        currency             = (session.get("currency") or "AUD").upper(),
+        current_period_start = now,
+        current_period_end   = now + timedelta(days=30),
+        stripe_subscription_id = stripe_subscription_id,
+        stripe_customer_id     = stripe_customer_id,
+        notes = f"Activated via Stripe Checkout session {session.get('id')}.",
+    )
+    db.add(sub)
+
+    await audit.write_system(
+        db,
+        entity_type="user_subscriptions",
+        action=audit.ACTIVATE,
+        entity_id=user.id,
+        diff={"after": {
+            "plan_slug":              plan.slug,
+            "stripe_subscription_id": stripe_subscription_id,
+            "stripe_customer_id":     stripe_customer_id,
+            "source":                 "stripe_user_checkout",
+        }},
+    )
+    await db.commit()
+    logger.info(
+        "[stripe] user subscription activated user=%s plan=%s stripe_sub=%s",
+        user_public_id, plan.slug, stripe_subscription_id,
+    )
+
+
+async def _on_tenant_checkout_completed(db: AsyncSession, *, session: dict) -> None:
+    """
+    Legacy / admin flow: tenant paid via tenant-scoped checkout.
+    Activates a TenantSubscription (original behaviour unchanged).
     """
     metadata = session.get("metadata") or {}
     tenant_public_id = metadata.get("tenant_public_id") or session.get("client_reference_id")
@@ -316,13 +535,12 @@ async def _on_checkout_completed(db: AsyncSession, *, session: dict) -> None:
         )
         return
 
-    # Activate via the existing contract — keeps subscription state in one place.
     sub = await contracts.activate_subscription(
         db,
         tenant=tenant,
         plan_id=plan.id,
         currency=(session.get("currency") or "AUD").upper(),
-        trial_days=0,  # trial is handled by Stripe itself when configured
+        trial_days=0,
         notes=f"Activated via Stripe Checkout session {session.get('id')}.",
     )
     sub.stripe_subscription_id = stripe_subscription_id
@@ -343,7 +561,7 @@ async def _on_checkout_completed(db: AsyncSession, *, session: dict) -> None:
     )
     await db.commit()
     logger.info(
-        "[stripe] subscription activated tenant=%s plan=%s stripe_sub=%s",
+        "[stripe] tenant subscription activated tenant=%s plan=%s stripe_sub=%s",
         tenant_public_id, plan.slug, stripe_subscription_id,
     )
 
@@ -352,8 +570,28 @@ async def _on_subscription_updated(db: AsyncSession, *, sub_object: dict) -> Non
     """
     Plan changed in Stripe (e.g. user switched monthly → annual via Portal),
     OR Stripe pushed a status change like trialing → active.
+    Handles both UserSubscription (user-level) and TenantSubscription (tenant-level).
     """
     stripe_sub_id = sub_object.get("id")
+
+    # Check user-level subscription first
+    user_sub = await billing_repo.get_user_subscription_by_stripe_id(
+        db, stripe_subscription_id=stripe_sub_id,
+    )
+    if user_sub:
+        new_status = _map_stripe_status(sub_object.get("status"))
+        user_sub.status = new_status
+        period_end   = sub_object.get("current_period_end")
+        period_start = sub_object.get("current_period_start")
+        if period_end:
+            user_sub.current_period_end   = datetime.fromtimestamp(period_end,   tz=timezone.utc)
+        if period_start:
+            user_sub.current_period_start = datetime.fromtimestamp(period_start, tz=timezone.utc)
+        user_sub.cancel_at_period_end = bool(sub_object.get("cancel_at_period_end"))
+        await db.commit()
+        logger.info("[stripe] user subscription updated stripe_sub=%s status=%s", stripe_sub_id, new_status.value)
+        return
+
     sub = await billing_repo.get_subscription_by_stripe_subscription_id(
         db, stripe_subscription_id=stripe_sub_id,
     )
@@ -415,6 +653,18 @@ async def _on_subscription_updated(db: AsyncSession, *, sub_object: dict) -> Non
 async def _on_subscription_deleted(db: AsyncSession, *, sub_object: dict) -> None:
     """Final cancellation event from Stripe — mark cancelled in our DB."""
     stripe_sub_id = sub_object.get("id")
+
+    # Check user-level subscription first
+    user_sub = await billing_repo.get_user_subscription_by_stripe_id(
+        db, stripe_subscription_id=stripe_sub_id,
+    )
+    if user_sub:
+        user_sub.status       = SubscriptionStatus.CANCELLED
+        user_sub.cancelled_at = datetime.now(timezone.utc)
+        await db.commit()
+        logger.info("[stripe] user subscription cancelled stripe_sub=%s", stripe_sub_id)
+        return
+
     sub = await billing_repo.get_subscription_by_stripe_subscription_id(
         db, stripe_subscription_id=stripe_sub_id,
     )
@@ -438,17 +688,27 @@ async def _on_subscription_deleted(db: AsyncSession, *, sub_object: dict) -> Non
         diff={"after": {"status": "cancelled", "source": "stripe_webhook"}},
     )
     await db.commit()
-    logger.info("[stripe] subscription cancelled stripe_sub=%s", stripe_sub_id)
+    logger.info("[stripe] tenant subscription cancelled stripe_sub=%s", stripe_sub_id)
 
 
 async def _on_invoice_paid(db: AsyncSession, *, invoice: dict) -> None:
     """
-    Successful renewal payment — lift PAST_DUE if we're in it, otherwise
-    ensure ACTIVE. No-op when already active.
+    Successful renewal payment — lift PAST_DUE if in it, otherwise no-op.
+    Handles both user-level and tenant-level subscriptions.
     """
     stripe_sub_id = invoice.get("subscription")
     if not stripe_sub_id:
         return  # one-off invoices we don't track
+
+    # Check user-level subscription first
+    user_sub = await billing_repo.get_user_subscription_by_stripe_id(
+        db, stripe_subscription_id=stripe_sub_id,
+    )
+    if user_sub and user_sub.status == SubscriptionStatus.PAST_DUE:
+        user_sub.status = SubscriptionStatus.ACTIVE
+        await db.commit()
+        logger.info("[stripe] user subscription restored to active stripe_sub=%s", stripe_sub_id)
+        return
 
     sub = await billing_repo.get_subscription_by_stripe_subscription_id(
         db, stripe_subscription_id=stripe_sub_id,
@@ -475,13 +735,27 @@ async def _on_invoice_paid(db: AsyncSession, *, invoice: dict) -> None:
             },
         )
         await db.commit()
-        logger.info("[stripe] subscription restored to active stripe_sub=%s", stripe_sub_id)
+        logger.info("[stripe] tenant subscription restored to active stripe_sub=%s", stripe_sub_id)
 
 
 async def _on_invoice_failed(db: AsyncSession, *, invoice: dict) -> None:
-    """Payment failed — flip subscription to PAST_DUE so Gate 2 kicks in."""
+    """
+    Payment failed — flip subscription to PAST_DUE.
+    Handles both user-level and tenant-level subscriptions.
+    """
     stripe_sub_id = invoice.get("subscription")
     if not stripe_sub_id:
+        return
+
+    # Check user-level subscription first
+    user_sub = await billing_repo.get_user_subscription_by_stripe_id(
+        db, stripe_subscription_id=stripe_sub_id,
+    )
+    if user_sub:
+        if user_sub.status != SubscriptionStatus.PAST_DUE:
+            user_sub.status = SubscriptionStatus.PAST_DUE
+            await db.commit()
+            logger.warning("[stripe] user subscription marked past_due stripe_sub=%s", stripe_sub_id)
         return
 
     sub = await billing_repo.get_subscription_by_stripe_subscription_id(
@@ -508,7 +782,7 @@ async def _on_invoice_failed(db: AsyncSession, *, invoice: dict) -> None:
         },
     )
     await db.commit()
-    logger.warning("[stripe] subscription marked past_due stripe_sub=%s", stripe_sub_id)
+    logger.warning("[stripe] tenant subscription marked past_due stripe_sub=%s", stripe_sub_id)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

@@ -95,6 +95,21 @@ async def soft_delete_tenant(db: AsyncSession, *, tenant: Tenant) -> None:
 
 
 # =============================================================================
+# OWNER TENANT COUNT  (used by billing gate on tenant creation)
+# =============================================================================
+
+async def count_owned_tenants(db: AsyncSession, *, user_id: int) -> int:
+    """Count tenants where this user is the primary owner (not just a member)."""
+    result = await db.execute(
+        select(func.count(TenantUser.id)).where(
+            TenantUser.user_id          == user_id,
+            TenantUser.is_primary_owner == True,
+        )
+    )
+    return result.scalar_one() or 0
+
+
+# =============================================================================
 # TENANT USER READS
 # =============================================================================
 

@@ -21,6 +21,7 @@ from app.core.enums import (
 
 if TYPE_CHECKING:
     from app.modules.tenants.models import Tenant
+    from app.modules.users.models import User
 
 
 class Plan(Base, PublicIdMixin, TimestampMixin):
@@ -118,6 +119,11 @@ class Plan(Base, PublicIdMixin, TimestampMixin):
     # ── Relationships ─────────────────────────────────────────────────────────
     subscriptions: Mapped[list["TenantSubscription"]] = relationship(
         "TenantSubscription",
+        back_populates="plan",
+        lazy="noload",
+    )
+    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
+        "UserSubscription",
         back_populates="plan",
         lazy="noload",
     )
@@ -543,4 +549,105 @@ class UsageRecord(Base):
             f"metric={self.metric} "
             f"period={self.period_month} "
             f"qty={self.quantity}>"
+        )
+
+
+class UserSubscription(Base, PublicIdMixin, TimestampMixin):
+    """
+    Platform-level subscription owned by a user (the owner/payer).
+
+    The user buys a plan before creating any tenants. The plan limits
+    (including max_tenants) govern what they can create.
+
+    Gate behaviour:
+        active / trialing  → can create tenants up to plan.max_tenants
+        past_due           → degraded access; tenant creation blocked
+        cancelled / paused → tenant creation blocked
+    """
+    __tablename__ = "user_subscriptions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    plan_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("plans.id"),
+        nullable=False,
+    )
+
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        subscription_status_enum,
+        nullable=False,
+        default=SubscriptionStatus.ACTIVE,
+        server_default=text("'active'"),
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="AUD", server_default=text("'AUD'"),
+        comment="AUD or USD — matches the Stripe price currency"
+    )
+
+    current_period_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE"),
+        comment="TRUE = cancel at end of current period, not immediately"
+    )
+
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    stripe_subscription_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True,
+        comment="STRIPE_HOOK: Stripe subscription ID"
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+        comment="STRIPE_HOOK: Stripe customer ID"
+    )
+
+    # ── Relationships ─────────────────────────────────────────────────────────
+    plan: Mapped["Plan"] = relationship(
+        "Plan", back_populates="user_subscriptions", lazy="noload"
+    )
+
+    # ── Indexes ───────────────────────────────────────────────────────────────
+    __table_args__ = (
+        Index("ix_user_subs_user", "user_id"),
+        Index("ix_user_subs_status", "status"),
+        Index("ix_user_subs_stripe", "stripe_subscription_id"),
+    )
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @property
+    def is_active(self) -> bool:
+        return self.status in (SubscriptionStatus.TRIALING, SubscriptionStatus.ACTIVE)
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.status in (SubscriptionStatus.CANCELLED, SubscriptionStatus.PAUSED)
+
+    @property
+    def is_past_due(self) -> bool:
+        return self.status == SubscriptionStatus.PAST_DUE
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserSubscription "
+            f"user={self.user_id} "
+            f"plan={self.plan_id} "
+            f"status={self.status}>"
         )

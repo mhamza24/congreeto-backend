@@ -27,11 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.response import ApiResponse
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
+from app.dependencies.user import get_verified_user
 from app.modules.stripe import schemas, service
 
 logger = logging.getLogger(__name__)
 
-# Tenant-scoped checkout/portal endpoints
+# Checkout/portal endpoints (user-scoped + tenant-scoped)
 billing_stripe_router = APIRouter(prefix="/billing/stripe", tags=["Billing — Stripe"])
 
 # Webhook lives outside /billing so the URL is clean for Stripe dashboard
@@ -42,14 +43,81 @@ CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 
 
 # =============================================================================
-# CHECKOUT
+# USER-SCOPED CHECKOUT  (no tenant needed — called from the paywall)
+# Static paths must be declared BEFORE the /{tenant_public_id} parameterized
+# paths so FastAPI routes them correctly.
+# =============================================================================
+
+@billing_stripe_router.post(
+    "/checkout",
+    response_model=ApiResponse[schemas.CheckoutCreateResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a Stripe Checkout Session for the authenticated user (paywall flow)",
+)
+async def create_user_checkout(
+    payload: schemas.CheckoutCreateRequest,
+    db: DBDep,
+    current_user=Depends(get_verified_user),
+) -> ApiResponse[schemas.CheckoutCreateResponse]:
+    """
+    Called from the paywall page. No tenant ID required — the user hasn't
+    created a tenant yet. After payment the webhook creates a UserSubscription
+    and the user is redirected to the dashboard to create their first workspace.
+    """
+    try:
+        result = await service.create_user_checkout_session(
+            db, user=current_user, payload=payload,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        sentry_sdk.capture_exception()
+        logger.exception("create_user_checkout failed user=%s", current_user.public_id)
+        raise HTTPException(status_code=500, detail="Could not create Stripe checkout session.")
+    return ApiResponse(success=True, message="Checkout session created.", data=result)
+
+
+# =============================================================================
+# USER-SCOPED PORTAL  (no tenant needed — manage billing from user settings)
+# =============================================================================
+
+@billing_stripe_router.post(
+    "/portal",
+    response_model=ApiResponse[schemas.PortalCreateResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a Stripe Customer Portal session for the authenticated user",
+)
+async def create_user_portal(
+    payload: schemas.PortalCreateRequest,
+    db: DBDep,
+    current_user=Depends(get_verified_user),
+) -> ApiResponse[schemas.PortalCreateResponse]:
+    """
+    Lets the owner manage their card, view invoices, or cancel from the
+    user-level settings page. No tenant context required.
+    """
+    try:
+        result = await service.create_user_portal_session(
+            db, user=current_user, payload=payload,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        sentry_sdk.capture_exception()
+        logger.exception("create_user_portal failed user=%s", current_user.public_id)
+        raise HTTPException(status_code=500, detail="Could not create Stripe portal session.")
+    return ApiResponse(success=True, message="Portal session created.", data=result)
+
+
+# =============================================================================
+# TENANT-SCOPED CHECKOUT  (admin / future multi-tenant billing use)
 # =============================================================================
 
 @billing_stripe_router.post(
     "/{tenant_public_id}/checkout",
     response_model=ApiResponse[schemas.CheckoutCreateResponse],
     status_code=status.HTTP_201_CREATED,
-    summary="Create a Stripe Checkout Session — frontend redirects user to .url",
+    summary="[Admin] Create a Stripe Checkout Session scoped to a tenant",
 )
 async def create_checkout(
     payload: schemas.CheckoutCreateRequest,
@@ -71,14 +139,14 @@ async def create_checkout(
 
 
 # =============================================================================
-# CUSTOMER PORTAL  (cards, invoices, plan changes, cancellations)
+# TENANT-SCOPED PORTAL  (admin / future multi-tenant billing use)
 # =============================================================================
 
 @billing_stripe_router.post(
     "/{tenant_public_id}/portal",
     response_model=ApiResponse[schemas.PortalCreateResponse],
     status_code=status.HTTP_201_CREATED,
-    summary="Create a Stripe Customer Portal session for billing self-service",
+    summary="[Admin] Create a Stripe Customer Portal session scoped to a tenant",
 )
 async def create_portal(
     payload: schemas.PortalCreateRequest,
