@@ -449,7 +449,6 @@ async def _on_checkout_completed(db: AsyncSession, *, session: dict) -> None:
 
 async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> None:
     """User just paid from the paywall — create a UserSubscription."""
-    from datetime import datetime, timezone, timedelta
 
     metadata               = session.get("metadata") or {}
     user_public_id         = metadata.get("user_public_id") or session.get("client_reference_id")
@@ -478,14 +477,13 @@ async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> Non
         existing.status       = SubscriptionStatus.CANCELLED
         existing.cancelled_at = datetime.now(timezone.utc)
 
-    now = datetime.now(timezone.utc)
     sub = UserSubscription(
         user_id              = user.id,
         plan_id              = plan.id,
         status               = SubscriptionStatus.ACTIVE,
-        currency             = (session.get("currency") or "AUD").upper(),
-        current_period_start = now,
-        current_period_end   = now + timedelta(days=30),
+        currency             = (session.get("currency") or "USD").upper(),
+        current_period_start = None,
+        current_period_end   = None,
         stripe_subscription_id = stripe_subscription_id,
         stripe_customer_id     = stripe_customer_id,
         notes = f"Activated via Stripe Checkout session {session.get('id')}.",
@@ -539,7 +537,7 @@ async def _on_tenant_checkout_completed(db: AsyncSession, *, session: dict) -> N
         db,
         tenant=tenant,
         plan_id=plan.id,
-        currency=(session.get("currency") or "AUD").upper(),
+        currency=(session.get("currency") or "USD").upper(),
         trial_days=0,
         notes=f"Activated via Stripe Checkout session {session.get('id')}.",
     )

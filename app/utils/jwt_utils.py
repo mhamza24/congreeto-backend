@@ -107,20 +107,13 @@ def get_subject_from_token(token: str) -> dict[str, Any]:
     return decode_token(token).sub
 
 def get_token_subject(user: User) -> dict[str, Any]:
-    """Builds the JWT subject dict from a User model instance."""
-
-    is_verified = user.email_verified_at is not None
-
+    """Builds the JWT subject dict from a User model instance.
+    Contains only auth-decision fields — no PII. Fetch profile from GET /users/me.
+    """
     return {
         "id":             int(user.id),
-        "email":          user.email,
         "public_id":      str(user.public_id),
-        "first_name":     user.first_name,
-        "last_name":      user.last_name,
         "status":         user.status.value if hasattr(user.status, "value") else user.status,
-        "avatar_url":     user.avatar_url,
-        "email_verified": is_verified,
+        "email_verified": user.email_verified_at is not None,
         "is_superadmin":  user.is_superadmin,
-        "last_login":     user.last_login_at.isoformat() if user.last_login_at else None,
-        "created_at":     user.created_at.isoformat(),
     }

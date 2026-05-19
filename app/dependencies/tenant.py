@@ -83,10 +83,12 @@ async def _build_context_from_db(
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
 
+    # Safety net only — new tenants always start ACTIVE (billing gate enforced in create_tenant).
+    # This fires only if a tenant is manually set to PENDING_PLAN via admin tooling.
     if tenant.status == TenantStatus.PENDING_PLAN:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="This tenant has not selected a plan yet. Please complete billing setup.",
+            detail="This workspace has no active plan. Please contact support.",
         )
     if tenant.status in (TenantStatus.SUSPENDED, TenantStatus.CANCELLED):
         raise HTTPException(
@@ -171,14 +173,14 @@ async def get_tenant_context(
 
 def require_write(ctx: TenantContext) -> None:
     """
-    Call at the top of any write/mutating service operation when using TenantContext.
-
-    Usage:
-        require_write(ctx)   # raises 402 if past_due, no-op otherwise
-
-    This is a plain function (not a Depends) so it can be called inside service
-    functions that already received the context from the API layer.
+    Call at the top of any write/mutating endpoint when using TenantContext.
+    Checks both role and billing status before allowing mutations.
     """
+    if not ctx.membership.can_write:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action.",
+        )
     if ctx.is_read_only:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,

@@ -166,3 +166,36 @@ async def record_login_failure(user_id: int) -> None:
 async def clear_login_failures(user_id: int) -> None:
     """Reset failure counter on a successful login."""
     await redis_client.delete(_login_failure_key(user_id))
+
+
+# ── IP-based signup rate limiting ─────────────────────────────────────────────
+
+SIGNUP_MAX_PER_HOUR = 5
+SIGNUP_WINDOW_SECONDS = 3600
+
+
+def _signup_rate_key(ip: str) -> str:
+    return f"signup:ip:{ip}"
+
+
+async def check_signup_rate_limit(ip: str) -> None:
+    """
+    Raises RateLimitError if this IP has exceeded 5 signups in the last hour.
+    Call at the start of the signup endpoint before any DB work.
+    """
+    key   = _signup_rate_key(ip)
+    count = await redis_client.get(key)
+    if count and int(count) >= SIGNUP_MAX_PER_HOUR:
+        ttl     = await redis_client.ttl(key)
+        minutes = math.ceil(max(ttl, 0) / 60)
+        raise RateLimitError(
+            f"Too many accounts created from this IP. Try again in {minutes} minute(s)."
+        )
+
+
+async def record_signup(ip: str) -> None:
+    """Increment the signup counter for this IP. Call after a successful signup."""
+    key   = _signup_rate_key(ip)
+    count = await redis_client.incr(key)
+    if count == 1:
+        await redis_client.expire(key, SIGNUP_WINDOW_SECONDS)

@@ -1196,7 +1196,7 @@ async def get_onboarding_status(
         schemas.OnboardingStep(
             key="plan_selected",
             label="Select a subscription plan",
-            completed=subscription is not None,
+            completed=tenant.status != TenantStatus.PENDING_PLAN,
         ),
         schemas.OnboardingStep(
             key="tenant_created",

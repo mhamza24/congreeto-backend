@@ -40,13 +40,8 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 # (replace with real auth when ready)
 # ---------------------------------------------------------------------------
 
-async def get_tenant_id(tenant_id: str | None = Query(default=None)) -> str:
-    """
-    Extract tenant_id from query param (?tenant_id=xxx).
-    Falls back to "veloce" if not provided.
-    Replace with real auth logic when ready.
-    """
-    return tenant_id or "veloce"
+async def get_tenant_id(tenant_id: str = Query(..., description="Tenant public_id or slug.")) -> str:
+    return tenant_id
 
 
 

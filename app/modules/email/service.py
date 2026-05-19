@@ -655,7 +655,7 @@ def _build_internal_affiliation_html(
 # E. Lead insight email builders (property chatbot + website B2B)
 # ══════════════════════════════════════════════════════════════
 
-def _fmt_currency(value: int | None, currency: str = "AUD") -> str | None:
+def _fmt_currency(value: int | None, currency: str = "USD") -> str | None:
     if value is None:
         return None
     if value >= 1_000_000:
@@ -668,7 +668,7 @@ def _fmt_currency(value: int | None, currency: str = "AUD") -> str | None:
 def _budget_line(ins: dict) -> str | None:
     lo  = ins.get("budget_min")
     hi  = ins.get("budget_max")
-    cur = ins.get("budget_currency") or "AUD"
+    cur = ins.get("budget_currency") or "USD"
     if lo and hi:
         return f"{_fmt_currency(lo, cur)} – {_fmt_currency(hi, cur)}"
     if lo:

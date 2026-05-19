@@ -25,6 +25,8 @@ from app.utils.rate_limit import (
     check_login_failure_lockout,
     record_login_failure,
     clear_login_failures,
+    check_signup_rate_limit,
+    record_signup,
 )
 from . import repository as repo, schemas, models
 from app.modules.users import repository as user_repo, models as user_models
@@ -46,6 +48,14 @@ async def create_user(
 ) -> schemas.SignupResponse:
 
     logger.info("[auth] signup attempt email=%s", payload.email)
+
+    # ── 0. IP-based rate limit (5 signups per IP per hour) ────────────────
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request and request.client else "unknown")
+    )
+    await check_signup_rate_limit(client_ip)
+
     # ── 1. Business rule ──────────────────────────────────────────────────
     existing = await user_repo.get_user_by_email(db, email=payload.email)
     if existing:
@@ -94,6 +104,7 @@ async def create_user(
     celery_task = background_tasks.send_otp_verification_email_task.delay(
        email=payload.email, first_name=payload.first_name, otp_code=raw_otp)
 
+    await record_signup(client_ip)
     logger.info("[auth] user created public_id=%s email=%s task=%s", user.public_id, payload.email, celery_task.id)
 
     return schemas.SignupResponse(
@@ -212,12 +223,14 @@ async def refresh_access_token(
         logger.warning("[auth] refresh_token user not found id=%s", sub.get("id"))
         raise UserNotExistError()
 
-    # 4. Issue new access token only (refresh token stays the same)
+    # 4. Rotate: blacklist the used refresh token, issue a fresh pair
+    await blacklist_token(refresh_token)
     logger.debug("[auth] access token refreshed user=%s", existing_user.public_id)
     subject = get_token_subject(existing_user)
 
     return schemas.RefreshResponse(
         access_token=create_access_token(subject),
+        refresh_token=create_refresh_token(subject),
     )
 
 
@@ -569,8 +582,7 @@ async def forgot_password(
         expires_in_minutes=settings.OTP_EXPIRES_IN_MINUTES,
     )
 
-    # Reset link contains only the email — OTP is delivered exclusively by email
-    reset_link = f"{settings.FRONTEND_URL}/reset-password?email={existing_user.email}"
+    reset_link = f"{settings.FRONTEND_URL}/reset-password"
 
     background_tasks.send_forgot_password_email_task.delay(
         email=existing_user.email,

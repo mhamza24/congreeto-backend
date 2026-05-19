@@ -12,7 +12,7 @@ from app.core.exceptions import (
 )
 from app.modules.users import repository as user_repo
 from app.core.database import get_db
-from app.utils.jwt_utils import decode_token
+from app.utils.jwt_utils import decode_token, is_token_blacklisted
 
 bearer_scheme = HTTPBearer()
 
@@ -25,15 +25,19 @@ async def get_current_user(
 
     try:
         payload = decode_token(token)
-    except Exception:
+    except jwt.ExpiredSignatureError:
         raise InvalidTokenError()
     except jwt.PyJWTError:
         raise InvalidCredentialsError()
+    except Exception:
+        raise InvalidTokenError()
 
     if payload.type != "access":
         raise InvalidTokenTypeError()
 
-    # ── Pull whatever fields you stored in sub ────────────────────────────
+    if payload.jti and await is_token_blacklisted(payload.jti):
+        raise InvalidTokenError()
+
     sub = payload.sub
 
     user = await user_repo.get_user_by_id(db, id=sub["id"])
