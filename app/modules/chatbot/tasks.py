@@ -551,7 +551,7 @@ async def _embed_crawled_page_async(
                         description=item.get("description"),
                         price=item.get("price"),
                         price_display=item.get("price_display"),
-                        currency=item.get("currency", "AUD"),
+                        currency=item.get("currency", "USD"),
                         street=item.get("street"),
                         suburb=item.get("suburb"),
                         state=item.get("state"),
@@ -1260,7 +1260,7 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
                     "item": item,
                     "external_id": external_id,
                     "status": raw_status or "active",
-                    "currency": str(item.get("currency") or "AUD").strip().upper(),
+                    "currency": str(item.get("currency") or "USD").strip().upper(),
                 })
 
             # ── 4b: ONE query for all existing listings in this batch ─────

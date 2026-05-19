@@ -612,7 +612,7 @@ class Listing(Base, PublicIdMixin, SoftDeleteMixin):
     price: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
     price_display: Mapped[str | None] = mapped_column(String(100), nullable=True)
     currency: Mapped[str] = mapped_column(
-        String(3), nullable=False, default="AUD", server_default=text("'AUD'")
+        String(3), nullable=False, default="USD", server_default=text("'USD'")
     )
 
     # ── Location (optional — restaurants, clinics, RE need it; e-commerce may not) ──

@@ -159,7 +159,18 @@ class AddonResponse(BaseModel):
 class ActivateSubscriptionRequest(BaseModel):
     """Admin manually activates after receiving payment."""
     plan_public_id: str
-    currency:       str           = Field("AUD", pattern="^(AUD|USD)$")
+    currency:       str           = Field("USD", pattern="^(AUD|USD)$")
+    trial_days:     int           = Field(0, ge=0, le=365)
+    notes:          Optional[str] = Field(
+        None, max_length=1000,
+        description="Payment details e.g. 'Paid USD 300 via bank transfer. Ref: INV-001'"
+    )
+
+
+class ActivateUserSubscriptionRequest(BaseModel):
+    """Admin manually activates a user-level subscription after receiving payment."""
+    plan_public_id: str
+    currency:       str           = Field("USD", pattern="^(AUD|USD)$")
     trial_days:     int           = Field(0, ge=0, le=365)
     notes:          Optional[str] = Field(
         None, max_length=1000,
@@ -167,9 +178,25 @@ class ActivateSubscriptionRequest(BaseModel):
     )
 
 
+class UserSubscriptionAdminResponse(BaseModel):
+    public_id:            str
+    status:               SubscriptionStatus
+    currency:             str
+    plan:                 PlanResponse
+    current_period_start: Optional[datetime]
+    current_period_end:   Optional[datetime]
+    trial_ends_at:        Optional[datetime]
+    cancelled_at:         Optional[datetime]
+    cancel_at_period_end: bool
+    notes:                Optional[str]
+    created_at:           datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ChangePlanRequest(BaseModel):
     plan_public_id: str
-    currency:       str           = Field("AUD", pattern="^(AUD|USD)$")
+    currency:       str           = Field("USD", pattern="^(AUD|USD)$")
     notes:          Optional[str] = Field(None, max_length=1000)
 
 
@@ -206,7 +233,7 @@ class SubscriptionResponse(BaseModel):
 class AddAddonRequest(BaseModel):
     addon_public_id: str
     quantity:        int           = Field(1, ge=1, le=100)
-    currency:        str           = Field("AUD", pattern="^(AUD|USD)$")
+    currency:        str           = Field("USD", pattern="^(AUD|USD)$")
     notes:           Optional[str] = Field(None, max_length=1000)
 
 

@@ -255,7 +255,7 @@ def build_listing_embed_text(listing: Any) -> str:
     if getattr(listing, "price_display", None):
         parts.append(listing.price_display)
     elif getattr(listing, "price", None):
-        currency = getattr(listing, "currency", "AUD") or "AUD"
+        currency = getattr(listing, "currency", "USD") or "USD"
         parts.append(f"{currency} {listing.price:,.0f}")
 
     # Title + description (capped to avoid token bloat)
@@ -286,7 +286,7 @@ Return JSON: {"listings": [...]}. Each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "e.g. $1,200,000 or $450/week or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": "string or null",
   "suburb": "string or null",
   "state": "string or null",
@@ -315,7 +315,7 @@ Return JSON: {"listings": [...]}. Each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "e.g. $12.50 or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {
     "category": "e.g. Pizza, Burger, Dessert or null",
@@ -338,7 +338,7 @@ Return JSON: {"listings": [...]}. Each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "e.g. $49.99 or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {
     "sku": "string or null",
@@ -391,7 +391,7 @@ Return JSON: {"listings": [...]}. Each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "formatted price string or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {}
 }
@@ -549,7 +549,7 @@ OUTPUT — JSON array, each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "string or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": "string or null",
   "suburb": "string or null",
   "state": "2–3 letter code or null",
@@ -589,7 +589,7 @@ OUTPUT — JSON array, each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "string or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {{
     "category": "string or null",
@@ -623,7 +623,7 @@ OUTPUT — JSON array, each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "string or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {{
     "sku": "string or null",
@@ -656,7 +656,7 @@ OUTPUT — JSON array, each element:
   "description": "string or null",
   "price": float or null,
   "price_display": "string or null",
-  "currency": "AUD",
+  "currency": "USD",
   "street": null, "suburb": null, "state": null, "postcode": null,
   "attributes": {{}}
 }}

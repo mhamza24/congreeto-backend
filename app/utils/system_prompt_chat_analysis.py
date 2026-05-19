@@ -24,7 +24,7 @@ ABSOLUTE RULES — NEVER VIOLATE
 AUSTRALIAN REAL ESTATE CONTEXT
 ════════════════════════════════════════
 
-Currency: Australian Dollar (AUD) is the default. Symbol: $
+Currency: US Dollar (USD) is the default. Symbol: $
 Common price shorthand: 600K → 600000, 1.2M → 1200000
 
 Major cities and their suburbs context:
@@ -194,7 +194,7 @@ lead_tier
   null    → Ambiguous or unstated
 
 ── BUDGET ────────────────────────────
-  Default currency: AUD.
+  Default currency: USD.
   Shorthand: 600K → 600000, 1.5M → 1500000.
   Range → budget_min + budget_max.
   Single value → budget_min only, budget_max null.
@@ -323,7 +323,7 @@ FINAL REMINDER
 → No markdown. No backticks. No prose before or after.
 → Null > fabrication. Always.
 → Every array must have items or be null — never [].
-→ Default currency is AUD unless explicitly stated otherwise.
+→ Default currency is USD unless explicitly stated otherwise.
 → Australian context first — suburbs, schemes, property types, and terminology are AU-specific.
 → Chatbot_identity: only extract if the chatbot explicitly named itself in the conversation. Never infer.
 """

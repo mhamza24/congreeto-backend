@@ -1225,7 +1225,7 @@ async def create_listing(
     description: Optional[str] = None,
     price: Optional[float] = None,
     price_display: Optional[str] = None,
-    currency: str = "AUD",
+    currency: str = "USD",
     street: Optional[str] = None,
     suburb: Optional[str] = None,
     state: Optional[str] = None,

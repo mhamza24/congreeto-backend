@@ -34,7 +34,7 @@ class ListingCreateRequest(BaseModel):
     description: Optional[str] = None
     price: Optional[float] = None
     price_display: Optional[str] = Field(default=None, max_length=100)
-    currency: str = Field(default="AUD", max_length=3)
+    currency: str = Field(default="USD", max_length=3)
 
     # Location — optional for all industries
     street: Optional[str] = Field(default=None, max_length=255)

@@ -236,6 +236,37 @@ async def create_addon(
 # =============================================================================
 
 @router.post(
+    "/admin/users/{user_public_id}/billing/activate",
+    response_model=ApiResponse[schemas.UserSubscriptionAdminResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Manually activate a user-level subscription (admin only)",
+)
+async def admin_activate_user_subscription(
+    user_public_id: str,
+    payload: schemas.ActivateUserSubscriptionRequest,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.UserSubscriptionAdminResponse]:
+    """
+    Use this when:
+    - A Stripe webhook was missed and the user paid but has no active subscription.
+    - Payment was received outside Stripe (bank transfer, invoice, etc.).
+    Any existing active subscription is cancelled before the new one is created.
+    """
+    try:
+        result = await service.admin_activate_user_subscription(
+            db, user_public_id=user_public_id, payload=payload
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error activating user subscription user=%s", user_public_id)
+        sentry_sdk.capture_exception()
+        raise HTTPException(status_code=500, detail="Could not activate user subscription.")
+    return ApiResponse(success=True, message="User subscription activated.", data=result)
+
+
+@router.post(
     "/admin/tenants/{tenant_public_id}/billing/activate",
     response_model=ApiResponse[schemas.SubscriptionResponse],
     summary="Manually activate a subscription (admin only)",

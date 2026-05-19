@@ -327,7 +327,7 @@ def reset_monthly_usage_task() -> None:
 
     with SyncSessionLocal() as db:
 
-        # Renew subscription periods
+        # Renew tenant subscription periods
         db.execute(text("""
             UPDATE tenant_subscriptions
             SET
@@ -335,6 +335,17 @@ def reset_monthly_usage_task() -> None:
                 current_period_end   = NOW() AT TIME ZONE 'UTC'
                                        + INTERVAL '30 days'
             WHERE status IN ('active', 'trialing')
+        """))
+
+        # Renew user subscription periods (manually-activated plans not managed by Stripe)
+        db.execute(text("""
+            UPDATE user_subscriptions
+            SET
+                current_period_start = NOW() AT TIME ZONE 'UTC',
+                current_period_end   = NOW() AT TIME ZONE 'UTC'
+                                       + INTERVAL '30 days'
+            WHERE status IN ('active', 'trialing')
+            AND   stripe_subscription_id IS NULL
         """))
 
         db.commit()

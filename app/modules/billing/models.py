@@ -287,8 +287,8 @@ class TenantSubscription(Base, PublicIdMixin, TimestampMixin):
     )
 
     currency: Mapped[str] = mapped_column(
-        String(3), nullable=False, default="AUD", server_default=text("'AUD'"),
-        comment="AUD or USD — determines which price column was used"
+        String(3), nullable=False, default="USD", server_default=text("'USD'"),
+        comment="USD or AUD — determines which price column was used"
     )
 
     current_period_start: Mapped[datetime | None] = mapped_column(
@@ -427,7 +427,7 @@ class TenantAddonSubscription(Base, PublicIdMixin, TimestampMixin):
     )
 
     currency: Mapped[str] = mapped_column(
-        String(3), nullable=False, default="AUD", server_default=text("'AUD'")
+        String(3), nullable=False, default="USD", server_default=text("'USD'")
     )
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -587,8 +587,8 @@ class UserSubscription(Base, PublicIdMixin, TimestampMixin):
     )
 
     currency: Mapped[str] = mapped_column(
-        String(3), nullable=False, default="AUD", server_default=text("'AUD'"),
-        comment="AUD or USD — matches the Stripe price currency"
+        String(3), nullable=False, default="USD", server_default=text("'USD'"),
+        comment="USD or AUD — matches the Stripe price currency"
     )
 
     current_period_start: Mapped[datetime | None] = mapped_column(

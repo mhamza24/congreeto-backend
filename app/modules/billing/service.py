@@ -164,6 +164,89 @@ async def get_user_billing(
 
 
 # =============================================================================
+# ADMIN — USER SUBSCRIPTION MANAGEMENT
+# =============================================================================
+
+async def admin_activate_user_subscription(
+    db: AsyncSession,
+    *,
+    user_public_id: str,
+    payload: schemas.ActivateUserSubscriptionRequest,
+) -> schemas.UserSubscriptionAdminResponse:
+    """
+    Admin manually activates or replaces a UserSubscription after receiving
+    payment outside of Stripe (bank transfer, cash, etc.).
+    Also used when a Stripe webhook was missed and the user is stuck.
+    """
+    from app.modules.users import repository as user_repo
+    from app.modules.billing.models import UserSubscription
+    from datetime import datetime, timezone, timedelta
+
+    user = await user_repo.get_user_by_public_id(db, public_id=user_public_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    plan = await _get_plan_or_404(db, public_id=payload.plan_public_id)
+
+    # Cancel any existing active subscription before creating a new one
+    existing = await repo.get_active_user_subscription(db, user_id=user.id)
+    if existing:
+        existing.status       = SubscriptionStatus.CANCELLED
+        existing.cancelled_at = datetime.now(timezone.utc)
+
+    now   = datetime.now(timezone.utc)
+    start = now
+    end   = now + timedelta(days=payload.trial_days if payload.trial_days else 30)
+    trial_ends_at = now + timedelta(days=payload.trial_days) if payload.trial_days else None
+    sub_status    = SubscriptionStatus.TRIALING if payload.trial_days else SubscriptionStatus.ACTIVE
+
+    sub = UserSubscription(
+        user_id              = user.id,
+        plan_id              = plan.id,
+        status               = sub_status,
+        currency             = payload.currency,
+        current_period_start = start,
+        current_period_end   = end,
+        trial_ends_at        = trial_ends_at,
+        notes                = payload.notes,
+    )
+    db.add(sub)
+
+    await audit.write(
+        db,
+        entity_type="user_subscriptions",
+        action=audit.ACTIVATE,
+        entity_id=user.id,
+        diff={"after": {
+            "plan_slug": plan.slug,
+            "status":    sub_status.value,
+            "currency":  payload.currency,
+            "source":    "admin_manual",
+        }},
+    )
+
+    await db.commit()
+    await db.refresh(sub)
+    logger.info(
+        "[billing] user subscription manually activated user=%s plan=%s",
+        user_public_id, plan.slug,
+    )
+    return schemas.UserSubscriptionAdminResponse(
+        public_id            = sub.public_id,
+        status               = sub.status,
+        currency             = sub.currency,
+        plan                 = schemas.PlanResponse.from_plan(plan),
+        current_period_start = sub.current_period_start,
+        current_period_end   = sub.current_period_end,
+        trial_ends_at        = sub.trial_ends_at,
+        cancelled_at         = sub.cancelled_at,
+        cancel_at_period_end = sub.cancel_at_period_end,
+        notes                = sub.notes,
+        created_at           = sub.created_at,
+    )
+
+
+# =============================================================================
 # ADDON OPERATIONS
 # =============================================================================
 

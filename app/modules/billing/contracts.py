@@ -24,7 +24,7 @@ async def activate_subscription(
     *,
     tenant: Tenant,
     plan_id: int,
-    currency: str = "AUD",
+    currency: str = "USD",
     trial_days: int = 0,
     notes: str | None = None,
     # STRIPE_HOOK: stripe_subscription_id: str | None = None,
@@ -104,7 +104,7 @@ async def change_plan(
     *,
     tenant: Tenant,
     new_plan_id: int,
-    currency: str = "AUD",
+    currency: str = "USD",
     notes: str | None = None,
     # STRIPE_HOOK: new_stripe_price_id: str | None = None,
 ) -> TenantSubscription:
@@ -133,7 +133,7 @@ async def add_addon(
     addon_id: int,
     subscription_id: int,
     quantity: int = 1,
-    currency: str = "AUD",
+    currency: str = "USD",
     notes: str | None = None,
     # STRIPE_HOOK: stripe_subscription_item_id: str | None = None,
 ) -> TenantAddonSubscription:
