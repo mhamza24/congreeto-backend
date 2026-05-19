@@ -120,6 +120,50 @@ async def update_plan(
 
 
 # =============================================================================
+# USER-LEVEL BILLING
+# =============================================================================
+
+async def get_user_billing(
+    db: AsyncSession,
+    *,
+    user_id: int,
+) -> schemas.UserBillingResponse:
+    """
+    Returns the calling user's subscription status and tenant usage.
+    Called immediately after login so the frontend knows whether to show
+    the paywall or allow dashboard access.
+    """
+    sub = await repo.get_active_user_subscription(db, user_id=user_id)
+
+    if sub:
+        sub_response = schemas.UserSubscriptionResponse(
+            public_id            = sub.public_id,
+            status               = sub.status,
+            currency             = sub.currency,
+            plan                 = schemas.PlanResponse.from_plan(sub.plan),
+            current_period_start = sub.current_period_start,
+            current_period_end   = sub.current_period_end,
+            trial_ends_at        = sub.trial_ends_at,
+            cancelled_at         = sub.cancelled_at,
+            cancel_at_period_end = sub.cancel_at_period_end,
+            created_at           = sub.created_at,
+        )
+        max_tenants = sub.plan.get_limit("max_tenants", 1)
+    else:
+        sub_response = None
+        max_tenants  = 0
+
+    tenants_used = await tenant_repo.count_owned_tenants(db, user_id=user_id)
+
+    return schemas.UserBillingResponse(
+        subscription            = sub_response,
+        has_active_subscription = bool(sub and sub.is_active),
+        max_tenants             = max_tenants,
+        tenants_used            = tenants_used,
+    )
+
+
+# =============================================================================
 # ADDON OPERATIONS
 # =============================================================================
 

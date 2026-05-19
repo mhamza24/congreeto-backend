@@ -25,6 +25,7 @@ class PlanLimits(BaseModel):
     max_pages_crawled:           int = 50
     max_listings:                int = 500
     max_storage_mb:              int = 1_000
+    max_tenants:                 int = 1  # how many tenants the owner can create
     # Addon-gated features (0 = not available on base plan)
     custom_banner:               int = 0  # ≥1 = banner/poster upload unlocked
     max_ribbon_messages:         int = 1  # base plan allows 1 ribbon message
@@ -277,3 +278,36 @@ class LimitCheckResponse(BaseModel):
     percentage: float
     status:     LimitStatus
     allowed:    bool   # False = hard block, True = proceed
+
+
+# =============================================================================
+# USER-LEVEL BILLING (paywall / plan selection before any tenant exists)
+# =============================================================================
+
+class UserSubscriptionResponse(BaseModel):
+    """Mirrors SubscriptionResponse but for user-level (pre-tenant) billing."""
+    public_id:            str
+    status:               SubscriptionStatus
+    currency:             str
+    plan:                 PlanResponse
+    current_period_start: Optional[datetime]
+    current_period_end:   Optional[datetime]
+    trial_ends_at:        Optional[datetime]
+    cancelled_at:         Optional[datetime]
+    cancel_at_period_end: bool
+    created_at:           datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserBillingResponse(BaseModel):
+    """
+    Returned by GET /billing/me.
+    Frontend uses this immediately after login to decide:
+      - subscription is None or not is_active → redirect to paywall
+      - is_active → proceed to dashboard / tenant creation
+    """
+    subscription:           Optional[UserSubscriptionResponse]
+    has_active_subscription: bool
+    max_tenants:            int   # from plan limits (0 if no subscription)
+    tenants_used:           int   # workspaces the user has already created
