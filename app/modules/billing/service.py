@@ -188,6 +188,28 @@ async def create_plan(
     return schemas.PlanResponse.from_plan(plan)
 
 
+async def sync_plan_to_stripe(
+    db: AsyncSession, *, plan_public_id: str
+) -> schemas.PlanResponse:
+    plan = await _get_plan_or_404(db, public_id=plan_public_id)
+    if not _stripe_ready():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stripe is not configured on this environment.",
+        )
+    if plan.price_usd_cents <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Plan has no USD price set — cannot create a Stripe product.",
+        )
+    _create_stripe_product_and_price(plan)
+    await db.commit()
+    await db.refresh(plan)
+    logger.info("[billing] plan synced to Stripe plan=%s price_id=%s/%s",
+                plan.slug, plan.stripe_monthly_price_id, plan.stripe_annual_price_id)
+    return schemas.PlanResponse.from_plan(plan)
+
+
 async def update_plan(
     db: AsyncSession, *, plan_public_id: str, payload: schemas.PlanUpdateRequest
 ) -> schemas.PlanResponse:

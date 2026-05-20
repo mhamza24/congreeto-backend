@@ -181,6 +181,32 @@ async def create_plan(
     return ApiResponse(success=True, message="Plan created.", data=result)
 
 
+@router.post(
+    "/admin/plans/{plan_public_id}/sync-stripe",
+    response_model=ApiResponse[schemas.PlanResponse],
+    summary="Push an existing plan to Stripe — creates Product + Price if missing (admin only)",
+)
+async def sync_plan_to_stripe(
+    plan_public_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.PlanResponse]:
+    """
+    Use this when a plan was created before Stripe was configured, or when
+    the auto-sync failed silently. Safe to call multiple times — if the plan
+    already has a Stripe price ID it will create a second price (new product).
+    Check the plan first and only call when stripe_monthly_price_id is null.
+    """
+    try:
+        result = await service.sync_plan_to_stripe(db, plan_public_id=plan_public_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error syncing plan to Stripe plan=%s", plan_public_id)
+        raise HTTPException(status_code=500, detail="Could not sync plan to Stripe.")
+    return ApiResponse(success=True, message="Plan synced to Stripe.", data=result)
+
+
 @router.patch(
     "/admin/plans/{plan_public_id}",
     response_model=ApiResponse[schemas.PlanResponse],
