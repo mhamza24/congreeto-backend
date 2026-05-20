@@ -155,9 +155,9 @@ class Settings(BaseSettings):
     STRIPE_API_VERSION:     str = "2024-06-20"
     # Where Stripe sends the user back after Checkout. Use {CHECKOUT_SESSION_ID}
     # placeholder so we can verify the session server-side on success.
-    STRIPE_CHECKOUT_SUCCESS_URL: str = "https://veloce-dashboard-client.vercel.app/billing/success?session_id={CHECKOUT_SESSION_ID}"
-    STRIPE_CHECKOUT_CANCEL_URL:  str = "https://veloce-dashboard-client.vercel.app/billing/cancelled"
-    STRIPE_PORTAL_RETURN_URL:    str = "https://veloce-dashboard-client.vercel.app/billing"
+    STRIPE_CHECKOUT_SUCCESS_URL: str = "http://localhost:3000/onboarding/billing-success?session_id={CHECKOUT_SESSION_ID}"
+    STRIPE_CHECKOUT_CANCEL_URL:  str = "http://localhost:3000/onboarding/select-plan"
+    STRIPE_PORTAL_RETURN_URL:    str = "http://localhost:3000/dashboard/settings"
     # Webhook event idempotency — how long to remember a processed event id.
     # Stripe replays events for up to ~3 days; 7d gives a safety margin.
     STRIPE_WEBHOOK_IDEMPOTENCY_TTL_SECONDS: int = 7 * 24 * 60 * 60

@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import stripe as stripe_sdk
+
 logger = logging.getLogger(__name__)
 
 from app.modules.audit import repository as audit
@@ -21,7 +23,7 @@ from app.modules.billing.task_helpers import (
     can_start_new_conversation,
     can_continue_conversation,
 )
-from app.core.enums import UsageMetric, LimitStatus, SubscriptionStatus
+from app.core.enums import UsageMetric, LimitStatus, SubscriptionStatus, BillingInterval
 from app.modules.tenants.models import Tenant
 from app.modules.tenants import repository as tenant_repo
 from app.modules.tenants.repository import count_active_members
@@ -40,6 +42,98 @@ METRIC_CONFIG: dict[UsageMetric, tuple[str, int]] = {
     UsageMetric.PAGES_CRAWLED:      ("max_pages_crawled",           settings.BILLING_DEFAULT_MAX_PAGES_CRAWLED),
     UsageMetric.ACTIVE_USERS:       ("max_users",                   settings.DEFAULT_SEAT_LIMIT),
 }
+
+
+# =============================================================================
+# STRIPE HELPERS  (admin plan sync only — checkout/webhooks live in stripe/)
+# =============================================================================
+
+def _stripe_ready() -> bool:
+    key = settings.STRIPE_SECRET_KEY
+    return bool(key) and key not in ("sk_test_REPLACE_ME", "sk_live_REPLACE_ME", "")
+
+
+def _stripe_setup() -> None:
+    stripe_sdk.api_key     = settings.STRIPE_SECRET_KEY
+    stripe_sdk.api_version = settings.STRIPE_API_VERSION
+
+
+def _stripe_interval(billing_interval: BillingInterval) -> str:
+    return "month" if billing_interval == BillingInterval.MONTHLY else "year"
+
+
+def _create_stripe_product_and_price(plan: Plan) -> None:
+    """
+    Create a Stripe Product + recurring Price for the plan.
+    Writes the returned price id back onto the plan object in-memory.
+    Caller is responsible for flush/commit.
+    No-ops when Stripe is not configured or the USD price is 0.
+    """
+    if not _stripe_ready() or plan.price_usd_cents <= 0:
+        return
+    _stripe_setup()
+    try:
+        product = stripe_sdk.Product.create(
+            name=plan.name,
+            description=plan.description or "",
+            metadata={"plan_slug": plan.slug, "plan_public_id": plan.public_id},
+        )
+        price = stripe_sdk.Price.create(
+            product=product.id,
+            unit_amount=plan.price_usd_cents,
+            currency="usd",
+            recurring={"interval": _stripe_interval(plan.billing_interval)},
+            metadata={"plan_slug": plan.slug, "plan_public_id": plan.public_id},
+        )
+        if plan.billing_interval == BillingInterval.MONTHLY:
+            plan.stripe_monthly_price_id = price.id
+        else:
+            plan.stripe_annual_price_id = price.id
+        logger.info(
+            "[billing] Stripe product+price created plan=%s product=%s price=%s",
+            plan.slug, product.id, price.id,
+        )
+    except stripe_sdk.error.StripeError as exc:
+        logger.warning("[billing] Stripe product/price creation failed plan=%s: %s", plan.slug, exc)
+
+
+def _update_stripe_price(plan: Plan) -> None:
+    """
+    When a plan's USD price changes, create a new Stripe Price on the same
+    Product and deactivate the old one (Stripe prices are immutable).
+    If no price id exists yet, falls back to creating a new Product + Price.
+    No-ops when Stripe is not configured or the new price is 0.
+    """
+    if not _stripe_ready() or plan.price_usd_cents <= 0:
+        return
+    _stripe_setup()
+    is_monthly  = plan.billing_interval == BillingInterval.MONTHLY
+    old_price_id = plan.stripe_monthly_price_id if is_monthly else plan.stripe_annual_price_id
+
+    try:
+        if old_price_id:
+            old_price  = stripe_sdk.Price.retrieve(old_price_id)
+            product_id = old_price.product
+            new_price  = stripe_sdk.Price.create(
+                product=product_id,
+                unit_amount=plan.price_usd_cents,
+                currency="usd",
+                recurring={"interval": _stripe_interval(plan.billing_interval)},
+                metadata={"plan_slug": plan.slug, "plan_public_id": plan.public_id},
+            )
+            stripe_sdk.Price.modify(old_price_id, active=False)
+            if is_monthly:
+                plan.stripe_monthly_price_id = new_price.id
+            else:
+                plan.stripe_annual_price_id = new_price.id
+            logger.info(
+                "[billing] Stripe price updated plan=%s old=%s new=%s",
+                plan.slug, old_price_id, new_price.id,
+            )
+        else:
+            _create_stripe_product_and_price(plan)
+    except stripe_sdk.error.StripeError as exc:
+        logger.warning("[billing] Stripe price update failed plan=%s: %s", plan.slug, exc)
 
 
 # =============================================================================
@@ -79,6 +173,7 @@ async def create_plan(
         sort_order       = payload.sort_order,
     )
     plan = await repo.create_plan(db, plan=plan)
+    _create_stripe_product_and_price(plan)
 
     await audit.write(
         db,
@@ -99,11 +194,17 @@ async def update_plan(
     plan = await _get_plan_or_404(db, public_id=plan_public_id)
     changed = payload.model_dump(exclude_unset=True)
     changed_fields = list(changed.keys())
+
+    old_price_usd_cents = plan.price_usd_cents
+
     for field, value in changed.items():
         if field == "limits" and value is not None:
             setattr(plan, field, value if isinstance(value, dict) else value.model_dump())
         else:
             setattr(plan, field, value)
+
+    if "price_usd_cents" in changed and plan.price_usd_cents != old_price_usd_cents:
+        _update_stripe_price(plan)
 
     await audit.write(
         db,
