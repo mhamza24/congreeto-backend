@@ -79,28 +79,65 @@ class CircuitBreaker:
         self._opened_at_key = f"{_k}:opened_at"
         self._half_ok_key   = f"{_k}:half_ok"
 
+    # ── Redis helpers (fail-open on any Redis error) ──────────────────────────
+    # Celery tasks run inside _run() which creates a fresh event loop per task.
+    # The module-level redis_client connection pool is bound to whichever loop
+    # first used it, so pool connections are invalid in subsequent loops.
+    # All Redis operations here catch ConnectionError/Exception and fail open
+    # (treat the breaker as CLOSED) so a Redis blip never kills a task.
+
+    async def _redis_get(self, key: str) -> str | None:
+        try:
+            return await redis_client.get(key)
+        except Exception as exc:
+            logger.debug("[circuit_breaker] redis GET %s unavailable: %s", key, exc)
+            return None
+
+    async def _redis_set(self, key: str, value: str) -> None:
+        try:
+            await redis_client.set(key, value)
+        except Exception as exc:
+            logger.debug("[circuit_breaker] redis SET %s unavailable: %s", key, exc)
+
+    async def _redis_incr(self, key: str) -> int:
+        try:
+            return await redis_client.incr(key)
+        except Exception as exc:
+            logger.debug("[circuit_breaker] redis INCR %s unavailable: %s", key, exc)
+            return 0
+
+    async def _redis_expire(self, key: str, seconds: int) -> None:
+        try:
+            await redis_client.expire(key, seconds)
+        except Exception:
+            pass
+
+    async def _redis_delete(self, *keys: str) -> None:
+        try:
+            await redis_client.delete(*keys)
+        except Exception:
+            pass
+
     # ── State accessors ───────────────────────────────────────────────────────
 
     async def _get_state(self) -> str:
-        state = await redis_client.get(self._state_key)
+        state = await self._redis_get(self._state_key)
         return state or self.CLOSED
 
     async def _open(self) -> None:
-        await redis_client.set(self._state_key, self.OPEN)
-        await redis_client.set(self._opened_at_key, str(time.monotonic()))
-        await redis_client.delete(self._half_ok_key)
+        await self._redis_set(self._state_key, self.OPEN)
+        await self._redis_set(self._opened_at_key, str(time.monotonic()))
+        await self._redis_delete(self._half_ok_key)
         logger.warning("[circuit_breaker] %s → OPEN", self._name)
 
     async def _close(self) -> None:
-        await redis_client.set(self._state_key, self.CLOSED)
-        await redis_client.delete(self._failures_key)
-        await redis_client.delete(self._opened_at_key)
-        await redis_client.delete(self._half_ok_key)
+        await self._redis_set(self._state_key, self.CLOSED)
+        await self._redis_delete(self._failures_key, self._opened_at_key, self._half_ok_key)
         logger.info("[circuit_breaker] %s → CLOSED", self._name)
 
     async def _half_open(self) -> None:
-        await redis_client.set(self._state_key, self.HALF_OPEN)
-        await redis_client.delete(self._half_ok_key)
+        await self._redis_set(self._state_key, self.HALF_OPEN)
+        await self._redis_delete(self._half_ok_key)
         logger.info("[circuit_breaker] %s → HALF_OPEN", self._name)
 
     # ── Success / failure accounting ──────────────────────────────────────────
@@ -108,20 +145,19 @@ class CircuitBreaker:
     async def _on_success(self) -> None:
         state = await self._get_state()
         if state == self.HALF_OPEN:
-            ok = await redis_client.incr(self._half_ok_key)
+            ok = await self._redis_incr(self._half_ok_key)
             if ok >= self._success_threshold:
                 await self._close()
         elif state == self.CLOSED:
-            await redis_client.delete(self._failures_key)
+            await self._redis_delete(self._failures_key)
 
     async def _on_failure(self) -> None:
         state = await self._get_state()
         if state == self.HALF_OPEN:
             await self._open()
             return
-        failures = await redis_client.incr(self._failures_key)
-        # Expire the counter so a quiet period resets it automatically
-        await redis_client.expire(self._failures_key, self._recovery_timeout * 2)
+        failures = await self._redis_incr(self._failures_key)
+        await self._redis_expire(self._failures_key, self._recovery_timeout * 2)
         if failures >= self._failure_threshold:
             await self._open()
         else:
@@ -139,11 +175,12 @@ class CircuitBreaker:
         `fn` must be a zero-argument async callable (lambda or local def).
         Raises CircuitOpenError when the circuit is OPEN.
         Re-raises any exception from `fn` after recording it as a failure.
+        If Redis is unavailable the breaker fails open (CLOSED assumed).
         """
         state = await self._get_state()
 
         if state == self.OPEN:
-            opened_at = await redis_client.get(self._opened_at_key)
+            opened_at = await self._redis_get(self._opened_at_key)
             if opened_at and (time.monotonic() - float(opened_at)) >= self._recovery_timeout:
                 await self._half_open()
                 state = self.HALF_OPEN
@@ -170,8 +207,8 @@ class CircuitBreaker:
     async def status(self) -> dict:
         """Return a snapshot of the current breaker state (for health checks)."""
         state    = await self._get_state()
-        failures = await redis_client.get(self._failures_key)
-        opened   = await redis_client.get(self._opened_at_key)
+        failures = await self._redis_get(self._failures_key)
+        opened   = await self._redis_get(self._opened_at_key)
         return {
             "name":      self._name,
             "state":     state,

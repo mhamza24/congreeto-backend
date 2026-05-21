@@ -235,8 +235,10 @@ async def _crawl_and_embed_async(
                 await db.commit()
         raise
 
-    # website_parser strips trailing slash before keying results — normalise here too.
-    pages_dict: dict = scraped.get(base_url.rstrip("/"), {})
+    # scrape_websites always returns one key per input URL, but its internal
+    # normalisation (rstrip "/", redirect following, etc.) may differ from
+    # base_url. Take the only value directly instead of guessing the key.
+    pages_dict: dict = next(iter(scraped.values()), {})
     pages_found = len(pages_dict)
 
     # ── Step 3: Record pages_found ────────────────────────────────────────
