@@ -55,6 +55,13 @@ async def get_effective_limit(
     if not sub:
         return default
 
+    if sub.plan is None:
+        if not sub.plan_id:
+            return default
+        sub.plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+        if sub.plan is None:
+            return default
+
     base_limit  = sub.plan.get_limit(metric_key, default)
     addon_grant = await repo.get_addon_grant_total(
         db, tenant_id=tenant_id, metric=metric_key
