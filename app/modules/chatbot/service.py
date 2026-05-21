@@ -25,6 +25,7 @@ from app.modules.campaigns import repository as campaign_repo
 from app.modules.chatbot import repository as repo
 from app.modules.chatbot import schemas
 from app.modules.chatbot import tasks as bg
+from app.modules.chatbot.models import PromptPersonality
 from app.utils.system_prompt_generator import build_static_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,13 @@ async def create_chatbot(
     # ── Generate static system prompt ─────────────────────────────────────────
     company_profile_dict = payload.company_profile.model_dump() if payload.company_profile else {}
     personality_content = personality.personality_content if personality else {}
-    static_prompt = build_static_system_prompt(personality_content, company_profile_dict)
+    personality_system_prompt = personality.system_prompt if personality else None
+    static_prompt = build_static_system_prompt(
+        personality_content,
+        company_profile_dict,
+        system_prompt=personality_system_prompt,
+        custom_instructions=payload.custom_instructions,
+    )
 
     iframe_token = uuid.uuid4().hex  # 32-char hex, no dashes — used as embed token
 
@@ -93,6 +100,7 @@ async def create_chatbot(
         prompt_personality_id=personality.id if personality else None,
         industry=payload.industry,
         listing_filter_config=payload.listing_filter_config,
+        custom_instructions=payload.custom_instructions or None,
         public_id=_new_public_id(),
     )
 
@@ -292,7 +300,15 @@ async def update_chatbot(
     if not chatbot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chatbot not found.")
 
-    updates = payload.model_dump(exclude_none=True, exclude={"company_profile", "prompt_personality_slug"})
+    updates = payload.model_dump(
+        exclude_none=True,
+        exclude={"company_profile", "prompt_personality_slug", "custom_instructions"},
+    )
+
+    # custom_instructions: None means "not provided" (don't touch); "" means "clear it"
+    custom_instructions_changed = "custom_instructions" in payload.model_fields_set
+    if custom_instructions_changed:
+        updates["custom_instructions"] = payload.custom_instructions or None
 
     # ── Gate: max_ribbon_messages — checked when branding carries ribbon_messages ─
     if payload.branding is not None and "ribbon_messages" in payload.branding:
@@ -329,9 +345,14 @@ async def update_chatbot(
         if personality:
             updates["prompt_personality_id"] = personality.id
 
-    # ── Regenerate static prompt if personality or company_profile changed ────
-    if payload.company_profile is not None or payload.prompt_personality_slug:
-        # Load personality content if not already loaded from slug switch
+    # ── Regenerate static prompt if anything that affects it changed ────────
+    needs_regen = (
+        payload.company_profile is not None
+        or payload.prompt_personality_slug
+        or custom_instructions_changed
+    )
+    if needs_regen:
+        # Load personality if not already loaded from slug switch
         if personality is None and chatbot.prompt_personality_id:
             personality = await repo.get_prompt_personality_by_id(
                 db, personality_id=chatbot.prompt_personality_id
@@ -343,8 +364,16 @@ async def update_chatbot(
 
         effective_profile = new_company_profile if new_company_profile is not None else chatbot.company_profile
         personality_content = personality.personality_content if personality else {}
+        personality_system_prompt = personality.system_prompt if personality else None
+        effective_custom = (
+            payload.custom_instructions if custom_instructions_changed
+            else chatbot.custom_instructions
+        )
         updates["system_prompt_template"] = build_static_system_prompt(
-            personality_content, effective_profile
+            personality_content,
+            effective_profile,
+            system_prompt=personality_system_prompt,
+            custom_instructions=effective_custom,
         )
 
     chatbot = await repo.update_chatbot(db, chatbot=chatbot, **updates)
@@ -412,6 +441,195 @@ async def activate_chatbot(
     await db.refresh(chatbot)
     logger.info("[chatbot] activated public_id=%s tenant=%s", chatbot.public_id, tenant_id)
     return schemas.ChatbotResponse.model_validate(chatbot)
+
+
+# =============================================================================
+# PROMPT PERSONALITIES — public
+# =============================================================================
+
+async def list_public_personalities(
+    db: AsyncSession,
+) -> list[schemas.PromptPersonalityResponse]:
+    personalities = await repo.list_prompt_personalities(db)
+    return [schemas.PromptPersonalityResponse.model_validate(p) for p in personalities]
+
+
+# =============================================================================
+# PROMPT PERSONALITIES — admin CRUD
+# =============================================================================
+
+async def admin_list_personalities(
+    db: AsyncSession,
+) -> list[schemas.PromptPersonalityAdminResponse]:
+    personalities = await repo.list_all_prompt_personalities(db)
+    return [schemas.PromptPersonalityAdminResponse.model_validate(p) for p in personalities]
+
+
+async def admin_get_personality(
+    db: AsyncSession, *, public_id: str
+) -> schemas.PromptPersonalityAdminResponse:
+    personality = await repo.get_prompt_personality_by_public_id(db, public_id=public_id)
+    if not personality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+    return schemas.PromptPersonalityAdminResponse.model_validate(personality)
+
+
+async def admin_create_personality(
+    db: AsyncSession, *, payload: schemas.PromptPersonalityCreateRequest
+) -> schemas.PromptPersonalityAdminResponse:
+    if await repo.slug_exists_personality(db, slug=payload.slug):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A personality with slug '{payload.slug}' already exists.",
+        )
+
+    personality = await repo.create_prompt_personality(
+        db,
+        personality=PromptPersonality(
+            public_id=_new_public_id(),
+            name=payload.name,
+            slug=payload.slug,
+            description=payload.description,
+            system_prompt=payload.system_prompt,
+            personality_content={},
+            image_url=payload.image_url,
+            is_active=payload.is_active,
+        ),
+    )
+
+    await db.commit()
+    await db.refresh(personality)
+    logger.info("[personality] created slug=%s public_id=%s", personality.slug, personality.public_id)
+    return schemas.PromptPersonalityAdminResponse.model_validate(personality)
+
+
+async def admin_update_personality(
+    db: AsyncSession, *, public_id: str, payload: schemas.PromptPersonalityUpdateRequest
+) -> schemas.PromptPersonalityAdminResponse:
+    personality = await repo.get_prompt_personality_by_public_id(db, public_id=public_id)
+    if not personality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+
+    updates = payload.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+
+    await repo.update_prompt_personality(db, personality=personality, **updates)
+    await db.commit()
+    await db.refresh(personality)
+    logger.info("[personality] updated public_id=%s fields=%s", public_id, list(updates.keys()))
+    return schemas.PromptPersonalityAdminResponse.model_validate(personality)
+
+
+async def admin_delete_personality(
+    db: AsyncSession, *, public_id: str
+) -> None:
+    personality = await repo.get_prompt_personality_by_public_id(db, public_id=public_id)
+    if not personality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+
+    await repo.delete_prompt_personality(db, personality=personality)
+    await db.commit()
+    logger.info("[personality] deleted public_id=%s slug=%s", public_id, personality.slug)
+
+
+async def admin_ai_enhance_personality(
+    db: AsyncSession,
+    *,
+    public_id: str,
+    payload: schemas.AiEnhanceRequest,
+) -> schemas.AiEnhanceResponse:
+    """
+    Use the existing OpenAI client to improve the personality's system_prompt.
+    Returns the enhanced text — the admin reviews it and decides whether to apply it
+    (via a separate PATCH call).
+    """
+    from app.config.open_ai import async_client, OPENAI_MODEL
+
+    personality = await repo.get_prompt_personality_by_public_id(db, public_id=public_id)
+    if not personality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+
+    original = personality.system_prompt or ""
+    if not original.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No system_prompt set. Write a draft first, then call /ai-enhance.",
+        )
+
+    goal_hint = f"\n\nSpecific goal: {payload.goal.strip()}" if payload.goal else ""
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert AI chatbot persona designer. "
+                "Your job is to rewrite system prompts so they produce chatbots that are "
+                "engaging, clear, well-structured, and effective. "
+                "Preserve the author's intended personality and purpose. "
+                "Improve clarity, add missing hard rules, fix ambiguity, and ensure "
+                "the persona has a consistent voice. "
+                "Return ONLY the improved system prompt — no commentary, no headers, "
+                "no markdown wrappers. Just the prompt text."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Please enhance this chatbot system prompt:{goal_hint}\n\n"
+                f"---\n{original}\n---"
+            ),
+        },
+    ]
+
+    try:
+        response = await async_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
+            max_tokens=2000,
+            temperature=0.7,
+        )
+        enhanced = response.choices[0].message.content.strip()
+    except Exception as exc:
+        logger.exception("[personality] ai-enhance failed public_id=%s", public_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI enhancement failed: {exc}",
+        )
+
+    logger.info("[personality] ai-enhance completed public_id=%s", public_id)
+    return schemas.AiEnhanceResponse(enhanced_prompt=enhanced, original_prompt=original)
+
+
+async def admin_upload_personality_image(
+    db: AsyncSession,
+    *,
+    public_id: str,
+    file_data: bytes,
+    file_name: str,
+    content_type: str,
+    base_url: str,
+) -> schemas.PromptPersonalityAdminResponse:
+    """
+    Store raw image bytes on the personality and set image_url to the serve endpoint.
+    """
+    personality = await repo.get_prompt_personality_by_public_id(db, public_id=public_id)
+    if not personality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+
+    serve_url = f"{base_url}/api/v1/chatbot/personalities/{public_id}/image"
+    await repo.update_prompt_personality(
+        db,
+        personality=personality,
+        image_data=file_data,
+        image_content_type=content_type,
+        image_url=serve_url,
+    )
+    await db.commit()
+    await db.refresh(personality)
+    logger.info("[personality] image uploaded public_id=%s content_type=%s bytes=%d",
+                public_id, content_type, len(file_data))
+    return schemas.PromptPersonalityAdminResponse.model_validate(personality)
 
 
 # =============================================================================

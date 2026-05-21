@@ -56,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import get_settings
 from app.core.database import get_db
 from app.core.response import ApiResponse
-from app.dependencies.auth import require_superadmin
+from app.dependencies.auth import get_current_user, require_superadmin
 from app.dependencies.tenant import TenantContext, get_tenant_context, require_write
 from app.modules.chatbot import schemas, service
 from app.modules.chatbot import repository as repo
@@ -80,6 +80,221 @@ CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 
 # Hard per-file cap regardless of plan
 _MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+
+# =============================================================================
+# PROMPT PERSONALITIES — public
+# =============================================================================
+
+
+@router.get(
+    "/personalities",
+    response_model=ApiResponse[List[schemas.PromptPersonalityResponse]],
+    summary="List available prompt personalities",
+)
+async def list_personalities(
+    db: DBDep,
+    current_user=Depends(get_current_user),
+) -> ApiResponse[List[schemas.PromptPersonalityResponse]]:
+    try:
+        data = await service.list_public_personalities(db)
+        return ApiResponse(success=True, message="OK", data=data)
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("list_personalities failed")
+        raise HTTPException(status_code=500, detail="Could not list personalities.")
+
+
+@router.get(
+    "/personalities/{personality_id}/image",
+    summary="Serve personality image (public)",
+    response_class=Response,
+)
+async def serve_personality_image(
+    personality_id: str,
+    db: DBDep,
+) -> Response:
+    """No auth required — serves the uploaded image bytes for a personality."""
+    try:
+        personality = await repo.get_prompt_personality_by_public_id(db, public_id=personality_id)
+        if not personality:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personality not found.")
+        if not personality.image_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No image uploaded for this personality.")
+        return Response(
+            content=bytes(personality.image_data),
+            media_type=personality.image_content_type or "image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Content-Disposition": f'inline; filename="{personality.slug}.png"',
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("serve_personality_image failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not serve personality image.")
+
+
+# =============================================================================
+# PROMPT PERSONALITIES — admin CRUD (super admin only)
+# =============================================================================
+
+
+@router.get(
+    "/admin/personalities",
+    response_model=ApiResponse[List[schemas.PromptPersonalityAdminResponse]],
+    summary="List all prompt personalities (admin only)",
+)
+async def admin_list_personalities(
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[List[schemas.PromptPersonalityAdminResponse]]:
+    data = await service.admin_list_personalities(db)
+    return ApiResponse(success=True, message="OK", data=data)
+
+
+@router.post(
+    "/admin/personalities",
+    response_model=ApiResponse[schemas.PromptPersonalityAdminResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new prompt personality (admin only)",
+)
+async def admin_create_personality(
+    payload: schemas.PromptPersonalityCreateRequest,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.PromptPersonalityAdminResponse]:
+    try:
+        data = await service.admin_create_personality(db, payload=payload)
+        return ApiResponse(success=True, message="Personality created.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_create_personality failed")
+        raise HTTPException(status_code=500, detail="Could not create personality.")
+
+
+@router.get(
+    "/admin/personalities/{personality_id}",
+    response_model=ApiResponse[schemas.PromptPersonalityAdminResponse],
+    summary="Get a single prompt personality (admin only)",
+)
+async def admin_get_personality(
+    personality_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.PromptPersonalityAdminResponse]:
+    try:
+        data = await service.admin_get_personality(db, public_id=personality_id)
+        return ApiResponse(success=True, message="OK", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_get_personality failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not retrieve personality.")
+
+
+@router.patch(
+    "/admin/personalities/{personality_id}",
+    response_model=ApiResponse[schemas.PromptPersonalityAdminResponse],
+    summary="Update a prompt personality (admin only)",
+)
+async def admin_update_personality(
+    personality_id: str,
+    payload: schemas.PromptPersonalityUpdateRequest,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.PromptPersonalityAdminResponse]:
+    try:
+        data = await service.admin_update_personality(db, public_id=personality_id, payload=payload)
+        return ApiResponse(success=True, message="Personality updated.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_update_personality failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not update personality.")
+
+
+@router.delete(
+    "/admin/personalities/{personality_id}",
+    response_model=ApiResponse[None],
+    summary="Delete a prompt personality (admin only)",
+)
+async def admin_delete_personality(
+    personality_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[None]:
+    try:
+        await service.admin_delete_personality(db, public_id=personality_id)
+        return ApiResponse(success=True, message="Personality deleted.", data=None)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_delete_personality failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not delete personality.")
+
+
+@router.post(
+    "/admin/personalities/{personality_id}/ai-enhance",
+    response_model=ApiResponse[schemas.AiEnhanceResponse],
+    summary="AI-enhance the system prompt of a personality (admin only) — preview only, does not save",
+)
+async def admin_ai_enhance_personality(
+    personality_id: str,
+    payload: schemas.AiEnhanceRequest,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.AiEnhanceResponse]:
+    """
+    Returns the enhanced prompt as a preview. Call PATCH to apply it.
+    """
+    try:
+        data = await service.admin_ai_enhance_personality(db, public_id=personality_id, payload=payload)
+        return ApiResponse(success=True, message="Enhanced prompt ready — call PATCH to apply.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_ai_enhance_personality failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not enhance personality prompt.")
+
+
+@router.post(
+    "/admin/personalities/{personality_id}/image",
+    response_model=ApiResponse[schemas.PromptPersonalityAdminResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Upload an image for a personality (admin only)",
+)
+async def admin_upload_personality_image(
+    personality_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+    file: UploadFile = File(..., description="Image file (PNG, JPEG, GIF, WebP, SVG)"),
+) -> ApiResponse[schemas.PromptPersonalityAdminResponse]:
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
+    try:
+        data = await service.admin_upload_personality_image(
+            db,
+            public_id=personality_id,
+            file_data=image_bytes,
+            content_type=file.content_type or "image/png",
+        )
+        return ApiResponse(success=True, message="Image uploaded.", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.exception("admin_upload_personality_image failed personality_id=%s", personality_id)
+        raise HTTPException(status_code=500, detail="Could not upload personality image.")
 
 
 # =============================================================================

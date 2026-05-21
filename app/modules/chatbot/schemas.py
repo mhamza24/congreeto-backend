@@ -49,15 +49,68 @@ class CompanyProfile(BaseModel):
 # =============================================================================
 
 class PromptPersonalityResponse(BaseModel):
+    """Public-facing personality overview — shown in chatbot creation UI."""
     public_id: str
     name: str
     slug: str
     description: Optional[str]
+    image_url: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PromptPersonalityAdminResponse(BaseModel):
+    """Full personality detail for super-admin — includes prompt content."""
+    public_id: str
+    name: str
+    slug: str
+    description: Optional[str]
+    image_url: Optional[str] = None
+    system_prompt: Optional[str] = None
+    personality_content: Dict[str, Any]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PromptPersonalityCreateRequest(BaseModel):
+    name: str = Field(max_length=100)
+    slug: str = Field(max_length=100, description="URL-safe unique key, e.g. 'aria-sales'.")
+    description: Optional[str] = None
+    system_prompt: str = Field(
+        description="Plain-text system prompt. Write naturally — use /ai-enhance to improve it."
+    )
+    image_url: Optional[str] = Field(default=None, max_length=2048)
+    is_active: bool = Field(default=True)
+
+
+class PromptPersonalityUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=100)
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    image_url: Optional[str] = Field(default=None, max_length=2048)
+    is_active: Optional[bool] = None
+
+
+class AiEnhanceRequest(BaseModel):
+    """Optional hint to guide the AI enhancement."""
+    goal: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional description of the desired outcome, e.g. "
+            "'make her more sales-driven and push towards closing'."
+        ),
+    )
+
+
+class AiEnhanceResponse(BaseModel):
+    enhanced_prompt: str
+    original_prompt: str
 
 
 # =============================================================================
@@ -79,6 +132,14 @@ class ChatbotCreateRequest(BaseModel):
     prompt_personality_slug: Optional[str] = Field(
         default="aria",
         description="Personality template slug (e.g. 'aria'). Defaults to 'aria'.",
+    )
+    custom_instructions: Optional[str] = Field(
+        default=None,
+        description=(
+            "Additional instructions appended after the base personality. "
+            "Use this to override tone, focus, or behaviour for this specific chatbot. "
+            "e.g. 'Be more sales-driven and always push towards booking a viewing.'"
+        ),
     )
     industry: str = Field(
         default="real_estate",
@@ -106,6 +167,14 @@ class ChatbotUpdateRequest(BaseModel):
     prompt_personality_slug: Optional[str] = Field(
         default=None,
         description="Switch personality. Triggers system prompt regeneration.",
+    )
+    custom_instructions: Optional[str] = Field(
+        default=None,
+        description=(
+            "Override instructions appended after the base personality. "
+            "Set to empty string '' to clear existing instructions. "
+            "Triggers system prompt regeneration."
+        ),
     )
     industry: Optional[str] = Field(
         default=None,
@@ -140,6 +209,7 @@ class ChatbotResponse(BaseModel):
     lead_capture_config: Dict[str, Any]
     company_profile: Dict[str, Any]
     prompt_personality_id: Optional[int]
+    custom_instructions: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

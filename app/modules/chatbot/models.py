@@ -111,9 +111,16 @@ class PromptPersonality(Base, PublicIdMixin, TimestampMixin):
     """
     Stores reusable chatbot personalities (ARIA, LEO, custom branded, etc.).
     Each ChatbotConfig points to one personality via prompt_personality_id.
-    The raw personality_content JSON is the canonical source of truth;
-    ChatbotConfig.system_prompt_template is the assembled output
-    (personality + company profile) regenerated on every chatbot update.
+
+    Two authoring modes:
+      - system_prompt (Text): plain-text prompt written/enhanced by an admin.
+        Takes precedence over personality_content when set.
+      - personality_content (JSONB): structured JSON used by the legacy
+        ARIA/LEO/ARIA_WEBSITE personas and the build_static_system_prompt renderer.
+
+    image_url: resolved URL for the personality avatar.
+    image_data / image_content_type: raw bytes for an uploaded image; the serve
+      endpoint writes back to image_url automatically on upload.
     """
     __tablename__ = "prompt_personalities"
 
@@ -127,6 +134,25 @@ class PromptPersonality(Base, PublicIdMixin, TimestampMixin):
     personality_content: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
         comment="Full personality JSON (tone, rules, formatting, QA pairs, etc.)"
+    )
+    system_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment=(
+            "Plain-text system prompt. When set, replaces personality_content "
+            "rendering. Used for admin-created personalities."
+        ),
+    )
+    image_url: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True,
+        comment="URL of the personality avatar/icon image.",
+    )
+    image_data: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True,
+        comment="Raw bytes of the uploaded personality image.",
+    )
+    image_content_type: Mapped[str | None] = mapped_column(
+        String(100), nullable=True,
+        comment="MIME type of the uploaded image, e.g. image/png.",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("TRUE")
@@ -208,6 +234,13 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
         comment="Slug matching industry_schemas.industry. Drives scraping, RAG, and insights."
     )
 
+    custom_instructions: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment=(
+            "Tenant-supplied override instructions appended after the base "
+            "personality in the system prompt."
+        ),
+    )
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     rag_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE"),

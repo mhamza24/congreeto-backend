@@ -54,6 +54,7 @@ async def create_chatbot(
     prompt_personality_id: Optional[int] = None,
     industry: str = "real_estate",
     listing_filter_config: dict | None = None,
+    custom_instructions: Optional[str] = None,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -71,6 +72,7 @@ async def create_chatbot(
         prompt_personality_id=prompt_personality_id,
         industry=industry,
         listing_filter_config=listing_filter_config or {},
+        custom_instructions=custom_instructions or None,
         public_id=public_id,
     )
     db.add(chatbot)
@@ -137,13 +139,66 @@ async def get_prompt_personality_by_id(
     return result.scalar_one_or_none()
 
 
+async def get_prompt_personality_by_public_id(
+    db: AsyncSession, *, public_id: str
+) -> Optional[PromptPersonality]:
+    result = await db.execute(
+        select(PromptPersonality).where(PromptPersonality.public_id == public_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_prompt_personalities(db: AsyncSession) -> Sequence[PromptPersonality]:
+    """Public list — active only, no image_data loaded."""
     result = await db.execute(
         select(PromptPersonality)
         .where(PromptPersonality.is_active == True)
         .order_by(PromptPersonality.name)
     )
     return result.scalars().all()
+
+
+async def list_all_prompt_personalities(db: AsyncSession) -> Sequence[PromptPersonality]:
+    """Admin list — all including inactive."""
+    result = await db.execute(
+        select(PromptPersonality).order_by(PromptPersonality.name)
+    )
+    return result.scalars().all()
+
+
+async def slug_exists_personality(
+    db: AsyncSession, *, slug: str, exclude_id: Optional[int] = None
+) -> bool:
+    q = select(PromptPersonality.id).where(PromptPersonality.slug == slug)
+    if exclude_id:
+        q = q.where(PromptPersonality.id != exclude_id)
+    result = await db.execute(q)
+    return result.scalar_one_or_none() is not None
+
+
+async def create_prompt_personality(
+    db: AsyncSession, *, personality: PromptPersonality
+) -> PromptPersonality:
+    db.add(personality)
+    await db.flush()
+    await db.refresh(personality)
+    return personality
+
+
+async def update_prompt_personality(
+    db: AsyncSession, *, personality: PromptPersonality, **kwargs
+) -> PromptPersonality:
+    for key, value in kwargs.items():
+        setattr(personality, key, value)
+    await db.flush()
+    return personality
+
+
+async def delete_prompt_personality(
+    db: AsyncSession, *, personality: PromptPersonality
+) -> None:
+    await db.delete(personality)
+    await db.flush()
 
 
 # =============================================================================

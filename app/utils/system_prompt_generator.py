@@ -32,25 +32,44 @@ logger = logging.getLogger(__name__)
 def build_static_system_prompt(
     personality_content: dict[str, Any],
     company_profile: dict[str, Any],
+    system_prompt: str | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Combine personality + company profile into the static system prompt string.
 
-    Returns a UTF-8 text blob suitable for storage in
-    ChatbotConfig.system_prompt_template.
+    Two personality authoring modes:
+      - system_prompt (str): plain-text prompt written by an admin. Used as-is.
+      - personality_content (dict): structured JSONB (ARIA/LEO style). Rendered
+        into prose by _render_personality.
+    system_prompt takes precedence when both are provided.
+
+    custom_instructions, if set, are appended at the end as an explicit
+    "CUSTOM INSTRUCTIONS" block so the tenant's overrides are always visible
+    to the LLM with clear priority.
+
+    Returns a UTF-8 text blob for ChatbotConfig.system_prompt_template.
     """
     parts: list[str] = []
 
-    # ── 1. Personality — rendered as structured text, NOT raw JSON ───────────
-    # Raw JSON dumps bury rules in nested keys the LLM has to mentally parse.
-    # Rendering as prose puts the most critical instructions front and centre.
-    if personality_content:
+    # ── 1. Personality base ──────────────────────────────────────────────────
+    if system_prompt:
+        parts.append(system_prompt.strip())
+    elif personality_content:
         parts.append(_render_personality(personality_content))
 
-    # ── 2. Company profile (tenant-specific context) ──────────────────────────
+    # ── 2. Company profile (tenant-specific context) ─────────────────────────
     profile_text = _render_company_profile(company_profile)
     if profile_text:
         parts.append("## COMPANY CONTEXT\n" + profile_text)
+
+    # ── 3. Tenant custom instructions override ───────────────────────────────
+    if custom_instructions and custom_instructions.strip():
+        parts.append(
+            "## CUSTOM INSTRUCTIONS\n"
+            "The following instructions take priority over any conflicting rules above:\n\n"
+            + custom_instructions.strip()
+        )
 
     return "\n\n".join(parts)
 
