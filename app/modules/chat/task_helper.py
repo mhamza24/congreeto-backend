@@ -2,7 +2,12 @@ from app.core.database import get_db, get_task_db_session
 import asyncio
 import json
 from datetime import datetime, timezone, timedelta
-from app.utils.system_prompt_chat_analysis import system_prompt_extract_chat_insights, system_prompt_veloce_website_insights, system_prompt_odysseynleo_website_insights
+from app.utils.system_prompt_chat_analysis import (
+    system_prompt_extract_chat_insights,
+    system_prompt_veloce_website_insights,
+    system_prompt_odysseynleo_website_insights,
+    system_prompt_generic_insights,
+)
 from app.config.settings import get_settings
 from app.modules.open_ai import service as ai_service
 from app.modules.chat import schemas as chat_schema
@@ -75,6 +80,24 @@ async def _get_tenant_notification_emails(db, tenant_slug: str) -> list[str]:
     return _VELOCE_FALLBACK
 
 
+async def _get_chatbot_industry(db, tenant_slug: str) -> str:
+    """Return the industry slug of the tenant's active chatbot. Defaults to 'generic'."""
+    result = await db.execute(
+        text("""
+            SELECT cc.industry
+            FROM chatbot_configs cc
+            JOIN tenants t ON t.id = cc.tenant_id
+            WHERE t.slug = :slug
+              AND cc.status = 'active'
+              AND t.deleted_at IS NULL
+            LIMIT 1
+        """),
+        {"slug": tenant_slug},
+    )
+    row = result.mappings().first()
+    return (row.get("industry") or "generic") if row else "generic"
+
+
 async def _get_company_profile(db, tenant_slug: str) -> dict:
     """
     Returns the company_profile JSONB from the tenant's active chatbot config.
@@ -121,15 +144,20 @@ async def run_analysis(conversation__id: int, tenant_id: str) -> dict:
             for msg in messages
         ]
         if tenant_id == "veloce_website":
-            raw_response = await ai_service.openai_call_conversation_analysis(
-                formatted_messages,
-                json.dumps(system_prompt_veloce_website_insights)
-            )
+            analysis_prompt = system_prompt_veloce_website_insights
+        elif tenant_id == "website_odysseynleo":
+            analysis_prompt = system_prompt_odysseynleo_website_insights
         else:
-            raw_response = await ai_service.openai_call_conversation_analysis(
-                formatted_messages,
-                json.dumps(system_prompt_odysseynleo_website_insights if tenant_id == "website_odysseynleo" else system_prompt_extract_chat_insights)
-            )
+            industry = await _get_chatbot_industry(db, tenant_id)
+            if industry == "real_estate":
+                analysis_prompt = system_prompt_extract_chat_insights
+            else:
+                analysis_prompt = system_prompt_generic_insights
+
+        raw_response = await ai_service.openai_call_conversation_analysis(
+            formatted_messages,
+            json.dumps(analysis_prompt),
+        )
 
         logger.debug("[chat] run_analysis LLM response received conversation_id=%s", conversation__id)
         try:

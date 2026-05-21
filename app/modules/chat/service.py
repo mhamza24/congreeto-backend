@@ -292,6 +292,7 @@ async def create_or_continue_chat(
         rag_chunks=rag_chunk_texts if rag_chunk_texts else None,
         time_prompt=time_aware_data,
         returning_visitor_prompt=returning_visitor_prompt_data,
+        industry=chatbot.industry or "generic",
     )
 
     prompt_parts = [static_base]

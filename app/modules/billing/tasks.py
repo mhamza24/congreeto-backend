@@ -100,7 +100,7 @@ def reconcile_usage_task() -> None:
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id,
+                tenant_id::bigint,
                 'conversations',
                 :period,
                 COUNT(*),
@@ -120,7 +120,7 @@ def reconcile_usage_task() -> None:
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id,
+                tenant_id::bigint,
                 'messages',
                 :period,
                 COUNT(*),
@@ -140,7 +140,7 @@ def reconcile_usage_task() -> None:
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id,
+                tenant_id::bigint,
                 'tokens_used',
                 :period,
                 COALESCE(SUM(tokens_used), 0),
@@ -161,7 +161,7 @@ def reconcile_usage_task() -> None:
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id,
+                tenant_id::bigint,
                 'active_users',
                 :period,
                 COUNT(*),
