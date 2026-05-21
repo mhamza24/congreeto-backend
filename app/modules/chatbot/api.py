@@ -274,6 +274,7 @@ async def admin_ai_enhance_personality(
 )
 async def admin_upload_personality_image(
     personality_id: str,
+    request: Request,
     db: DBDep,
     current_user=Depends(require_superadmin),
     file: UploadFile = File(..., description="Image file (PNG, JPEG, GIF, WebP, SVG)"),
@@ -286,7 +287,9 @@ async def admin_upload_personality_image(
             db,
             public_id=personality_id,
             file_data=image_bytes,
+            file_name=file.filename or f"{personality_id}.png",
             content_type=file.content_type or "image/png",
+            base_url=str(request.base_url).rstrip("/"),
         )
         return ApiResponse(success=True, message="Image uploaded.", data=data)
     except HTTPException:

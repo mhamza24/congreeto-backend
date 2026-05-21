@@ -593,8 +593,8 @@ async def admin_ai_enhance_personality(
     except Exception as exc:
         logger.exception("[personality] ai-enhance failed public_id=%s", public_id)
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI enhancement failed: {exc}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI enhancement is temporarily unavailable. Please try again later.",
         )
 
     logger.info("[personality] ai-enhance completed public_id=%s", public_id)
