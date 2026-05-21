@@ -235,7 +235,8 @@ async def _crawl_and_embed_async(
                 await db.commit()
         raise
 
-    pages_dict: dict = scraped.get(base_url, {})
+    # website_parser strips trailing slash before keying results — normalise here too.
+    pages_dict: dict = scraped.get(base_url.rstrip("/"), {})
     pages_found = len(pages_dict)
 
     # ── Step 3: Record pages_found ────────────────────────────────────────
