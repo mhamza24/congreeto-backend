@@ -1102,17 +1102,24 @@ async def list_listings(
     return result.scalars().all()
 
 
+_VISIBLE_LISTING_STATUSES = (ListingStatus.ACTIVE, ListingStatus.AVAILABLE)
+
+
 async def count_active_listings(
     db: AsyncSession,
     *,
     tenant_id: int,
     industry: Optional[str] = None,
 ) -> int:
-    """Total active, non-deleted listings for a tenant."""
+    """Total visible, non-deleted listings for a tenant.
+
+    Includes both 'active' (real estate / ecommerce) and 'available'
+    (restaurant / cafe) so cross-industry listings all count.
+    """
     q = select(func.count(Listing.id)).where(
         Listing.tenant_id == tenant_id,
         Listing.deleted_at.is_(None),
-        Listing.status == ListingStatus.ACTIVE,
+        Listing.status.in_([s.value for s in _VISIBLE_LISTING_STATUSES]),
     )
     if industry:
         q = q.where(Listing.industry == industry)
@@ -1139,7 +1146,7 @@ async def listing_similarity_search(
     _active_filters = [
         Listing.tenant_id == tenant_id,
         Listing.deleted_at.is_(None),
-        Listing.status == ListingStatus.ACTIVE,
+        Listing.status.in_([s.value for s in _VISIBLE_LISTING_STATUSES]),
     ]
     if industry:
         _active_filters.append(Listing.industry == industry)

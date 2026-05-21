@@ -311,7 +311,7 @@ extract all menu items.
 Return JSON: {"listings": [...]}. Each element:
 {
   "title": "item name",
-  "status": "available | unavailable | seasonal",
+  "status": "active | unavailable | seasonal",
   "description": "string or null",
   "price": float or null,
   "price_display": "e.g. $12.50 or null",
@@ -347,6 +347,53 @@ Return JSON: {"listings": [...]}. Each element:
     "condition": "new | used | refurbished or null",
     "stock_quantity": integer or null,
     "weight_kg": float or null
+  }
+}
+If NO products found, return {"listings": []}.
+PAGE TEXT:
+""",
+    "cafe": """\
+You are a data extraction assistant. Given text scraped from a cafe or coffee shop website, \
+extract all menu items (coffees, food, drinks, specials, etc.).
+
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "item name",
+  "status": "active | unavailable | seasonal",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "e.g. $5.50 or null",
+  "currency": "USD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {
+    "category": "e.g. Coffee, Tea, Food, Smoothie or null",
+    "dietary_tags": ["vegan", "gluten-free", "dairy-free"] or [],
+    "size_options": ["small", "medium", "large"] or [],
+    "hot_or_cold": "hot | cold | both or null"
+  }
+}
+If NO menu items found, return {"listings": []}.
+PAGE TEXT:
+""",
+    "retail": """\
+You are a data extraction assistant. Given text scraped from a retail store website, \
+extract all products.
+
+Return JSON: {"listings": [...]}. Each element:
+{
+  "title": "product name",
+  "status": "active | out_of_stock | discontinued",
+  "description": "string or null",
+  "price": float or null,
+  "price_display": "e.g. $29.99 or null",
+  "currency": "USD",
+  "street": null, "suburb": null, "state": null, "postcode": null,
+  "attributes": {
+    "brand": "string or null",
+    "category": "string or null",
+    "sizes_available": ["S", "M", "L"] or [],
+    "colors_available": ["red", "blue"] or [],
+    "in_stock": true | false
   }
 }
 If NO products found, return {"listings": []}.
