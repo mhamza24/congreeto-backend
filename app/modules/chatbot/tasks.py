@@ -307,14 +307,19 @@ async def _crawl_and_embed_async(
     else:
         pre_embedded = False
 
-    # ── Step 5: Dispatch one short-lived task per page ────────────────────
-    for page_url, page_text in pages_dict.items():
-        chunks_for_page = page_chunks.get(page_url, [])
-        embed_crawled_page.apply_async(
-            kwargs=dict(
+    # ── Step 5: Process all pages concurrently with a semaphore ──────────
+    # Running pages in-process (asyncio.gather) is faster than dispatching N
+    # Celery tasks that queue behind each other on a single worker.
+    # The semaphore caps concurrent DB sessions + LLM calls so we don't
+    # exhaust the connection pool.
+    _sem = asyncio.Semaphore(settings.CRAWL_PAGE_CONCURRENCY)
+
+    async def _process_page(page_url: str, page_text: str) -> None:
+        async with _sem:
+            await _embed_crawled_page_async(
                 page_url=page_url,
                 page_text=page_text,
-                pre_embedded_chunks=chunks_for_page if pre_embedded else [],
+                pre_embedded_chunks=page_chunks.get(page_url, []) if pre_embedded else [],
                 crawl_job_id=crawl_job_id,
                 tenant_id=tenant_id,
                 knowledge_source_id=knowledge_source_id,
@@ -323,14 +328,16 @@ async def _crawl_and_embed_async(
                 pages_found=pages_found,
                 industry=chatbot_industry,
                 custom_extraction_prompt=custom_extraction_prompt,
-            ),
-            queue=QUEUEEnum.ANALYSIS.value,
-            ignore_result=True,
-        )
+            )
+
+    await asyncio.gather(
+        *(_process_page(url, text) for url, text in pages_dict.items()),
+        return_exceptions=True,  # one page failing doesn't abort the others
+    )
 
     logger.info(
-        "CrawlJob %d: dispatched %d embed_crawled_page tasks (pre_embedded=%s).",
-        crawl_job_id, pages_found, pre_embedded,
+        "CrawlJob %d: processed %d pages in-process (pre_embedded=%s, concurrency=%d).",
+        crawl_job_id, pages_found, pre_embedded, settings.CRAWL_PAGE_CONCURRENCY,
     )
 
 
