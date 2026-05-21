@@ -109,6 +109,20 @@ async def count_owned_tenants(db: AsyncSession, *, user_id: int) -> int:
     return result.scalar_one() or 0
 
 
+async def list_tenants_by_owner(db: AsyncSession, *, user_id: int) -> List[Tenant]:
+    """Return all active tenants where this user is the primary owner."""
+    result = await db.execute(
+        select(Tenant)
+        .join(TenantUser, TenantUser.tenant_id == Tenant.id)
+        .where(
+            TenantUser.user_id          == user_id,
+            TenantUser.is_primary_owner == True,
+            Tenant.deleted_at.is_(None),
+        )
+    )
+    return list(result.scalars().all())
+
+
 # =============================================================================
 # TENANT USER READS
 # =============================================================================

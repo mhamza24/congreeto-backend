@@ -448,17 +448,23 @@ async def _on_checkout_completed(db: AsyncSession, *, session: dict) -> None:
 
 
 async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> None:
-    """User just paid from the paywall — create a UserSubscription."""
+    """
+    User just paid from the paywall — create a UserSubscription.
+    Also auto-activates TenantSubscription for any tenants the user already owns,
+    so the tenant billing overview reflects the payment immediately.
+    """
 
     metadata               = session.get("metadata") or {}
     user_public_id         = metadata.get("user_public_id") or session.get("client_reference_id")
     plan_public_id         = metadata.get("plan_public_id")
     stripe_subscription_id = session.get("subscription")
     stripe_customer_id     = session.get("customer")
+    currency               = (session.get("currency") or "USD").upper()
+    session_id             = session.get("id")
 
     if not user_public_id or not plan_public_id:
         logger.error(
-            "[stripe] user checkout.completed missing metadata session_id=%s", session.get("id")
+            "[stripe] user checkout.completed missing metadata session_id=%s", session_id
         )
         return
 
@@ -481,12 +487,12 @@ async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> Non
         user_id              = user.id,
         plan_id              = plan.id,
         status               = SubscriptionStatus.ACTIVE,
-        currency             = (session.get("currency") or "USD").upper(),
+        currency             = currency,
         current_period_start = None,
         current_period_end   = None,
         stripe_subscription_id = stripe_subscription_id,
         stripe_customer_id     = stripe_customer_id,
-        notes = f"Activated via Stripe Checkout session {session.get('id')}.",
+        notes = f"Activated via Stripe Checkout session {session_id}.",
     )
     db.add(sub)
 
@@ -502,10 +508,48 @@ async def _on_user_checkout_completed(db: AsyncSession, *, session: dict) -> Non
             "source":                 "stripe_user_checkout",
         }},
     )
+
+    # Auto-activate TenantSubscription for all tenants the user already owns.
+    # This covers the case where a tenant exists before (or at the same time as)
+    # the checkout completes. The tenant subscription mirrors the user-level plan
+    # and is managed independently of the Stripe subscription lifecycle.
+    owned_tenants = await tenant_repo.list_tenants_by_owner(db, user_id=user.id)
+    for tenant in owned_tenants:
+        existing_tenant_sub = await billing_repo.get_active_subscription(db, tenant_id=tenant.id)
+        if existing_tenant_sub:
+            continue  # Already has an active plan — don't override it
+
+        tenant_sub = await contracts.activate_subscription(
+            db,
+            tenant=tenant,
+            plan_id=plan.id,
+            currency=currency,
+            trial_days=0,
+            notes=f"Auto-activated via user Stripe checkout session {session_id}.",
+        )
+        tenant_sub.stripe_customer_id = stripe_customer_id
+
+        await audit.write_system(
+            db,
+            entity_type="subscriptions",
+            action=audit.ACTIVATE,
+            tenant_id=tenant.id,
+            entity_id=tenant_sub.id,
+            diff={"after": {
+                "plan_slug":          plan.slug,
+                "stripe_customer_id": stripe_customer_id,
+                "source":             "stripe_user_checkout_auto",
+            }},
+        )
+        logger.info(
+            "[stripe] auto-activated tenant subscription tenant=%s plan=%s user=%s",
+            tenant.public_id, plan.slug, user_public_id,
+        )
+
     await db.commit()
     logger.info(
-        "[stripe] user subscription activated user=%s plan=%s stripe_sub=%s",
-        user_public_id, plan.slug, stripe_subscription_id,
+        "[stripe] user subscription activated user=%s plan=%s stripe_sub=%s tenants_activated=%d",
+        user_public_id, plan.slug, stripe_subscription_id, len(owned_tenants),
     )
 
 
