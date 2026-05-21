@@ -484,6 +484,7 @@ async def extract_listings_from_page(
                 "Always return a JSON object with a 'listings' key containing an array."
             ),
             max_tokens=_EXTRACT_MAX_TOKENS,
+            max_retries=0,  # background task — fail fast, don't block other pages
         )
 
         listings = _try_parse_listings_json(raw)
@@ -716,6 +717,7 @@ async def parse_listings_from_table(
                     "Return only a valid JSON object with a 'listings' key containing the array."
                 ),
                 max_tokens=1500,
+                max_retries=0,  # background task — fail fast
             )
 
             parsed = _try_parse_listings_json(raw)
