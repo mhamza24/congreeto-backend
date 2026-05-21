@@ -689,6 +689,24 @@ async def get_tenant_billing_overview(
     tenant     = await _get_tenant_or_404(db, public_id=tenant_public_id)
     period     = current_period_month()
     sub        = await repo.get_active_subscription(db, tenant_id=tenant.id)
+
+    # selectinload may leave plan=None when plan_id was mutated in the same session
+    # before commit (e.g. change_plan path). Fall back to an explicit load.
+    if sub is not None and sub.plan is None:
+        if not sub.plan_id:
+            logger.warning("[billing] sub=%s has NULL plan_id — treating as unsubscribed", sub.public_id)
+            sub = None
+        else:
+            fallback_plan = await repo.get_plan_by_id(db, plan_id=sub.plan_id)
+            if fallback_plan is None:
+                logger.warning(
+                    "[billing] sub=%s references deleted plan_id=%s — treating as unsubscribed",
+                    sub.public_id, sub.plan_id,
+                )
+                sub = None
+            else:
+                sub.plan = fallback_plan
+
     addon_subs = await repo.list_tenant_addons(db, tenant_id=tenant.id)
     usage_recs = await repo.get_all_usage_for_period(
         db, tenant_id=tenant.id, period_month=period
