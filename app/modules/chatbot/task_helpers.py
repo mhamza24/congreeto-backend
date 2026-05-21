@@ -792,5 +792,18 @@ async def parse_listings_from_table(
             return batch
 
     batches = [(rows[i: i + batch_size], i) for i in range(0, len(rows), batch_size)]
-    batch_results = await asyncio.gather(*[_call_llm(b, start) for b, start in batches])
-    return [item for batch in batch_results for item in batch]
+    raw_results = await asyncio.gather(
+        *[_call_llm(b, start) for b, start in batches],
+        return_exceptions=True,
+    )
+    merged: list = []
+    for (batch, start), result in zip(batches, raw_results):
+        if isinstance(result, BaseException):
+            logger.error(
+                "parse_listings_from_table: batch at row %d raised unexpectedly: %s — falling back to raw rows",
+                start, result,
+            )
+            merged.extend(batch)
+        else:
+            merged.extend(result)
+    return merged

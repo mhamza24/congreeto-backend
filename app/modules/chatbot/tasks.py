@@ -1355,10 +1355,17 @@ async def _process_listing_file_async(*, job_id: int, tenant_id: int) -> None:
 
             # ── 4e: Queue ONE batch embed task per batch (ids are stable) ──
             batch_listing_ids = [lst.id for lst in upserted_listings]
-            embed_listings_batch.apply_async(
-                kwargs=dict(listing_ids=batch_listing_ids, tenant_id=tenant_id),
-                queue=QUEUEEnum.ANALYSIS.value,
-            )
+            try:
+                embed_listings_batch.apply_async(
+                    kwargs=dict(listing_ids=batch_listing_ids, tenant_id=tenant_id),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+            except Exception as dispatch_exc:
+                logger.warning(
+                    "ListingUploadJob %s: failed to dispatch embed_listings_batch — "
+                    "rows committed but embeddings deferred: %s",
+                    job_id, dispatch_exc,
+                )
 
             await repo.update_listing_upload_job(db, job=job, processed_rows=processed)
             await db.commit()
@@ -1434,20 +1441,27 @@ async def _retry_stuck_crawl_jobs_async() -> str:
             )
             await db.commit()
 
-            crawl_and_embed.apply_async(
-                kwargs=dict(
-                    crawl_job_id=job.id,
-                    tenant_id=job.tenant_id,
-                    knowledge_source_id=job.knowledge_source_id,
-                    chatbot_config_id=ks.chatbot_config_id,
-                    base_url=job.base_url,
-                ),
-                queue=QUEUEEnum.ANALYSIS.value,
-            )
-            requeued += 1
-            logger.info(
-                f"retry_stuck_crawl_jobs: re-queued CrawlJob {job.id} (url={job.base_url!r})"
-            )
+            try:
+                crawl_and_embed.apply_async(
+                    kwargs=dict(
+                        crawl_job_id=job.id,
+                        tenant_id=job.tenant_id,
+                        knowledge_source_id=job.knowledge_source_id,
+                        chatbot_config_id=ks.chatbot_config_id,
+                        base_url=job.base_url,
+                    ),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+                requeued += 1
+                logger.info(
+                    f"retry_stuck_crawl_jobs: re-queued CrawlJob {job.id} (url={job.base_url!r})"
+                )
+            except Exception as dispatch_exc:
+                logger.error(
+                    "retry_stuck_crawl_jobs: failed to dispatch CrawlJob %d — "
+                    "job reset to QUEUED but not enqueued: %s",
+                    job.id, dispatch_exc,
+                )
 
         return f"requeued {requeued} stuck crawl jobs"
 
@@ -1622,21 +1636,28 @@ async def _auto_recrawl_async() -> str:
             await db.flush()
             await db.commit()
 
-            crawl_and_embed.apply_async(
-                kwargs=dict(
-                    crawl_job_id=job.id,
-                    tenant_id=source.tenant_id,
-                    knowledge_source_id=source.id,
-                    chatbot_config_id=source.chatbot_config_id,
-                    base_url=base_url,
-                ),
-                queue=QUEUEEnum.ANALYSIS.value,
-            )
-            triggered += 1
-            logger.info(
-                "auto_recrawl: triggered crawl for KS %d (tenant=%d, url=%s, interval=%dd)",
-                source.id, source.tenant_id, base_url, interval_days,
-            )
+            try:
+                crawl_and_embed.apply_async(
+                    kwargs=dict(
+                        crawl_job_id=job.id,
+                        tenant_id=source.tenant_id,
+                        knowledge_source_id=source.id,
+                        chatbot_config_id=source.chatbot_config_id,
+                        base_url=base_url,
+                    ),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+                triggered += 1
+                logger.info(
+                    "auto_recrawl: triggered crawl for KS %d (tenant=%d, url=%s, interval=%dd)",
+                    source.id, source.tenant_id, base_url, interval_days,
+                )
+            except Exception as dispatch_exc:
+                logger.error(
+                    "auto_recrawl: failed to dispatch CrawlJob %d for KS %d — "
+                    "job row created but not enqueued: %s",
+                    job.id, source.id, dispatch_exc,
+                )
 
     return f"auto_recrawl: triggered={triggered} skipped={skipped}"
 
