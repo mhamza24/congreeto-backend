@@ -316,19 +316,36 @@ async def _crawl_and_embed_async(
 
     async def _process_page(page_url: str, page_text: str) -> None:
         async with _sem:
-            await _embed_crawled_page_async(
-                page_url=page_url,
-                page_text=page_text,
-                pre_embedded_chunks=page_chunks.get(page_url, []) if pre_embedded else [],
-                crawl_job_id=crawl_job_id,
-                tenant_id=tenant_id,
-                knowledge_source_id=knowledge_source_id,
-                chatbot_config_id=chatbot_config_id,
-                extract_listings=extract_listings,
-                pages_found=pages_found,
-                industry=chatbot_industry,
-                custom_extraction_prompt=custom_extraction_prompt,
-            )
+            try:
+                await _embed_crawled_page_async(
+                    page_url=page_url,
+                    page_text=page_text,
+                    pre_embedded_chunks=page_chunks.get(page_url, []) if pre_embedded else [],
+                    crawl_job_id=crawl_job_id,
+                    tenant_id=tenant_id,
+                    knowledge_source_id=knowledge_source_id,
+                    chatbot_config_id=chatbot_config_id,
+                    extract_listings=extract_listings,
+                    pages_found=pages_found,
+                    industry=chatbot_industry,
+                    custom_extraction_prompt=custom_extraction_prompt,
+                )
+            except Exception as exc:
+                # _embed_crawled_page_async raises without calling _on_page_done.
+                # We must count this page as failed so the job counter reaches
+                # pages_found and the job can finalize. Without this, failed pages
+                # leave the counter frozen and the job never completes.
+                logger.error("[crawl] page failed page=%s: %s — counting as failed", page_url, exc)
+                try:
+                    await _on_page_done(
+                        crawl_job_id=crawl_job_id,
+                        tenant_id=tenant_id,
+                        chatbot_config_id=chatbot_config_id,
+                        pages_found=pages_found,
+                        success=False,
+                    )
+                except Exception:
+                    logger.exception("[crawl] _on_page_done(failure) itself failed page=%s", page_url)
 
     await asyncio.gather(
         *(_process_page(url, text) for url, text in pages_dict.items()),
@@ -579,13 +596,22 @@ async def _embed_crawled_page_async(
                 doc_id, len(embedded_chunks), len(page_listing_ids), page_url,
             )
 
-        # Dispatch listing embed tasks after the commit is stable
+        # Dispatch listing embed tasks after the commit is stable.
+        # Non-fatal — listings are already in the DB; if dispatch fails the
+        # retry_failed_documents beat task will re-queue them later.
         for i in range(0, len(page_listing_ids), _EMBED_BATCH_SIZE):
             batch_ids = page_listing_ids[i: i + _EMBED_BATCH_SIZE]
-            embed_listings_batch.apply_async(
-                kwargs=dict(listing_ids=batch_ids, tenant_id=tenant_id),
-                queue=QUEUEEnum.ANALYSIS.value,
-            )
+            try:
+                embed_listings_batch.apply_async(
+                    kwargs=dict(listing_ids=batch_ids, tenant_id=tenant_id),
+                    queue=QUEUEEnum.ANALYSIS.value,
+                )
+            except Exception as dispatch_exc:
+                logger.warning(
+                    "embed_crawled_page: embed_listings_batch dispatch failed "
+                    "(listing_ids=%s): %s — listings in DB, embeddings deferred.",
+                    batch_ids, dispatch_exc,
+                )
 
     except Exception as exc:
         logger.error("embed_crawled_page: DB write failed for %s: %s", page_url, exc)
