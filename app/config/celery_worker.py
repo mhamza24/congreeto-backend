@@ -60,9 +60,18 @@ celery_app.conf.update(
         "socket_connect_timeout": settings.REDIS_SOCKET_CONNECT_TIMEOUT,
         "socket_timeout": settings.REDIS_SOCKET_TIMEOUT,
         "health_check_interval": settings.REDIS_HEALTH_CHECK_INTERVAL,
+        # Cap the broker connection pool so worker + beat + web stay under the
+        # Heroku Redis Mini plan limit of 20 connections total.
+        # Budget: web=4, worker=6, beat=1, result-backend=5 → 16 headroom
+        "max_connections": 6,
     },
     redis_socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
     redis_socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+    # Cap result-backend pool independently (separate pool from broker).
+    redis_max_connections=5,
+    # Each worker process holds at most 2 broker connections (one active,
+    # one pooled for rapid re-use).  Avoids a per-concurrency-slot connection.
+    broker_pool_limit=2,
     # ── Worker reliability ────────────────────────────────────────────────
     # Acknowledge only after the task finishes — safe to retry on worker crash.
     task_acks_late=True,
