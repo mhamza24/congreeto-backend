@@ -13,7 +13,7 @@ if settings.ENV in ["PRODUCTION", "STAGING"]:
         settings.REDIS_URL,
         decode_responses=True,
         ssl_cert_reqs=None,
-        max_connections=10,
+        max_connections=3,
         socket_keepalive=True,
         socket_connect_timeout=5,
         socket_timeout=5,
@@ -25,7 +25,7 @@ else:
     pool = ConnectionPool.from_url(
         settings.REDIS_URL,
         decode_responses=True,
-        max_connections=10,
+        max_connections=3,
         socket_keepalive=True,
         socket_connect_timeout=5,
         socket_timeout=5,
