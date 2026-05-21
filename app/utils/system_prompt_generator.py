@@ -23,7 +23,13 @@ import json
 import logging
 from typing import Any
 
+from app.utils.industry_config import get_industry_config
+
 logger = logging.getLogger(__name__)
+
+# Listing chunks are prefixed with this marker by _listing_to_context so we can
+# separate them from KB chunks without relying on industry-specific field names.
+LISTING_CHUNK_MARKER = "[LISTING]"
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -306,6 +312,7 @@ def build_dynamic_context(
     rag_chunks: list[str] | None = None,
     time_prompt: dict | None = None,
     returning_visitor_prompt: dict | None = None,
+    industry: str = "generic",
 ) -> str:
     """
     Build the dynamic suffix appended to the static system prompt at chat time.
@@ -314,10 +321,15 @@ def build_dynamic_context(
     ----------
     rag_chunks:
         List of raw chunk content strings from the hybrid RAG search.
+        Listing chunks must start with LISTING_CHUNK_MARKER so they can be
+        separated from KB chunks without relying on industry-specific field names.
     time_prompt:
         Dict from get_time_awareness_prompt().
     returning_visitor_prompt:
         Dict from get_returning_visitor_prompt().
+    industry:
+        Chatbot industry slug (e.g. "real_estate", "restaurant", "generic").
+        Controls section title and presentation rules for listing chunks.
 
     Returns
     -------
@@ -328,37 +340,26 @@ def build_dynamic_context(
 
     # ── RAG knowledge context ────────────────────────────────────────────────
     if rag_chunks:
-        # Separate listing chunks (marked with source_type=listing) from KB chunks.
-        # Listing chunks start with "**" (the title bold marker from _listing_to_context)
-        # or contain "Type: sale/rent" — we use a simple heuristic: any chunk that
-        # contains "Status: active" or "Type: sale" or "Type: rent" is a listing.
-        listing_chunks = [
-            c for c in rag_chunks
-            if "Status: active" in c or "Type: sale" in c or "Type: rent" in c
-        ]
-        kb_chunks = [c for c in rag_chunks if c not in listing_chunks]
+        # Listing chunks are prefixed with LISTING_CHUNK_MARKER by _listing_to_context.
+        # Everything else is a KB chunk.
+        listing_chunks = [c for c in rag_chunks if c.startswith(LISTING_CHUNK_MARKER)]
+        kb_chunks = [c for c in rag_chunks if not c.startswith(LISTING_CHUNK_MARKER)]
 
         if listing_chunks:
-            listing_block = "\n\n---\n\n".join(listing_chunks)
+            cfg = get_industry_config(industry)
+            # Strip the marker prefix before presenting to the LLM
+            clean_listing_chunks = [
+                c[len(LISTING_CHUNK_MARKER):].lstrip("\n") for c in listing_chunks
+            ]
+            listing_block = "\n\n---\n\n".join(clean_listing_chunks)
+            rules_text = "\n".join(
+                f"{i + 1}. {r}" for i, r in enumerate(cfg.presentation_rules)
+            )
             parts.append(
-                "## AVAILABLE PROPERTY LISTINGS\n"
-                "The following are REAL, CURRENT listings from the database. "
-                "Only reference details that appear here. Do not invent or hallucinate listings.\n\n"
-                "LISTING PRESENTATION RULES:\n"
-                "1. Never say 'no results found' or 'I don't have any listings'. "
-                "If an exact match is not available, present the closest 2-3 options and briefly explain "
-                "why they are worth considering (value, location, features).\n"
-                "2. When a visitor mentions a budget or bedroom count, if no exact match exists, "
-                "suggest the nearest options — typically within 10-20% of their stated budget or "
-                "one bedroom above/below — and frame it naturally, not as a push: "
-                "'The closest we have at the moment is...' not 'You should upgrade your budget'.\n"
-                "3. Always highlight what makes a listing valuable: price per feature, location lifestyle, "
-                "standout features (pool, garage, land size). Give the visitor a reason to be interested.\n"
-                "4. Present the top 2-3 most relevant options when possible — give the visitor choice.\n"
-                "5. When a visitor shows genuine interest in a listing, move the conversation toward "
-                "next steps naturally: offer more details or let them know the team can arrange a "
-                "walkthrough. Do not push — just open the door.\n"
-                "6. Stay in the ARIA tone — warm, Aussie, unhurried. This is guidance, not a hard sell.\n\n"
+                f"## {cfg.rag_section_title}\n"
+                f"The following are REAL, CURRENT {cfg.item_label}s from the database. "
+                "Only reference details that appear here. Do not invent or hallucinate.\n\n"
+                f"PRESENTATION RULES:\n{rules_text}\n\n"
                 + listing_block
             )
 

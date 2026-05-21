@@ -201,6 +201,8 @@ async def openai_call_json(
     messages: list,
     system_instructions: str,
     max_tokens: int = 1500,
+    max_retries: int | None = None,
+    timeout: float | None = None,
 ) -> str:
     """
     Call the LLM with strict JSON output enforced via response_format.
@@ -211,15 +213,28 @@ async def openai_call_json(
     NOTE: The system_instructions or message content MUST contain the word
     'JSON' (OpenAI requirement for json_object mode).
 
+    max_retries / timeout: pass explicit values to override the client defaults
+    for this call only (e.g. max_retries=0 for background tasks that must fail
+    fast rather than spending 3×30 s retrying a timed-out extraction).
+
     Returns the raw JSON string. Raises on API error so callers can handle
     the fallback themselves.
     """
     params = {**OPENAI_CALL_PARAMS, "max_tokens": max_tokens}
     full_messages = [{"role": "system", "content": system_instructions}, *messages]
 
+    client = async_client
+    if max_retries is not None or timeout is not None:
+        opts: dict = {}
+        if max_retries is not None:
+            opts["max_retries"] = max_retries
+        if timeout is not None:
+            opts["timeout"] = timeout
+        client = async_client.with_options(**opts)
+
     try:
         response = await _openai_cb.call(
-            lambda: async_client.chat.completions.create(
+            lambda: client.chat.completions.create(
                 messages=full_messages,
                 response_format={"type": "json_object"},
                 **params,

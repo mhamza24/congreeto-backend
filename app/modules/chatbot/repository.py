@@ -560,13 +560,19 @@ async def get_stuck_crawl_jobs(
     db: AsyncSession,
     *,
     queued_older_than_minutes: int = 5,
-    running_older_than_minutes: int = 30,
+    running_older_than_minutes: int = 60,
 ) -> Sequence[CrawlJob]:
     """
-    Returns crawl jobs that are stuck and need to be re-queued:
+    Returns crawl jobs that are genuinely stuck and need to be re-queued:
       - status=queued  and created_at older than queued_older_than_minutes
       - status=running and started_at older than running_older_than_minutes
-    Eagerly loads knowledge_source so the caller can read chatbot_config_id.
+        AND pages_processed == 0 AND pages_failed == 0
+
+    The progress guard is critical: a RUNNING job that has already processed
+    at least one page is actively working (just slow on a large site) and must
+    NOT be re-dispatched. Re-dispatching an in-progress job causes two workers
+    to race on the same page counter, producing duplicate chunks and an
+    infinite re-dispatch loop on the next cron tick.
     """
     from sqlalchemy.orm import joinedload
     from datetime import datetime, timezone
@@ -576,17 +582,14 @@ async def get_stuck_crawl_jobs(
         select(CrawlJob)
         .options(joinedload(CrawlJob.knowledge_source))
         .where(
-            and_(
-                CrawlJob.status.in_([CrawlStatus.QUEUED, CrawlStatus.RUNNING]),
-            )
-        )
-        .where(
             (
                 (CrawlJob.status == CrawlStatus.QUEUED) &
                 (CrawlJob.created_at < now - timedelta(minutes=queued_older_than_minutes))
             ) | (
                 (CrawlJob.status == CrawlStatus.RUNNING) &
-                (CrawlJob.started_at < now - timedelta(minutes=running_older_than_minutes))
+                (CrawlJob.started_at < now - timedelta(minutes=running_older_than_minutes)) &
+                (CrawlJob.pages_processed == 0) &
+                (CrawlJob.pages_failed == 0)
             )
         )
     )

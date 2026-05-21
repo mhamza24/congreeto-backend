@@ -212,6 +212,9 @@ class Settings(BaseSettings):
     LLM_FILE_PARSE_BATCH_SIZE: int = 20
     # Listings per embed_listings_batch Celery task dispatch.
     CRAWL_LISTING_EMBED_BATCH_SIZE: int = 100
+    # Max pages processed concurrently inside the crawl_and_embed orchestrator.
+    # Each slot holds one DB session + one optional LLM call.
+    CRAWL_PAGE_CONCURRENCY: int = 5
     # Documents that have been FAILED/PROCESSING for this many minutes
     # will be picked up by the retry_failed_documents beat task.
     STALE_DOCUMENT_THRESHOLD_MINUTES: int = 10

@@ -1131,8 +1131,13 @@ async def rag_search(
 
 
 def _listing_to_context(listing) -> str:
-    """Render a listing row as a context string for the LLM prompt."""
-    parts = []
+    """Render a listing row as a context string for the LLM prompt.
+
+    Prefixed with LISTING_CHUNK_MARKER so build_dynamic_context can separate
+    listing chunks from KB chunks without relying on industry-specific field names.
+    """
+    from app.utils.system_prompt_generator import LISTING_CHUNK_MARKER
+    parts = [LISTING_CHUNK_MARKER]
     if listing.title:
         parts.append(f"**{listing.title}**")
     if listing.industry:
