@@ -166,6 +166,15 @@ class ChatbotCreateRequest(BaseModel):
         default_factory=dict,
         description="Industry-specific listing filter overrides (e.g. {'listing_type': 'rent'} for RE).",
     )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "OpenAI chat model override. Leave NULL to use the platform default "
+            "(gpt-4o-mini). Premium values (gpt-4.1) require an active EXTRA_PREMIUM_MODEL "
+            "add-on on the tenant's subscription; otherwise the API returns 402."
+        ),
+    )
 
 
 class ChatbotUpdateRequest(BaseModel):
@@ -200,6 +209,14 @@ class ChatbotUpdateRequest(BaseModel):
         default=None,
         description="Update industry-specific listing filter overrides.",
     )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Switch chat model. Premium values (gpt-4.1) require an active "
+            "EXTRA_PREMIUM_MODEL add-on on the tenant's subscription."
+        ),
+    )
 
 
 class ChatbotActivateRequest(BaseModel):
@@ -225,6 +242,7 @@ class ChatbotResponse(BaseModel):
     company_profile: Dict[str, Any]
     prompt_personality_id: Optional[int]
     custom_instructions: Optional[str] = None
+    model: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

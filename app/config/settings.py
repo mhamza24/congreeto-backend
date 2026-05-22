@@ -52,7 +52,8 @@ class Settings(BaseSettings):
     CELERY_DEFAULT_RETRY_DELAY: int = 5
 
     OPEN_AI_KEY: str
-    OPEN_AI_MODEL: str = "gpt-4.1"
+    OPEN_AI_MODEL: str = "gpt-4o-mini"
+    OPEN_AI_MODEL_PREMIUM: str = "gpt-4.1"
     OPEN_AI_MAX_TOKENS: int = 800
     OPEN_AI_MAX_RETRIES: int = 3
     OPEN_AI_TIMEOUT: float = 30.0
@@ -179,7 +180,8 @@ class Settings(BaseSettings):
 
     # ── Chat conversation ─────────────────────────────────────────────────────
     # Max messages loaded from history for each LLM context window.
-    CHAT_HISTORY_LIMIT: int = 50
+    # 12 keeps recent context without bloating prompts (~50% prompt-token savings vs 50).
+    CHAT_HISTORY_LIMIT: int = 12
 
     # ── Billing defaults ──────────────────────────────────────────────────────
     # Fallback limits used when no plan-level override exists.
@@ -187,12 +189,12 @@ class Settings(BaseSettings):
     BILLING_DEFAULT_MAX_CONVERSATIONS_PER_MONTH: int = 750
 
     # ── RAG retrieval ─────────────────────────────────────────────────────────
-    # KB chunks injected per LLM call. 8 × 300-word chunks ≈ 1 800 tokens of
-    # context — precise enough for real estate Q&A without bloating the prompt.
-    RAG_TOP_K: int = 8
-    # Listing slots injected alongside KB chunks. 5 is enough to show variety
+    # KB chunks injected per LLM call. 5 × 300-word chunks ≈ 1 100 tokens of
+    # context — precise enough for Q&A without bloating the prompt.
+    RAG_TOP_K: int = 5
+    # Listing slots injected alongside KB chunks. 3 is enough to show variety
     # without overwhelming the visitor or the LLM context window.
-    RAG_LISTING_TOP_K: int = 5
+    RAG_LISTING_TOP_K: int = 3
 
     # ── Knowledge ingestion pipeline ─────────────────────────────────────────
     # Word-based chunking for crawled pages and uploaded documents.
@@ -209,7 +211,10 @@ class Settings(BaseSettings):
     # Max output tokens for listing extraction LLM calls.
     LLM_EXTRACT_MAX_TOKENS: int = 1500
     # Rows sent to the LLM per batch when parsing Excel/CSV listing files.
-    LLM_FILE_PARSE_BATCH_SIZE: int = 20
+    # 50 rows per call cuts bulk-import LLM cost ~5× vs 20.
+    LLM_FILE_PARSE_BATCH_SIZE: int = 50
+    # Max output tokens for file row parsing — must accommodate 50-row JSON arrays.
+    LLM_FILE_PARSE_MAX_TOKENS: int = 4000
     # Listings per embed_listings_batch Celery task dispatch.
     CRAWL_LISTING_EMBED_BATCH_SIZE: int = 100
     # Max pages processed concurrently inside the crawl_and_embed orchestrator.

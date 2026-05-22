@@ -241,6 +241,14 @@ class ChatbotConfig(Base, PublicIdMixin, TimestampMixin):
             "personality in the system prompt."
         ),
     )
+    model: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None,
+        comment=(
+            "OpenAI chat model override for this chatbot. NULL = use platform default "
+            "(settings.OPEN_AI_MODEL). Set to a premium model only if the tenant has "
+            "the Premium AI add-on or is on a plan that includes it."
+        ),
+    )
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     rag_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE"),

@@ -295,12 +295,17 @@ async def create_or_continue_chat(
         industry=chatbot.industry or "generic",
     )
 
-    prompt_parts = [static_base]
+    # Build three SEPARATE system messages so OpenAI auto-caches the stable prefix.
+    # Order = most-stable first; the dynamic block (RAG + time + visitor) is last.
+    # The first block (static_base) is identical across every message for a given
+    # chatbot — that is what gets cached. Caching requires ≥1024 token prefix.
+    system_messages: list[dict] = []
+    if static_base:
+        system_messages.append({"role": "system", "content": static_base})
     if campaign_overlay_block:
-        prompt_parts.append(campaign_overlay_block)
+        system_messages.append({"role": "system", "content": campaign_overlay_block})
     if dynamic_suffix:
-        prompt_parts.append(dynamic_suffix)
-    system_prompt = "\n\n".join(p for p in prompt_parts if p)
+        system_messages.append({"role": "system", "content": dynamic_suffix})
 
     # ── 9. Build LLM message context ────────────────────────────────────────
     # Campaign welcome_message rules:
@@ -363,11 +368,13 @@ async def create_or_continue_chat(
     llm_messages.append({"role": "user", "content": payload.message})
 
     # ── 10. Call LLM (with token usage tracking) ────────────────────────────
+    effective_model = chatbot.model or openai_service.OPENAI_CALL_PARAMS.get("model")
     try:
         t0 = datetime.now()
         assistant_content, tokens_used = await openai_service.openai_call_with_usage(
             llm_messages,
-            system_prompt,
+            system_messages,
+            model=effective_model,
         )
         response_ms = int((datetime.now() - t0).total_seconds() * 1000)
     except Exception as exc:
@@ -399,7 +406,7 @@ async def create_or_continue_chat(
             role=MessageRole.assistant,
             content=assistant_content,
             tokens_used=tokens_used,
-            model_used=openai_service.OPENAI_CALL_PARAMS.get("model"),
+            model_used=effective_model,
             response_ms=response_ms,
         ),
     ])

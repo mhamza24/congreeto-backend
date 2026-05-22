@@ -21,7 +21,7 @@ from app.core.enums import BillingInterval, AddonType
 
 
 # =============================================================================
-# DEFAULT LIMITS — unchanged across all plans
+# DEFAULT LIMITS — applied to lower tiers (Project Developments, Single Office)
 # =============================================================================
 DEFAULT_LIMITS = {
     "max_users": 3,
@@ -33,6 +33,14 @@ DEFAULT_LIMITS = {
     "max_pages_crawled": 50,
     "max_listings": 500,
     "max_storage_mb": 1_000,
+}
+
+# Premium-tier limits: same as default, plus Premium AI chat model entitlement.
+# Tenants on these plans can set their chatbot model to gpt-4.1 without
+# purchasing the EXTRA_PREMIUM_MODEL add-on separately.
+PREMIUM_LIMITS = {
+    **DEFAULT_LIMITS,
+    "includes_premium_model": 1,
 }
 
 # =============================================================================
@@ -117,7 +125,7 @@ PLANS = [
         "price_usd_cents": 60_000,   # USD 600/month
         "is_public": True,
         "sort_order": 5,
-        "limits": DEFAULT_LIMITS,
+        "limits": PREMIUM_LIMITS,
     },
     # ── Regional Property Businesses — Annual ─────────────────────────────────
     {
@@ -132,7 +140,7 @@ PLANS = [
         "price_usd_cents": 600_000,  # USD 500/month × 12 = 6,000/year
         "is_public": True,
         "sort_order": 6,
-        "limits": DEFAULT_LIMITS,
+        "limits": PREMIUM_LIMITS,
     },
     # ── Major Builders and Developers — Monthly ───────────────────────────────
     {
@@ -148,7 +156,7 @@ PLANS = [
         "price_usd_cents": 80_000,   # USD 800/month
         "is_public": True,
         "sort_order": 7,
-        "limits": DEFAULT_LIMITS,
+        "limits": PREMIUM_LIMITS,
     },
     # ── Major Builders and Developers — Annual ────────────────────────────────
     {
@@ -163,7 +171,7 @@ PLANS = [
         "price_usd_cents": 800_000,    # USD 667/month × 12 = 8,000/year
         "is_public": True,
         "sort_order": 8,
-        "limits": DEFAULT_LIMITS,
+        "limits": PREMIUM_LIMITS,
     },
     # ── Enterprise — Custom ───────────────────────────────────────────────────
     {
@@ -181,7 +189,7 @@ PLANS = [
         "price_usd_cents": 0,
         "is_public": False,     # Hidden from public plan list; assigned by admins
         "sort_order": 9,
-        "limits": DEFAULT_LIMITS,
+        "limits": PREMIUM_LIMITS,
     },
 ]
 
@@ -273,19 +281,43 @@ ADDONS = [
         "price_usd_cents": 1_000,
         "config": {"grants_per_unit": {"max_pages_crawled": 50}},
     },
+    {
+        "name": "Premium AI",
+        "slug": "premium-ai",
+        "description": (
+            "Upgrade your chatbot's chat model from the standard tier to gpt-4.1 "
+            "for more nuanced conversation quality. Applies to any chatbot you "
+            "set to a premium model in the chatbot settings."
+        ),
+        "type": AddonType.EXTRA_PREMIUM_MODEL,
+        "price_aud_cents": 2_200,   # ~AUD 22 / month
+        "price_usd_cents": 1_500,   # ~USD 15 / month
+        "config": {"grants_per_unit": {"premium_model": 1}},
+    },
 ]
 
 
 # =============================================================================
-# SEED FUNCTION — upsert (create or update)
+# SEED FUNCTION — upsert (create or update) + Stripe push
 # =============================================================================
 async def seed_v2(db: AsyncSession) -> None:
     """
     Idempotent upsert:
-      - If a plan/addon slug already exists → update name, description, prices.
+      - If a plan/addon slug already exists → update name, description, prices,
+        limits (plans), config (addons).
       - If it does not exist → insert it.
-    Safe to run multiple times.
+      - After commit, push any plan/addon missing a Stripe price ID to Stripe.
+
+    Safe to run multiple times. Re-running won't duplicate Stripe products
+    because we only call Stripe when stripe_*_price_id is null.
     """
+    # Local imports to avoid heavy service-layer imports at module load time.
+    from app.modules.billing.service import (
+        _create_stripe_product_and_price,
+        _create_stripe_product_and_price_for_addon,
+        _stripe_ready,
+    )
+
     print("── Seeding plans (v2) ───────────────────────────")
     for data in PLANS:
         result = await db.execute(select(Plan).where(Plan.slug == data["slug"]))
@@ -297,6 +329,8 @@ async def seed_v2(db: AsyncSession) -> None:
             plan.price_usd_cents  = data["price_usd_cents"]
             plan.is_public        = data.get("is_public", True)
             plan.sort_order       = data.get("sort_order", 0)
+            # Refresh limits so new keys (e.g. includes_premium_model) propagate.
+            plan.limits           = data.get("limits", {})
             print(f"  ~ update '{data['slug']}'")
         else:
             db.add(Plan(**data))
@@ -311,10 +345,42 @@ async def seed_v2(db: AsyncSession) -> None:
             addon.description     = data.get("description")
             addon.price_aud_cents = data["price_aud_cents"]
             addon.price_usd_cents = data["price_usd_cents"]
+            # Refresh config so grants_per_unit changes propagate.
+            addon.config          = data.get("config", {})
             print(f"  ~ update '{data['slug']}'")
         else:
             db.add(Addon(**data))
             print(f"  + add    '{data['slug']}'")
 
     await db.commit()
+
+    # ── Stripe sync ──────────────────────────────────────────────────────────
+    # Push every plan / addon that still has no Stripe price ID. Skips items
+    # already synced (so this is safe to re-run) and zero-price items (e.g.
+    # Enterprise custom plan).
+    if _stripe_ready():
+        print("── Pushing missing plans/addons to Stripe ───────")
+        all_plans = (await db.execute(select(Plan))).scalars().all()
+        for plan in all_plans:
+            already_synced = (
+                plan.stripe_monthly_price_id is not None
+                or plan.stripe_annual_price_id is not None
+            )
+            if already_synced or plan.price_usd_cents <= 0:
+                continue
+            print(f"  → stripe push plan '{plan.slug}'")
+            _create_stripe_product_and_price(plan)
+
+        all_addons = (await db.execute(select(Addon))).scalars().all()
+        for addon in all_addons:
+            if addon.stripe_price_id is not None or addon.price_usd_cents <= 0:
+                continue
+            print(f"  → stripe push addon '{addon.slug}'")
+            _create_stripe_product_and_price_for_addon(addon)
+
+        await db.commit()
+        print("── Stripe push complete ─────────────────────────")
+    else:
+        print("── Stripe not configured — skipping Stripe push ──")
+
     print("── Seeding v2 complete ──────────────────────────")

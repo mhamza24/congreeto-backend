@@ -239,7 +239,7 @@ async def update_plan(
     "/admin/addons",
     response_model=ApiResponse[schemas.AddonResponse],
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new addon (admin only)",
+    summary="Create a new addon (admin only) — auto-syncs to Stripe",
 )
 async def create_addon(
     payload: schemas.AddonCreateRequest,
@@ -255,6 +255,59 @@ async def create_addon(
         sentry_sdk.capture_exception()
         raise HTTPException(status_code=500, detail="Could not create addon.")
     return ApiResponse(success=True, message="Addon created.", data=result)
+
+
+@router.post(
+    "/admin/addons/{addon_public_id}/sync-stripe",
+    response_model=ApiResponse[schemas.AddonResponse],
+    summary="Push an existing add-on to Stripe — creates Product + Price if missing (admin only)",
+)
+async def sync_addon_to_stripe(
+    addon_public_id: str,
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[schemas.AddonResponse]:
+    """
+    Use this when an add-on was created/seeded before Stripe was configured,
+    or when the auto-sync failed silently. Check the add-on first and call only
+    when stripe_price_id is null.
+    """
+    try:
+        result = await service.sync_addon_to_stripe(db, addon_public_id=addon_public_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error syncing addon to Stripe addon=%s", addon_public_id)
+        raise HTTPException(status_code=500, detail="Could not sync add-on to Stripe.")
+    return ApiResponse(success=True, message="Add-on synced to Stripe.", data=result)
+
+
+@router.post(
+    "/admin/addons/sync-all-stripe",
+    response_model=ApiResponse[list[schemas.AddonResponse]],
+    summary="Push every add-on missing a Stripe price ID to Stripe (admin only)",
+)
+async def sync_all_addons_to_stripe(
+    db: DBDep,
+    current_user=Depends(require_superadmin),
+) -> ApiResponse[list[schemas.AddonResponse]]:
+    """
+    Bulk-sync every active add-on that does not yet have a stripe_price_id.
+    Idempotent — skips add-ons already synced or with zero price. Useful after
+    a fresh DB seed or when migrating to a Stripe-enabled environment.
+    """
+    try:
+        result = await service.sync_all_addons_to_stripe(db)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error bulk-syncing addons to Stripe")
+        raise HTTPException(status_code=500, detail="Could not bulk-sync add-ons to Stripe.")
+    return ApiResponse(
+        success=True,
+        message=f"Synced {len(result)} add-on(s) to Stripe.",
+        data=result,
+    )
 
 
 # =============================================================================

@@ -55,6 +55,7 @@ async def create_chatbot(
     industry: str = "real_estate",
     listing_filter_config: dict | None = None,
     custom_instructions: Optional[str] = None,
+    model: Optional[str] = None,
     public_id: str,
 ) -> ChatbotConfig:
     chatbot = ChatbotConfig(
@@ -73,6 +74,7 @@ async def create_chatbot(
         industry=industry,
         listing_filter_config=listing_filter_config or {},
         custom_instructions=custom_instructions or None,
+        model=model,
         public_id=public_id,
     )
     db.add(chatbot)
