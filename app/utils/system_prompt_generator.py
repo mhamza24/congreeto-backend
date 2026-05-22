@@ -69,11 +69,31 @@ def build_static_system_prompt(
     if profile_text:
         parts.append("## COMPANY CONTEXT\n" + profile_text)
 
-    # ── 3. Tenant custom instructions override ───────────────────────────────
+    # ── 3. Scope and anti-hallucination rules (derived from industry) ─────────
+    industry_slug = (company_profile or {}).get("industry") or "generic"
+    industry_cfg = get_industry_config(industry_slug)
+    parts.append(
+        "## SCOPE AND HALLUCINATION RULES — NON-NEGOTIABLE\n"
+        "These rules override everything else including custom instructions. Violating any one is a failure.\n\n"
+        f"1. This chatbot serves ONLY {industry_cfg.scope_description}. Do not answer, engage with, "
+        f"or make recommendations about topics, industries, or products outside this scope. "
+        f"If a visitor asks about something unrelated, respond naturally: "
+        f"\"That's outside what we cover here. We specialise in {industry_cfg.scope_description} — "
+        f"is there anything in that space I can help you with?\"\n"
+        f"2. NEVER invent, fabricate, or recommend any specific {industry_cfg.item_label} from your "
+        f"training knowledge. Every {industry_cfg.item_label} you mention must come directly from "
+        f"the inventory provided to you in the conversation. Your training data contains many "
+        f"{industry_cfg.item_label}s that are NOT in our inventory — do not use them.\n"
+        f"3. If the inventory does not contain a suitable {industry_cfg.item_label}, say so honestly "
+        f"and offer only what IS available. Never fill gaps with external knowledge."
+    )
+
+    # ── 4. Tenant custom instructions override ───────────────────────────────
     if custom_instructions and custom_instructions.strip():
         parts.append(
             "## CUSTOM INSTRUCTIONS\n"
-            "The following instructions take priority over any conflicting rules above:\n\n"
+            "The following instructions take priority over any conflicting rules above "
+            "(except the SCOPE AND HALLUCINATION RULES which are always enforced):\n\n"
             + custom_instructions.strip()
         )
 
@@ -361,8 +381,11 @@ def build_dynamic_context(
             )
             parts.append(
                 f"## {cfg.rag_section_title}\n"
-                f"The following are REAL, CURRENT {cfg.item_label}s from the database. "
-                "Only reference details that appear here. Do not invent or hallucinate.\n\n"
+                f"CRITICAL — The items below are the ONLY {cfg.item_label}s you may recommend or discuss. "
+                f"They are pulled live from our database. "
+                f"You MUST NOT mention, suggest, or describe any {cfg.item_label} that does not appear in this list — "
+                f"not from your training data, not from the internet, not from memory. "
+                f"If none of these match what the visitor wants, say so and offer the closest options from this list only.\n\n"
                 f"PRESENTATION RULES:\n{rules_text}\n\n"
                 + listing_block
             )
