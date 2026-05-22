@@ -46,7 +46,7 @@ async def _get_seat_info(db: AsyncSession, tenant_id: int) -> dict:
     seats_used = await repo.count_active_members(db, tenant_id=tenant_id)
 
     sub = await billing_repo.get_active_subscription(db, tenant_id=tenant_id)
-    if sub:
+    if sub and sub.plan:
         addon_seats = await billing_repo.get_addon_grant_total(
             db, tenant_id=tenant_id, metric="max_users"
         )
