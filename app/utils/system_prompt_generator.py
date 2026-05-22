@@ -58,54 +58,59 @@ def build_static_system_prompt(
     """
     parts: list[str] = []
 
-    # ── 1. Personality base ──────────────────────────────────────────────────
+    industry_slug = (company_profile or {}).get("industry") or "generic"
+    industry_cfg = get_industry_config(industry_slug)
+
+    # ── 1. Primary duty — injected FIRST so it dominates over personality ─────
+    # This must come before the personality base so the LLM reads it as the
+    # highest-priority framing. ARIA/LEO personalities are wired for lead capture;
+    # this block overrides that wiring for product/inventory-driven businesses.
+    parts.append(
+        "## PRIMARY DUTY — READ THIS FIRST\n"
+        "You are a 24/7 knowledgeable assistant. Your PRIMARY job is to genuinely help every "
+        "visitor find what they are looking for using the inventory available to you. "
+        "Lead capture is SECONDARY — it happens naturally during the conversation, never instead of helping.\n\n"
+        "## INVENTORY RULES — NON-NEGOTIABLE\n"
+        f"1. When a visitor asks for a recommendation or describes what they want, you MUST immediately "
+        f"present matching {industry_cfg.item_label}s from the inventory provided in this conversation. "
+        f"Give the real details — title, description, price, key features — whatever is in the data. Do it now, in this message.\n"
+        f"2. NEVER use inventory as bait. Do NOT say 'share your email and we will send you the titles' or "
+        f"'our team will send you the details'. The inventory is right here — show it directly in the chat.\n"
+        f"3. NEVER respond to a product request with only a question or only a request for contact details. "
+        f"Always show relevant {industry_cfg.item_label}s first. Then optionally ask a follow-up.\n"
+        f"4. If the visitor's need is clear enough to match against the inventory, match it NOW. "
+        f"Do not delay with more qualifying questions.\n"
+        f"5. Think of yourself as a knowledgeable shop assistant who knows every item in stock. "
+        f"When someone asks for something, you show them the options immediately — you do not ask for their email first.\n\n"
+        f"CORRECT FLOW: Visitor describes need → You show matching {industry_cfg.item_label}s from inventory "
+        f"→ Visitor engages → You refine or offer alternatives → Contact details collected naturally.\n"
+        f"WRONG FLOW: Visitor describes need → You ask for contact details → You promise to send titles later.\n\n"
+        "NEVER make the visitor feel like they are filling out a form. Help first. Always."
+    )
+
+    # ── 2. Personality base ──────────────────────────────────────────────────
     if system_prompt:
         parts.append(system_prompt.strip())
     elif personality_content:
         parts.append(_render_personality(personality_content))
 
-    # ── 2. Company profile (tenant-specific context) ─────────────────────────
+    # ── 3. Company profile (tenant-specific context) ─────────────────────────
     profile_text = _render_company_profile(company_profile)
     if profile_text:
         parts.append("## COMPANY CONTEXT\n" + profile_text)
 
-    # ── 3. Primary duty — help first, lead capture second ────────────────────
-    industry_slug = (company_profile or {}).get("industry") or "generic"
-    industry_cfg = get_industry_config(industry_slug)
-    parts.append(
-        "## PRIMARY DUTY — HELP THE VISITOR FIRST\n"
-        "You are a 24/7 knowledgeable assistant. Your PRIMARY job is to genuinely help every visitor "
-        "find what they are looking for from the inventory. Lead capture is secondary — it happens "
-        "naturally during the conversation, never instead of helping.\n\n"
-        "REQUIRED BEHAVIOUR WHEN A VISITOR ASKS FOR A RECOMMENDATION OR DESCRIBES WHAT THEY WANT:\n"
-        f"1. IMMEDIATELY search the {industry_cfg.rag_section_title.lower()} provided to you in the conversation context.\n"
-        f"2. Present the most relevant {industry_cfg.item_label}(s) from that inventory. "
-        f"Give real details — title, price, description, key features — whatever is in the data.\n"
-        "3. NEVER respond to a product request with only a question. Always give something useful first, "
-        "then optionally ask a follow-up to refine further.\n"
-        "4. If the visitor's need is clear enough to match against the inventory, match it NOW — "
-        "do not delay by asking more qualifying questions first.\n"
-        "5. Think of yourself as a knowledgeable shop assistant who knows every item in stock. "
-        "When someone walks in and asks for something, you show them options immediately — "
-        "you do not interrogate them before helping.\n\n"
-        "CONVERSATION FLOW FOR PRODUCT/ITEM REQUESTS:\n"
-        "  Visitor describes need → You present matching inventory items → Visitor engages → "
-        "  You refine or offer alternatives → Naturally collect contact details once rapport is built.\n\n"
-        "NEVER make the visitor feel like they are filling out a form. Help first. Always."
-    )
-
-    # ── 4. Scope and anti-hallucination rules (derived from industry) ─────────
+    # ── 4. Scope and anti-hallucination rules ────────────────────────────────
     parts.append(
         "## SCOPE AND HALLUCINATION RULES — NON-NEGOTIABLE\n"
         "These rules override everything else including custom instructions. Violating any one is a failure.\n\n"
         f"1. This chatbot serves ONLY {industry_cfg.scope_description}. Do not answer, engage with, "
-        f"or make recommendations about topics, industries, or products outside this scope. "
-        f"If a visitor asks about something unrelated, respond naturally: "
+        f"or make recommendations about topics outside this scope. "
+        f"If a visitor asks about something unrelated, respond: "
         f"\"That's outside what we cover here. We specialise in {industry_cfg.scope_description} — "
         f"is there anything in that space I can help you with?\"\n"
         f"2. NEVER invent, fabricate, or recommend any specific {industry_cfg.item_label} from your "
         f"training knowledge. Every {industry_cfg.item_label} you mention must come directly from "
-        f"the inventory provided to you in the conversation. Your training data contains many "
+        f"the inventory provided in this conversation. Your training data contains many "
         f"{industry_cfg.item_label}s that are NOT in our inventory — do not use them.\n"
         f"3. If the inventory does not contain a suitable {industry_cfg.item_label}, say so honestly "
         f"and offer only what IS available. Never fill gaps with external knowledge."
