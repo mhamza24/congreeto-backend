@@ -186,6 +186,7 @@ class AddonType(str, enum.Enum):
     EXTRA_CHATBOTS          = "extra_chatbots"
     CUSTOM_BANNER           = "custom_banner"
     EXTRA_RIBBON_MESSAGES   = "extra_ribbon_messages"
+    EXTRA_PREMIUM_MODEL     = "extra_premium_model"
 
 
 class UsageMetric(str, enum.Enum):

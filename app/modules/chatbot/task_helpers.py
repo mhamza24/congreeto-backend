@@ -714,7 +714,8 @@ Return ONLY the JSON array. No markdown, no explanation.
 TABLE DATA:
 """
 
-# Rows per LLM call — keeps each request under ~3k tokens.
+# Rows per LLM call. Default 50 keeps each request under ~8k input tokens with
+# a 4k output budget (LLM_FILE_PARSE_MAX_TOKENS) — comfortable for gpt-4o-mini.
 _LLM_BATCH_SIZE = _settings.LLM_FILE_PARSE_BATCH_SIZE
 
 
@@ -763,7 +764,8 @@ async def parse_listings_from_table(
                     f"You extract structured {industry_label} item data from tabular data. "
                     "Return only a valid JSON object with a 'listings' key containing the array."
                 ),
-                max_tokens=1500,
+                # 4000 tokens fits 50-row JSON arrays comfortably; raised from 1500.
+                max_tokens=_settings.LLM_FILE_PARSE_MAX_TOKENS,
                 max_retries=0,  # background task — fail fast
             )
 

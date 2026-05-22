@@ -223,6 +223,33 @@ async def get_addon_grant_total(
     )
 
 
+async def tenant_has_active_addon(
+    db: AsyncSession, *, tenant_id: int, addon_type: "AddonType"
+) -> bool:
+    """True if tenant has at least one active subscription to an addon of the given type."""
+    from app.core.enums import AddonType as _AddonType  # local import to avoid cycle
+    addons = await list_tenant_addons(db, tenant_id=tenant_id)
+    return any(tas.addon.type == addon_type for tas in addons)
+
+
+async def tenant_has_premium_model_entitlement(
+    db: AsyncSession, *, tenant_id: int
+) -> bool:
+    """
+    True when the tenant is entitled to use the premium chat model (gpt-4.1).
+    Entitlement sources:
+      1. Active EXTRA_PREMIUM_MODEL add-on subscription, OR
+      2. Plan limits include 'includes_premium_model' > 0 (configured per plan tier).
+    """
+    from app.core.enums import AddonType
+    sub = await get_active_subscription(db, tenant_id=tenant_id)
+    if sub and sub.plan and sub.plan.get_limit("includes_premium_model"):
+        return True
+    return await tenant_has_active_addon(
+        db, tenant_id=tenant_id, addon_type=AddonType.EXTRA_PREMIUM_MODEL
+    )
+
+
 # =============================================================================
 # USAGE READS
 # =============================================================================

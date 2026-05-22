@@ -136,6 +136,79 @@ def _update_stripe_price(plan: Plan) -> None:
         logger.warning("[billing] Stripe price update failed plan=%s: %s", plan.slug, exc)
 
 
+def _create_stripe_product_and_price_for_addon(addon: Addon) -> None:
+    """
+    Create a Stripe Product + recurring monthly Price for the add-on.
+    Writes the returned price id back onto the addon object in-memory.
+    Caller is responsible for flush/commit.
+    No-ops when Stripe is not configured or the USD price is 0.
+
+    All add-ons bill monthly (recurring) — there is no annual variant.
+    """
+    if not _stripe_ready() or addon.price_usd_cents <= 0:
+        return
+    _stripe_setup()
+    try:
+        product = stripe_sdk.Product.create(
+            name=f"Add-on: {addon.name}",
+            description=addon.description or "",
+            metadata={
+                "addon_slug": addon.slug,
+                "addon_public_id": addon.public_id,
+                "addon_type": str(addon.type.value) if hasattr(addon.type, "value") else str(addon.type),
+            },
+        )
+        price = stripe_sdk.Price.create(
+            product=product.id,
+            unit_amount=addon.price_usd_cents,
+            currency="usd",
+            recurring={"interval": "month"},
+            metadata={"addon_slug": addon.slug, "addon_public_id": addon.public_id},
+        )
+        addon.stripe_price_id = price.id
+        logger.info(
+            "[billing] Stripe product+price created addon=%s product=%s price=%s",
+            addon.slug, product.id, price.id,
+        )
+    except stripe_sdk.error.StripeError as exc:
+        logger.warning("[billing] Stripe product/price creation failed addon=%s: %s", addon.slug, exc)
+
+
+def _update_stripe_price_for_addon(addon: Addon) -> None:
+    """
+    When an add-on's USD price changes, create a new Stripe Price on the same
+    Product and deactivate the old one (Stripe prices are immutable).
+    Falls back to creating a new Product + Price if no price id exists yet.
+    No-ops when Stripe is not configured or the new price is 0.
+    """
+    if not _stripe_ready() or addon.price_usd_cents <= 0:
+        return
+    _stripe_setup()
+    old_price_id = addon.stripe_price_id
+
+    try:
+        if old_price_id:
+            old_price  = stripe_sdk.Price.retrieve(old_price_id)
+            product_id = old_price.product
+            new_price  = stripe_sdk.Price.create(
+                product=product_id,
+                unit_amount=addon.price_usd_cents,
+                currency="usd",
+                recurring={"interval": "month"},
+                metadata={"addon_slug": addon.slug, "addon_public_id": addon.public_id},
+            )
+            stripe_sdk.Price.modify(old_price_id, active=False)
+            addon.stripe_price_id = new_price.id
+            logger.info(
+                "[billing] Stripe price updated addon=%s old=%s new=%s",
+                addon.slug, old_price_id, new_price.id,
+            )
+        else:
+            _create_stripe_product_and_price_for_addon(addon)
+    except stripe_sdk.error.StripeError as exc:
+        logger.warning("[billing] Stripe price update failed addon=%s: %s", addon.slug, exc)
+
+
 # =============================================================================
 # PLAN OPERATIONS
 # =============================================================================
@@ -394,6 +467,9 @@ async def create_addon(
     await db.flush()
     await db.refresh(addon)
 
+    # Auto-sync to Stripe so the add-on is purchasable immediately.
+    _create_stripe_product_and_price_for_addon(addon)
+
     await audit.write(
         db,
         entity_type="addons",
@@ -405,6 +481,73 @@ async def create_addon(
     await db.commit()
     logger.info("[billing] addon created slug=%s public_id=%s", addon.slug, addon.public_id)
     return schemas.AddonResponse.from_addon(addon)
+
+
+async def sync_addon_to_stripe(
+    db: AsyncSession, *, addon_public_id: str
+) -> schemas.AddonResponse:
+    """
+    Push an existing add-on to Stripe. Use this when:
+      - The add-on was created before Stripe was configured.
+      - The DB was seeded directly and Stripe was never called.
+      - Auto-sync failed silently (Stripe outage, etc.).
+
+    Idempotent w.r.t. cost: if stripe_price_id is already set, this still creates
+    a new Product. Check the addon first — call only when stripe_price_id is null
+    OR when you intentionally want a fresh product (e.g. renaming).
+    """
+    addon = await _get_addon_or_404(db, public_id=addon_public_id)
+    if not _stripe_ready():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stripe is not configured on this environment.",
+        )
+    if addon.price_usd_cents <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Add-on has no USD price set — cannot create a Stripe product.",
+        )
+    _create_stripe_product_and_price_for_addon(addon)
+    await db.commit()
+    await db.refresh(addon)
+    logger.info(
+        "[billing] addon synced to Stripe addon=%s price_id=%s",
+        addon.slug, addon.stripe_price_id,
+    )
+    return schemas.AddonResponse.from_addon(addon)
+
+
+async def sync_all_addons_to_stripe(db: AsyncSession) -> list[schemas.AddonResponse]:
+    """
+    Bulk-push every active add-on missing a stripe_price_id to Stripe.
+    Useful after a fresh seed or migration onto a Stripe-enabled environment.
+    Skips add-ons that already have a stripe_price_id or zero price.
+    """
+    if not _stripe_ready():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stripe is not configured on this environment.",
+        )
+    addons = await repo.list_active_addons(db)
+    synced: list[Addon] = []
+    for addon in addons:
+        if addon.stripe_price_id or addon.price_usd_cents <= 0:
+            continue
+        _create_stripe_product_and_price_for_addon(addon)
+        if addon.stripe_price_id:
+            synced.append(addon)
+    await db.commit()
+    for a in synced:
+        await db.refresh(a)
+    logger.info("[billing] bulk addon sync to Stripe — pushed=%d", len(synced))
+    return [schemas.AddonResponse.from_addon(a) for a in synced]
+
+
+async def _get_addon_or_404(db: AsyncSession, *, public_id: str) -> Addon:
+    addon = await repo.get_addon_by_public_id(db, public_id=public_id)
+    if not addon:
+        raise HTTPException(status_code=404, detail="Add-on not found.")
+    return addon
 
 
 # =============================================================================

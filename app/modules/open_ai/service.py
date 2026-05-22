@@ -175,19 +175,64 @@ async def openai_call_conversation(messages: list, system_instructions: str) -> 
 
 async def openai_call_with_usage(
     messages: list,
-    system_instructions: str,
+    system_instructions,
+    model: str | None = None,
 ) -> tuple[str, int]:
     """
     Call the LLM and return (cleaned_content, total_tokens_used).
 
+    Parameters
+    ----------
+    messages:
+        The conversation message list (user/assistant alternation).
+    system_instructions:
+        Either a single string (legacy) OR a list of dicts already shaped as
+        `{"role": "system", "content": "..."}`. Passing a list of separate
+        system messages preserves OpenAI's automatic prompt caching for the
+        stable prefix (first system block must be ≥1024 tokens and identical
+        across requests for the cache to engage).
+    model:
+        Optional per-call model override. When None the platform default
+        (settings.OPEN_AI_MODEL) is used.
+
     Returns a fallback string and 0 tokens on any failure so callers remain
     non-blocking. The circuit breaker prevents hammering OpenAI when it's down.
+
+    Logs prompt-cache hit metrics on every successful call when available
+    (response.usage.prompt_tokens_details.cached_tokens).
     """
     try:
-        full_messages = [{"role": "system", "content": system_instructions}, *messages]
-        response = await _cb_chat(full_messages, OPENAI_CALL_PARAMS)
+        if isinstance(system_instructions, str):
+            system_block: list[dict] = [
+                {"role": "system", "content": system_instructions}
+            ]
+        else:
+            system_block = list(system_instructions)
+        full_messages = [*system_block, *messages]
+
+        params = {**OPENAI_CALL_PARAMS}
+        if model:
+            params["model"] = model
+
+        response = await _cb_chat(full_messages, params)
         cleaned = clean_response_helper(response.choices[0].message.content)
-        tokens_used = response.usage.total_tokens if response.usage else 0
+        usage = response.usage
+        tokens_used = usage.total_tokens if usage else 0
+
+        # Surface prompt-cache hit rate when the SDK provides it (OpenAI auto-caches).
+        if usage is not None:
+            cached = 0
+            details = getattr(usage, "prompt_tokens_details", None)
+            if details is not None:
+                cached = getattr(details, "cached_tokens", 0) or 0
+            prompt = getattr(usage, "prompt_tokens", 0) or 0
+            completion = getattr(usage, "completion_tokens", 0) or 0
+            hit_pct = (cached / prompt * 100) if prompt else 0.0
+            logger.info(
+                "[openai] model=%s prompt=%d cached=%d (%.0f%% hit) completion=%d total=%d",
+                params.get("model", OPENAI_MODEL), prompt, cached, hit_pct, completion, tokens_used,
+            )
+
         return cleaned, tokens_used
     except CircuitOpenError:
         logger.warning("openai_call_with_usage: circuit open — returning fallback")

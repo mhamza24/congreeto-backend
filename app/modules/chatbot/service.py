@@ -31,6 +31,48 @@ from app.utils.system_prompt_generator import build_static_system_prompt
 logger = logging.getLogger(__name__)
 
 
+# Allowed chat models that a tenant may select for their chatbot.
+# Anything outside this set returns 422. Premium values require an active
+# EXTRA_PREMIUM_MODEL add-on or a plan that includes premium.
+_DEFAULT_CHAT_MODELS = {"gpt-4o-mini"}
+_PREMIUM_CHAT_MODELS = {"gpt-4.1", "gpt-4o"}
+_ALLOWED_CHAT_MODELS = _DEFAULT_CHAT_MODELS | _PREMIUM_CHAT_MODELS
+
+
+async def _validate_chat_model_choice(
+    db: AsyncSession, *, tenant_id: int, model: Optional[str]
+) -> Optional[str]:
+    """
+    Validate the user-selected chat model and enforce add-on entitlement.
+
+    Returns the validated model string (or None to use the platform default).
+    Raises 422 for unknown values; 402 if a premium model is requested without
+    an active EXTRA_PREMIUM_MODEL add-on or a plan that includes premium.
+    """
+    if model is None or model == "":
+        return None
+    if model not in _ALLOWED_CHAT_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unsupported chat model '{model}'. "
+                f"Allowed values: {sorted(_ALLOWED_CHAT_MODELS)}."
+            ),
+        )
+    if model in _PREMIUM_CHAT_MODELS:
+        entitled = await billing_repo.tenant_has_premium_model_entitlement(
+            db, tenant_id=tenant_id
+        )
+        if not entitled:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    f"Model '{model}' requires the Premium AI add-on or a plan "
+                    "that includes it. Purchase the add-on or upgrade your plan."
+                ),
+            )
+    return model
+
 
 async def _build_llm_enhanced_system_prompt(
     *,
@@ -114,8 +156,10 @@ async def _build_llm_enhanced_system_prompt(
         },
     ]
 
+    # One-shot enhancement at chatbot create/update time — pin to the cheap
+    # model regardless of platform default so chatbot creation stays affordable.
     response = await async_client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model="gpt-4o-mini",
         messages=messages,
         max_tokens=3000,
         temperature=0.4,
@@ -163,6 +207,11 @@ async def create_chatbot(
             detail=f"Personality slug '{payload.prompt_personality_slug}' does not exist. "
                    "Fetch available personalities from GET /chatbots/personalities and pass a valid slug.",
         )
+
+    # ── Validate chat model choice + add-on entitlement ──────────────────────
+    validated_model = await _validate_chat_model_choice(
+        db, tenant_id=tenant_id, model=payload.model
+    )
 
     # ── Generate static system prompt ─────────────────────────────────────────
     company_profile_dict = payload.company_profile.model_dump() if payload.company_profile else {}
@@ -215,6 +264,7 @@ async def create_chatbot(
         industry=payload.industry,
         listing_filter_config=payload.listing_filter_config,
         custom_instructions=payload.custom_instructions or None,
+        model=validated_model,
         public_id=_new_public_id(),
     )
 
@@ -416,13 +466,19 @@ async def update_chatbot(
 
     updates = payload.model_dump(
         exclude_none=True,
-        exclude={"company_profile", "prompt_personality_slug", "custom_instructions"},
+        exclude={"company_profile", "prompt_personality_slug", "custom_instructions", "model"},
     )
 
     # custom_instructions: None means "not provided" (don't touch); "" means "clear it"
     custom_instructions_changed = "custom_instructions" in payload.model_fields_set
     if custom_instructions_changed:
         updates["custom_instructions"] = payload.custom_instructions or None
+
+    # model: validate selection + entitlement before applying the change.
+    if "model" in payload.model_fields_set:
+        updates["model"] = await _validate_chat_model_choice(
+            db, tenant_id=tenant_id, model=payload.model
+        )
 
     # ── Gate: max_ribbon_messages — checked when branding carries ribbon_messages ─
     if payload.branding is not None and "ribbon_messages" in payload.branding:
@@ -725,8 +781,9 @@ async def admin_ai_enhance_personality(
     ]
 
     try:
+        # Admin-triggered one-off enhancement — cheap model is plenty.
         response = await async_client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model="gpt-4o-mini",
             messages=messages,
             max_tokens=2000,
             temperature=0.7,
