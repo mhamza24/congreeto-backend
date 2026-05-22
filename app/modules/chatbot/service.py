@@ -457,7 +457,7 @@ async def update_chatbot(
         if personality:
             updates["prompt_personality_id"] = personality.id
 
-    # ── Regenerate static prompt if anything that affects it changed ────────
+    # ── Regenerate prompt if anything that affects it changed ────────────────
     needs_regen = (
         payload.company_profile is not None
         or payload.prompt_personality_slug
@@ -481,12 +481,37 @@ async def update_chatbot(
             payload.custom_instructions if custom_instructions_changed
             else chatbot.custom_instructions
         )
-        updates["system_prompt_template"] = build_static_system_prompt(
+        static_prompt = build_static_system_prompt(
             personality_content,
             effective_profile,
             system_prompt=personality_system_prompt,
             custom_instructions=effective_custom,
         )
+
+        # LLM-enhance when company_profile or personality changed — not for
+        # custom_instructions-only updates since those are tenant overrides.
+        effective_industry = chatbot.industry
+        should_llm_enhance = (
+            payload.company_profile is not None or payload.prompt_personality_slug
+        ) and effective_industry
+        final_prompt = static_prompt
+        if should_llm_enhance:
+            try:
+                final_prompt = await _build_llm_enhanced_system_prompt(
+                    base_prompt=static_prompt,
+                    industry=effective_industry,
+                    company_profile=effective_profile or {},
+                )
+                logger.info(
+                    "[chatbot] LLM-enhanced system prompt on update public_id=%s industry=%s",
+                    public_id, effective_industry,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[chatbot] LLM prompt enhancement failed on update (using static fallback): %s", exc
+                )
+
+        updates["system_prompt_template"] = final_prompt
 
     chatbot = await repo.update_chatbot(db, chatbot=chatbot, **updates)
 
