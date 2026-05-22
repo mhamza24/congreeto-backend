@@ -145,9 +145,8 @@ class ChatbotCreateRequest(BaseModel):
         default=None,
         description="Company information used to personalise the system prompt.",
     )
-    prompt_personality_slug: Optional[str] = Field(
-        default="aria",
-        description="Personality template slug (e.g. 'aria'). Defaults to 'aria'.",
+    prompt_personality_slug: str = Field(
+        description="Personality template slug — must match an active personality in the DB (e.g. 'leo', 'aria'). Required.",
     )
     custom_instructions: Optional[str] = Field(
         default=None,

@@ -30,8 +30,6 @@ from app.utils.system_prompt_generator import build_static_system_prompt
 
 logger = logging.getLogger(__name__)
 
-# Default personality slug — used when chatbot has no explicit personality set
-_DEFAULT_PERSONALITY_SLUG = "aria"
 
 
 async def _build_llm_enhanced_system_prompt(
@@ -156,11 +154,15 @@ async def create_chatbot(
                 )
 
     # ── Resolve personality ───────────────────────────────────────────────────
-    personality_slug = payload.prompt_personality_slug or _DEFAULT_PERSONALITY_SLUG
-    personality = await repo.get_prompt_personality_by_slug(db, slug=personality_slug)
+    personality = await repo.get_prompt_personality_by_slug(
+        db, slug=payload.prompt_personality_slug
+    )
     if not personality:
-        # Fallback to platform default — should always exist after migration seed
-        personality = await repo.get_prompt_personality_by_slug(db, slug=_DEFAULT_PERSONALITY_SLUG)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Personality slug '{payload.prompt_personality_slug}' does not exist. "
+                   "Fetch available personalities from GET /chatbots/personalities and pass a valid slug.",
+        )
 
     # ── Generate static system prompt ─────────────────────────────────────────
     company_profile_dict = payload.company_profile.model_dump() if payload.company_profile else {}
@@ -464,14 +466,17 @@ async def update_chatbot(
         or custom_instructions_changed
     )
     if needs_regen:
-        # Load personality if not already loaded from slug switch
+        # Load the chatbot's existing personality if no slug switch was requested.
+        # Never fall back to a hardcoded default — use whatever was originally chosen.
         if personality is None and chatbot.prompt_personality_id:
             personality = await repo.get_prompt_personality_by_id(
                 db, personality_id=chatbot.prompt_personality_id
             )
         if personality is None:
-            personality = await repo.get_prompt_personality_by_slug(
-                db, slug=_DEFAULT_PERSONALITY_SLUG
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This chatbot has no personality assigned. "
+                       "Provide a valid prompt_personality_slug to set one.",
             )
 
         effective_profile = new_company_profile if new_company_profile is not None else chatbot.company_profile
