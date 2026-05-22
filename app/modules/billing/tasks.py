@@ -115,41 +115,43 @@ def reconcile_usage_task() -> None:
                 recorded_at = NOW() AT TIME ZONE 'UTC'
         """), {"period": period})
 
-        # Messages
+        # Messages — join through conversations to get tenant_id
         db.execute(text("""
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id::bigint,
+                c.tenant_id::bigint,
                 'messages',
                 :period,
                 COUNT(*),
                 NOW() AT TIME ZONE 'UTC'
-            FROM messages
-            WHERE DATE_TRUNC('month', created_at AT TIME ZONE 'UTC')
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE DATE_TRUNC('month', m.created_at AT TIME ZONE 'UTC')
                 = DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
-            GROUP BY tenant_id
+            GROUP BY c.tenant_id
             ON CONFLICT (tenant_id, metric, period_month)
             DO UPDATE SET
                 quantity    = EXCLUDED.quantity,
                 recorded_at = NOW() AT TIME ZONE 'UTC'
         """), {"period": period})
 
-        # Tokens — sum from messages table
+        # Tokens — join through conversations to get tenant_id
         db.execute(text("""
             INSERT INTO usage_records
                 (tenant_id, metric, period_month, quantity, recorded_at)
             SELECT
-                tenant_id::bigint,
+                c.tenant_id::bigint,
                 'tokens_used',
                 :period,
-                COALESCE(SUM(tokens_used), 0),
+                COALESCE(SUM(m.tokens_used), 0),
                 NOW() AT TIME ZONE 'UTC'
-            FROM messages
-            WHERE DATE_TRUNC('month', created_at AT TIME ZONE 'UTC')
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE DATE_TRUNC('month', m.created_at AT TIME ZONE 'UTC')
                 = DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
-            AND tokens_used IS NOT NULL
-            GROUP BY tenant_id
+            AND m.tokens_used IS NOT NULL
+            GROUP BY c.tenant_id
             ON CONFLICT (tenant_id, metric, period_month)
             DO UPDATE SET
                 quantity    = EXCLUDED.quantity,
