@@ -220,6 +220,10 @@ _PROFILE_KEYS = [
     ("locations",           "Locations"),
     ("portfolio_summary",   "Portfolio Summary"),
     ("industry",            "Industry"),
+    ("target_audience",     "Target Audience"),
+    ("key_services",        "Key Services"),
+    ("brand_tone",          "Brand Tone"),
+    ("area_served",         "Area Served"),
 ]
 
 

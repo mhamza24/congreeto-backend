@@ -71,7 +71,8 @@ async def create_listing(
     user_id: Optional[int] = None,
     request: Optional[Request] = None,
 ) -> schemas.ListingResponse:
-    from app.modules.chatbot.tasks import embed_listing
+    from app.modules.open_ai import service as openai_service
+    from app.modules.chatbot.task_helpers import build_listing_embed_text
 
     listing = await repo.create_listing(
         db,
@@ -93,6 +94,15 @@ async def create_listing(
         attributes=payload.attributes,
         media=payload.media,
     )
+
+    # Compute and store embedding synchronously so the vector is always present.
+    embed_text = build_listing_embed_text(listing)
+    if embed_text.strip():
+        try:
+            listing.embedding = await openai_service.embed_text(embed_text)
+        except Exception as exc:
+            logger.warning("[listings] embed failed for new listing %s: %s", listing.public_id, exc)
+
     await audit.write(
         db,
         entity_type="listings",
@@ -107,7 +117,6 @@ async def create_listing(
     await db.commit()
     await db.refresh(listing)
 
-    embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
     logger.info("[listings] created public_id=%s title=%s industry=%s", listing.public_id, listing.title, listing.industry)
     return schemas.ListingResponse.model_validate(listing)
 
@@ -121,7 +130,8 @@ async def update_listing(
     user_id: Optional[int] = None,
     request: Optional[Request] = None,
 ) -> schemas.ListingResponse:
-    from app.modules.chatbot.tasks import embed_listing
+    from app.modules.open_ai import service as openai_service
+    from app.modules.chatbot.task_helpers import build_listing_embed_text
 
     listing = await repo.get_listing_by_public_id(db, tenant_id=tenant_id, public_id=public_id)
     if not listing:
@@ -138,6 +148,14 @@ async def update_listing(
     for key, value in updates.items():
         setattr(listing, key, value)
 
+    # Recompute embedding after applying field updates.
+    embed_text = build_listing_embed_text(listing)
+    if embed_text.strip():
+        try:
+            listing.embedding = await openai_service.embed_text(embed_text)
+        except Exception as exc:
+            logger.warning("[listings] embed failed for updated listing %s: %s", listing.public_id, exc)
+
     await audit.write(
         db,
         entity_type="listings",
@@ -152,7 +170,6 @@ async def update_listing(
     await db.commit()
     await db.refresh(listing)
 
-    embed_listing.apply_async(kwargs=dict(listing_id=listing.id, tenant_id=tenant_id))
     logger.info("[listings] updated public_id=%s", listing.public_id)
     return schemas.ListingResponse.model_validate(listing)
 
