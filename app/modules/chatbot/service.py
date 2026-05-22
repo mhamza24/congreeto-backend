@@ -34,6 +34,97 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PERSONALITY_SLUG = "aria"
 
 
+async def _build_llm_enhanced_system_prompt(
+    *,
+    base_prompt: str,
+    industry: str,
+    company_profile: dict,
+) -> str:
+    """
+    Use the LLM to personalise the base system prompt for a specific company and industry.
+
+    Takes the static base prompt (personality + company context already rendered) and
+    enhances it with industry-specific conversation guidance, qualification questions,
+    and value propositions derived from the company profile fields.
+
+    Falls back to the base_prompt if the company profile lacks meaningful context
+    so we never make an unnecessary API call.
+    """
+    from app.config.open_ai import async_client, OPENAI_MODEL
+
+    meaningful_fields = [
+        company_profile.get("company_name"),
+        company_profile.get("target_audience"),
+        company_profile.get("key_services"),
+        company_profile.get("company_description"),
+    ]
+    if not any(f and str(f).strip() for f in meaningful_fields):
+        return base_prompt
+
+    industry_display = industry.replace("_", " ").title()
+    company_name = company_profile.get("company_name", "this business")
+
+    context_lines: list[str] = []
+    for field, label in [
+        ("company_name",        "Company"),
+        ("company_description", "About"),
+        ("target_audience",     "Target audience"),
+        ("key_services",        "Key services/offerings"),
+        ("brand_tone",          "Desired brand tone"),
+        ("area_served",         "Area served"),
+        ("locations",           "Locations"),
+        ("portfolio_summary",   "Portfolio summary"),
+        ("tagline",             "Tagline"),
+    ]:
+        val = company_profile.get(field)
+        if val:
+            if isinstance(val, list):
+                val = ", ".join(str(v) for v in val if v)
+            if val:
+                context_lines.append(f"{label}: {val}")
+
+    context_block = "\n".join(context_lines)
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert chatbot system prompt engineer specialising in AI sales and "
+                "customer service personas. Your task: take an existing base chatbot persona prompt "
+                "and personalise it for a specific company and industry.\n"
+                "Rules you must follow:\n"
+                "1. Keep ALL hard rules, formatting rules, lead capture rules, and core persona behaviour.\n"
+                "2. Customise the Role/Identity description and DeploymentContext to match the company and industry.\n"
+                "3. Add industry-specific qualification questions, value propositions, and conversation "
+                "   guidance relevant to the company's key services and target audience.\n"
+                "4. Replace generic 'property' or 'real estate' references if the industry is different — "
+                "   use the correct industry terminology throughout.\n"
+                "5. Reflect the desired brand tone if specified.\n"
+                "6. Maintain Australian English throughout.\n"
+                "Return ONLY the enhanced system prompt — no commentary, no markdown wrappers."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Enhance this system prompt for a {industry_display} business.\n\n"
+                f"COMPANY CONTEXT:\n{context_block}\n\n"
+                f"BASE PROMPT:\n---\n{base_prompt}\n---\n\n"
+                f"Return the full enhanced system prompt, personalised for {company_name} "
+                f"in the {industry_display} industry."
+            ),
+        },
+    ]
+
+    response = await async_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=messages,
+        max_tokens=3000,
+        temperature=0.4,
+    )
+    return response.choices[0].message.content.strip()
+
+
 # =============================================================================
 # CHATBOT CONFIG
 # =============================================================================
@@ -82,6 +173,27 @@ async def create_chatbot(
         custom_instructions=payload.custom_instructions,
     )
 
+    # ── LLM-enhance the prompt based on industry + company context ────────────
+    # Runs at chatbot creation time so the stored system_prompt_template is
+    # already tailored to the specific industry and company — no generic defaults.
+    # Falls back to static_prompt silently if the LLM call fails or context is thin.
+    final_prompt = static_prompt
+    if payload.industry:
+        try:
+            final_prompt = await _build_llm_enhanced_system_prompt(
+                base_prompt=static_prompt,
+                industry=payload.industry,
+                company_profile=company_profile_dict,
+            )
+            logger.info(
+                "[chatbot] LLM-enhanced system prompt for industry=%s tenant=%s",
+                payload.industry, tenant_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[chatbot] LLM prompt enhancement failed (using static fallback): %s", exc
+            )
+
     iframe_token = uuid.uuid4().hex  # 32-char hex, no dashes — used as embed token
 
     chatbot = await repo.create_chatbot(
@@ -90,7 +202,7 @@ async def create_chatbot(
         name=payload.name,
         iframe_token=iframe_token,
         identity=payload.identity,
-        system_prompt_template=static_prompt,
+        system_prompt_template=final_prompt,
         welcome_message=payload.welcome_message,
         auto_close_minutes=payload.auto_close_minutes,
         allowed_domains=payload.allowed_domains,

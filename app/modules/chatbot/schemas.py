@@ -42,6 +42,22 @@ class CompanyProfile(BaseModel):
         description="Brief overview of the property portfolio or offerings.",
     )
     industry:            Optional[str]       = Field(default="real_estate", max_length=100)
+    target_audience:     Optional[str]       = Field(
+        default=None, max_length=1000,
+        description="Who the chatbot should speak to, e.g. 'first-home buyers, investors aged 25-45'.",
+    )
+    key_services:        Optional[str]       = Field(
+        default=None, max_length=1000,
+        description="Key services or offerings, e.g. 'residential sales, commercial leasing, property management'.",
+    )
+    brand_tone:          Optional[str]       = Field(
+        default=None, max_length=500,
+        description="Desired brand tone, e.g. 'professional and warm', 'luxury and exclusive', 'approachable'.",
+    )
+    area_served:         Optional[str]       = Field(
+        default=None, max_length=500,
+        description="Geographic area or suburbs served, e.g. 'Greater Sydney, NSW', 'Gold Coast'.",
+    )
 
 
 # =============================================================================

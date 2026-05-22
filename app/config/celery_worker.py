@@ -60,15 +60,15 @@ celery_app.conf.update(
         "socket_connect_timeout": settings.REDIS_SOCKET_CONNECT_TIMEOUT,
         "socket_timeout": settings.REDIS_SOCKET_TIMEOUT,
         "health_check_interval": settings.REDIS_HEALTH_CHECK_INTERVAL,
-        # Heroku Redis Mini: 20 connections total.
-        # Budget (per process): async-redis=3, broker=1, results=2 → 6 per process.
-        # web(6) + worker(6) + beat(2) = 14 → stays well under 20.
-        "max_connections": 3,
+        # Heroku Redis Mini: 18 connections total.
+        # Budget (per process): async-redis=2, broker=2, results=1 → 5 per process.
+        # web(2) + worker(5) + beat(5) = 12 → comfortable headroom under 18.
+        "max_connections": 2,
     },
     redis_socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
     redis_socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
     # Cap result-backend pool independently (separate pool from broker).
-    redis_max_connections=2,
+    redis_max_connections=1,
     # Single broker connection per process — publish is sequential anyway.
     broker_pool_limit=1,
     # ── Worker reliability ────────────────────────────────────────────────
